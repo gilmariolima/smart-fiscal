@@ -76,10 +76,10 @@ function novoCliente(db) {
     VALUES ('12345678000199', 'Cliente Teste', 'CE', '12345678000199.pfx', 'x:y:z')`).run().lastInsertRowid
 }
 
-test('migrations criam as 5 tabelas', () => {
+test('migrations criam as 7 tabelas (com as do CF-e)', () => {
   const db = abrirBanco(':memory:')
   const tabelas = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((r) => r.name)
-  assert.deepEqual(tabelas, ['clientes', 'eventos', 'execucoes', 'notas', 'sistema'])
+  assert.deepEqual(tabelas, ['clientes', 'cupons', 'cupons_cancelamentos', 'eventos', 'execucoes', 'notas', 'sistema'])
   assert.equal(db.prepare('SELECT ult_nsu FROM clientes').get(), undefined)
 })
 
