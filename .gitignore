@@ -1,0 +1,29 @@
+node_modules/
+pacote/
+# painel React compilado (npm install / npm run painel:build)
+src/web/dist/
+# dados de uso do motor de notas rodando da pasta do código
+.env
+data/
+certs/
+xmls/
+exports/
+logs/
+demo/
+*.bak-*
+*.p12
+*.pfx
+# Python embutido: montado por "npm run preparar-python" (vai no instalador, não no git)
+estoque/python/
+__pycache__/
+*.pyc
+# dados de uso do motor do SPED rodando da pasta do código
+estoque/dados/
+estoque/saida/
+estoque/entradas/
+estoque/empresas.json
+estoque/escritorio.json
+estoque/ajustes.json
+estoque/config.json
+estoque/painel.log
+estoque/painel.token
