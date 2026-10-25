@@ -1,0 +1,466 @@
+"""Testes do conversor e do painel. Rodar na pasta app: python -m unittest discover -s tests"""
+
+import http.client
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from decimal import Decimal
+from pathlib import Path
+
+APP = Path(__file__).resolve().parents[1]
+TMP = tempfile.mkdtemp(prefix="estoque-teste-")
+os.environ["ESTOQUE_DADOS"] = str(Path(TMP) / "dados")
+sys.path.insert(0, str(APP))
+
+import gerar_sped as gs  # noqa: E402
+
+
+def arquivo(nome, conteudo):
+    p = Path(TMP) / nome
+    p.write_text(conteudo, encoding="utf-8")
+    return p
+
+
+def gerar(*caminhos, **opcoes):
+    """Converte e devolve (Resultado, linhas do SPED)."""
+    fontes = [gs.ler_arquivo(Path(c)) for c in caminhos]
+    principal = gs.escolher_principal(fontes)
+    args = gs.opcoes(sem_consulta=True, **opcoes)
+    res = gs.converter(principal, [f for f in fontes if f is not principal], args)
+    return res, res.registros
+
+
+def campos(linhas, reg):
+    return [l.strip("|").split("|") for l in linhas if l.startswith(f"|{reg}|")]
+
+
+RELATORIO = """\
+                         {titulo}
+Firma: LOJA TESTE LTDA
+Insc. Est.: 06.123.456-7        CNPJ: 11.222.333/0001-81
+Estoque existente em 31/12/2025
+94036000 U3424 696 041/22M LEXUS CADEIRA PRETA     UN      10,000      150,0000      1.500,00
+85287200 TV5500 TELEVISOR 55 POL                   PC       2,000    2.300,5000      4.601,00
+         Total:  6.101,00
+"""
+
+
+class Planilha(unittest.TestCase):
+    def test_custo_total_antes_do_unitario(self):
+        # Antes: "Custo Total" virava valor unitário e o inventário saía 100x maior
+        p = arquivo("custo.csv", "Codigo;Descricao;Unidade;NCM;Quantidade;Custo Total;Custo Unitario\n"
+                                  "A1;CANETA;UN;96081000;100;250,00;2,50\nA2;LAPIS;UN;96091000;10;5,00;0,50\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        h010 = {c[1]: c for c in campos(linhas, "H010")}
+        self.assertEqual(h010["A1"][4], "2,500000")
+        self.assertEqual(h010["A1"][5], "250,00")
+        self.assertEqual(campos(linhas, "H005")[0][2], "255,00")
+
+    def test_codigo_de_barras_nao_e_codigo(self):
+        p = arquivo("barras.csv", "Cod. Barras;Codigo;Descricao;Qtd;Valor Unit\n7891234567890;X9;ITEM;1;10,00\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        self.assertEqual(campos(linhas, "H010")[0][1], "X9")
+
+    def test_milhar_em_csv_brasileiro(self):
+        p = arquivo("milhar.csv", "Codigo;Descricao;Quantidade;Valor Unit\nB1;PARAFUSO;1.500;0,10\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        self.assertEqual(campos(linhas, "H010")[0][3], "1500,000")
+
+    def test_ponto_decimal_continua_decimal(self):
+        p = arquivo("ponto.csv", "Codigo,Descricao,Quantidade,Valor Unit\nC1,FIO,2.5,4.00\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        self.assertEqual(campos(linhas, "H010")[0][3], "2,500")
+
+    def test_planilha_grande_e_rapida(self):
+        linhas = ["Codigo;Descricao;Unidade;Quantidade;Valor Unit"] + [f"C{i};ITEM {i};UN;1;1,00" for i in range(20000)]
+        p = arquivo("grande.csv", "\n".join(linhas))
+        ini = time.perf_counter()
+        res, _ = gerar(p, data_inv="31/12/2025")
+        self.assertEqual(len(res.itens), 20000)
+        self.assertLess(time.perf_counter() - ini, 5)  # antes: ~6 s só para ler
+
+    def test_numero_da_linha_nas_pendencias(self):
+        p = arquivo("linhas.csv", "Codigo;Descricao;Quantidade;Valor Unit\nD1;A;1;1,00\nD1;A;1;1,00\n")
+        fonte = gs.ler_arquivo(p)
+        self.assertEqual([i.origem for i in fonte.itens], ["linha 2", "linha 3"])
+
+
+class Itens(unittest.TestCase):
+    def test_um_0200_para_proprio_e_terceiros(self):
+        p = arquivo("terc.txt", "|0000|019|0|01122025|31122025|LOJA X|11222333000181||CE|061234567|2304400||||A|1|\n"
+                                "|0150|F1|FORNECEDOR UM LTDA|1058|11444777000161|||2304400||RUA A|10||CENTRO|\n"
+                                "|H005|31122025|300,00|01|\n"
+                                "|H010|X1|UN|1,000|100,000000|100,00|0||||100,00|\n"
+                                "|H010|X1|UN|2,000|100,000000|200,00|1|F1|||200,00|\n")
+        res, linhas = gerar(p)
+        self.assertEqual(len(campos(linhas, "0200")), 1)
+        self.assertEqual(len(campos(linhas, "H010")), 2)
+        self.assertEqual(campos(linhas, "H010")[1][7], "F1")
+        self.assertEqual(campos(linhas, "0150"), [["0150", "F1", "FORNECEDOR UM LTDA", "1058", "11444777000161", "", "",
+                                                   "2304400", "", "RUA A", "10", "", "CENTRO"]])
+
+    def test_unitario_negativo_fica_fora(self):
+        p = arquivo("neg.csv", "Codigo;Descricao;Quantidade;Valor Unit\nN1;X;3;-2,00\nN2;Y;1;5,00\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        self.assertEqual([c[1] for c in campos(linhas, "H010")], ["N2"])
+        self.assertTrue(any(c == "N1" and "negativo" in m for _, c, m in res.pendencias))
+
+    def test_codigos_longos_iguais_depois_de_cortar(self):
+        base = "Z" * 60
+        p = arquivo("longo.csv", f"Codigo;Descricao;Quantidade;Valor Unit\n{base}A;UM;1;1,00\n{base}B;DOIS;1;1,00\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        cods = [c[1] for c in campos(linhas, "0200")]
+        self.assertEqual(len(cods), len(set(cods)))
+        self.assertTrue(all(len(c) <= 60 for c in cods))
+
+
+class Relatorio(unittest.TestCase):
+    def test_titulo_em_maiusculas(self):
+        p = arquivo("rel_maiusc.txt", RELATORIO.format(titulo="REGISTRO DE INVENTÁRIO"))
+        fonte = gs.ler_arquivo(p)
+        self.assertEqual(fonte.tipo, "Relatório de inventário")
+        self.assertEqual(fonte.empresa, {"nome": "LOJA TESTE LTDA", "ie": "061234567", "cnpj": "11222333000181"})
+        self.assertEqual(fonte.total_declarado, Decimal("6101.00"))
+
+    def test_sem_titulo_reconhece_pelas_linhas(self):
+        p = arquivo("rel_sem.txt", RELATORIO.format(titulo="ESTOQUE"))
+        self.assertEqual(gs.ler_arquivo(p).tipo, "Relatório de inventário")
+
+    def test_estrutura_do_arquivo(self):
+        p = arquivo("rel.txt", RELATORIO.format(titulo="Registro de Inventário"))
+        res, linhas = gerar(p, uf="CE", cod_mun="2304400")
+        self.assertEqual(res.total, Decimal("6101.00"))
+        # totalizadores: 0990, H990, 9900 por registro, 9990 e 9999
+        self.assertEqual(int(campos(linhas, "0990")[0][1]), sum(l.startswith("|0") for l in linhas))
+        self.assertEqual(int(campos(linhas, "H990")[0][1]), sum(l.startswith("|H") for l in linhas))
+        cont = {c[1]: int(c[2]) for c in campos(linhas, "9900")}
+        for reg, n in cont.items():
+            self.assertEqual(n, sum(l.startswith(f"|{reg}|") for l in linhas), reg)
+        self.assertEqual(int(campos(linhas, "9999")[0][1]), len(linhas))
+
+    def test_linha_de_item_que_nao_casa_vira_pendencia(self):
+        # Linha de outro formato (sem unidade, total com ponto) não pode sumir calada
+        quebrado = RELATORIO.replace("PC       2,000    2.300,5000      4.601,00", "2,000    2.300,5000      4601.00")
+        res, linhas = gerar(arquivo("rel_quebrado.txt", quebrado.format(titulo="Registro de Inventário")),
+                            uf="CE", cod_mun="2304400")
+        self.assertEqual(len(campos(linhas, "H010")), 1)
+        self.assertTrue(any(t == "arquivo" and "linha não lida" in m and "TV5500" in m for t, _, m in res.pendencias))
+
+
+class Pendencias(unittest.TestCase):
+    def test_quantidade_com_4_casas_avisa_e_mantem_o_valor(self):
+        p = arquivo("qtd4.csv", "Codigo;Descricao;Unidade;Quantidade;Valor Unitario;Valor Total\n"
+                                "Q1;TECIDO;M;1670,3408;2,00;3340,68\n")
+        res, linhas = gerar(p, data_inv="31/12/2025")
+        h010 = campos(linhas, "H010")[0]
+        self.assertEqual(h010[3], "1670,341")
+        self.assertEqual(h010[5], "3340,68")
+        # um aviso só para o arquivo: o valor não muda, e não precisa ocupar o filtro "Com pendência"
+        self.assertTrue(any(t == "arquivo" and "Q1 1670,3408 -> 1670,341" in m for t, _, m in res.pendencias))
+        self.assertFalse(any(t == "item" for t, _, _ in res.pendencias))
+
+    def test_csv_guarda_codigo_numerico_como_texto(self):
+        # O Excel apagava o zero à esquerda: 0509 virava 509
+        p = arquivo("zero.csv", "Codigo;Descricao;Unidade;Quantidade;Valor Unitario\n"
+                                "0509;RELOGIO;UN;0;10,00\n0600;PULSEIRA;UN;2;5,00\n")
+        res, _ = gerar(p, data_inv="31/12/2025")
+        gs.gravar(res, Path(TMP) / "saida-csv")
+        csv = (Path(TMP) / "saida-csv" / f"{res.base}_pendencias.csv").read_text(encoding="utf-8-sig")
+        self.assertIn('"=""0509"""', csv)
+
+
+class Datas(unittest.TestCase):
+    def setUp(self):
+        self.p = arquivo("datas.csv", "Codigo;Descricao;Quantidade;Valor Unit\nE1;X;1;1,00\n")
+
+    def test_data_inexistente(self):
+        with self.assertRaisesRegex(gs.ErroConversao, "inválida"):
+            gerar(self.p, data_inv="31/02/2025")
+
+    def test_periodo_mal_digitado(self):
+        with self.assertRaisesRegex(gs.ErroConversao, "Período"):
+            gerar(self.p, data_inv="31/12/2025", periodo="13/2025")
+        with self.assertRaisesRegex(gs.ErroConversao, "Período"):
+            gerar(self.p, data_inv="31/12/2025", periodo="fev")
+
+    def test_periodo_depois_do_inventario(self):
+        res, linhas = gerar(self.p, data_inv="31/12/2025", periodo="02/2026")
+        self.assertEqual(campos(linhas, "0000")[0][3:5], ["01022026", "28022026"])
+
+
+class Painel(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.token = "token-de-teste"
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", "ESTOQUE_TOKEN": cls.token}
+        cls.proc = subprocess.Popen([sys.executable, str(APP / "painel.py"), "--porta", "0", "--sem-navegador"],
+                                    stdout=subprocess.PIPE, text=True, env=env)
+        linha = cls.proc.stdout.readline()
+        assert linha.startswith("PORTA="), linha
+        cls.porta = int(linha.split("=")[1])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+        cls.proc.wait(5)
+
+    def pedir(self, metodo, rota, corpo=None, token=True, resposta=False, **cab):
+        c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=10)
+        cab.setdefault("Host", f"127.0.0.1:{self.porta}")
+        if token:
+            cab.setdefault("X-Estoque-Token", self.token)
+        c.request(metodo, rota, body=corpo, headers=cab)
+        r = c.getresponse()
+        corpo = r.read()
+        return (r.status, corpo, r) if resposta else (r.status, corpo)
+
+    def test_painel_abre(self):
+        status, corpo = self.pedir("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn(b"Estoque", corpo)
+
+    def test_outro_site_nao_grava(self):
+        status, _ = self.pedir("POST", "/api/escritorio", b'{"nome":"X"}', Origin="https://site-qualquer.com",
+                               **{"Content-Type": "text/plain"})
+        self.assertEqual(status, 403)
+        status, _ = self.pedir("POST", "/api/encerrar", Origin="https://site-qualquer.com")
+        self.assertEqual(status, 403)
+
+    def test_dns_rebinding(self):
+        status, _ = self.pedir("GET", "/api/escritorio", Host=f"atacante.com:{self.porta}")
+        self.assertEqual(status, 403)
+
+    def test_o_proprio_painel_grava(self):
+        status, corpo = self.pedir("POST", "/api/escritorio", json.dumps({"nome": "ESCRITORIO", "cpf": "1"}).encode(),
+                                   Origin=f"http://127.0.0.1:{self.porta}", **{"Content-Type": "application/json"})
+        self.assertEqual((status, json.loads(corpo)), (200, {"ok": True}))
+        status, corpo = self.pedir("GET", "/api/escritorio", Host=f"localhost:{self.porta}")
+        self.assertEqual(json.loads(corpo)["nome"], "ESCRITORIO")
+
+    def test_sem_data_o_formulario_volta_e_depois_gera(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        xls = (APP / "tests" / "arquivos" / "cod_produto_antigo.xls").read_bytes()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=sem_data.xls", xls)
+        pedido = {"lote": lote, "arquivos": ["sem_data.xls"], "campos": {"cnpj": "11.222.333/0001-81", "uf": "ce"}}
+        _, corpo = self.pedir("POST", "/api/converter", json.dumps(pedido).encode())
+        r = json.loads(corpo)
+        self.assertIn("não informa a data", r["erro"])
+        self.assertEqual(r["campo"], "data_inv")  # a tela destaca e põe o cursor aqui
+        self.assertEqual((r["campos"]["cnpj"], r["campos"]["uf"], r["campos"]["data_inv"]), ("11222333000181", "CE", ""))
+        pedido["campos"]["data_inv"] = "31/12/2025"
+        _, corpo = self.pedir("POST", "/api/converter", json.dumps(pedido).encode())
+        r = json.loads(corpo)
+        self.assertNotIn("erro", r)
+        self.assertEqual((r["resumo"]["itens"], r["resumo"]["total"], r["campos"]["data_inv"]), (2, "124,67", "31/12/2025"))
+
+    def test_converter_pelo_painel(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        rel = RELATORIO.format(titulo="REGISTRO DE INVENTARIO").encode()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=rel.txt", rel)
+        status, corpo = self.pedir("POST", "/api/converter", json.dumps(
+            {"lote": lote, "arquivos": ["rel.txt"], "campos": {"uf": "CE", "cod_mun": "2304400", "data_inv": "31/02/2025"}}).encode())
+        self.assertEqual(status, 200)
+        self.assertIn("inválida", json.loads(corpo)["erro"])
+        status, corpo = self.pedir("POST", "/api/converter", json.dumps(
+            {"lote": lote, "arquivos": ["rel.txt"], "campos": {"uf": "CE", "cod_mun": "2304400"}}).encode())
+        r = json.loads(corpo)
+        self.assertEqual((r["resumo"]["itens"], r["resumo"]["total"]), (2, "6101,00"))
+        status, corpo = self.pedir("GET", f"/baixar/{r['dominio']}")
+        self.assertEqual(status, 200)
+        self.assertIn(b"TV5500;TELEVISOR 55 POL;PC;85287200;;;2;2300,5;4601;0", corpo)
+        status, _ = self.pedir("GET", "/api/gerados")
+        self.assertEqual(status, 200)
+
+    def test_sem_token_recusa(self):
+        # Outro programa ou outro usuário do computador (servidor de terminal) acha a porta,
+        # mas não o token desta execução
+        for metodo, rota in (("GET", "/"), ("GET", "/api/escritorio"), ("GET", "/api/gerados"), ("POST", "/api/lote"),
+                             ("POST", "/api/encerrar"), ("DELETE", "/api/gerado/SPED_X.txt"), ("GET", "/baixar/x.txt")):
+            with self.subTest(rota=rota):
+                self.assertEqual(self.pedir(metodo, rota, token=False)[0], 401)
+                self.assertEqual(self.pedir(metodo, rota, token=False, **{"X-Estoque-Token": "errado"})[0], 401)
+        # os estáticos não têm dado nenhum e abrem sem token
+        self.assertEqual(self.pedir("GET", "/web/app.js", token=False)[0], 200)
+
+    def test_token_no_endereco_vira_cookie(self):
+        self.assertEqual(self.pedir("GET", "/?t=errado", token=False)[0], 401)
+        status, _, r = self.pedir("GET", f"/?t={self.token}", token=False, resposta=True)
+        self.assertEqual((status, r.getheader("Location")), (303, "/"))
+        cookie = r.getheader("Set-Cookie")
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Strict", cookie)
+        self.assertTrue(cookie.startswith(f"estoque_{self.porta}="))
+        status, corpo = self.pedir("GET", "/api/escritorio", token=False, Cookie=cookie.split(";")[0])
+        self.assertEqual(status, 200)
+
+    def test_cabecalhos_de_seguranca(self):
+        _, _, r = self.pedir("GET", "/", resposta=True)
+        self.assertIn("default-src 'self'", r.getheader("Content-Security-Policy"))
+        self.assertIn("frame-ancestors 'none'", r.getheader("Content-Security-Policy"))
+        self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+
+    def test_content_length_negativo(self):
+        # read(-1) leria até a conexão fechar, sem o limite de tamanho
+        c = http.client.HTTPConnection("127.0.0.1", self.porta, timeout=10)
+        c.putrequest("POST", "/api/escritorio", skip_host=True)
+        for k, v in (("Host", f"127.0.0.1:{self.porta}"), ("X-Estoque-Token", self.token), ("Content-Length", "-1")):
+            c.putheader(k, v)
+        c.endheaders()
+        self.assertEqual(c.getresponse().status, 400)
+
+    def test_nomes_de_arquivo_nao_saem_da_pasta(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        for nome in ("..", "../../escritorio.json", "..%5C..%5Cx.txt", "CON", "a.csv.%20"):
+            with self.subTest(nome=nome):
+                status, corpo = self.pedir("POST", f"/api/enviar?lote={lote}&nome={nome}", b"x")
+                self.assertEqual(status, 200)
+                gravado = json.loads(corpo)["nome"]
+                self.assertNotIn("/", gravado)
+                self.assertNotIn("\\", gravado)
+                self.assertTrue(gravado.strip("."))
+        self.assertEqual(self.pedir("GET", "/baixar/..")[0], 404)
+        self.assertEqual(self.pedir("GET", "/api/ver/..")[0], 404)
+        self.assertEqual(self.pedir("POST", "/api/enviar?lote=../x&nome=a.txt", b"x")[0], 400)
+
+    def test_pendencias_do_item_e_itens_fora_pelo_painel(self):
+        _, corpo = self.pedir("POST", "/api/lote")
+        lote = json.loads(corpo)["lote"]
+        csv = "Codigo;Descricao;Qtd;Valor Unit;Valor Total\nA1;UM;1;1,00;1,00\nA1;DOIS;2;1,00;5,00\nA9;NEG;-1;1,00;-1,00\n".encode()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=itens.csv", csv)
+        pedido = {"lote": lote, "arquivos": ["itens.csv"],
+                  "campos": {"data_inv": "31/12/2025", "cep": "60000-000", "end": "RUA A", "bairro": "CENTRO"}}
+        r = json.loads(self.pedir("POST", "/api/converter", json.dumps(pedido).encode())[1])
+        por = {i["c"]: i["p"] for i in r["itens"]}
+        self.assertEqual(por["A1"], [])
+        self.assertTrue(any("total do arquivo 5,00" in m for m in por["A1-2"]))
+        self.assertEqual([f["c"] for f in r["fora"]], ["A9"])
+        # o item que ficou fora vem com o que o arquivo trazia e o motivo, para a tela mostrar
+        self.assertEqual({k: r["fora"][0][k] for k in ("d", "q", "vu")}, {"d": "NEG", "q": "-1,000", "vu": "1,000000"})
+        self.assertTrue(any("negativo" in m for m in r["fora"][0]["p"]))
+        self.assertEqual((r["campos"]["cep"], r["campos"]["end"], r["campos"]["bairro"]), ("60000-000", "RUA A", "CENTRO"))
+        self.assertEqual(r["campos"]["periodo"], "02/2026")
+        self.assertIn("bloco H", r["resumo"]["conteudo"])
+
+
+class PainelCorrecoes(unittest.TestCase):
+    """Corrigir um item no painel: a correção entra no SPED, soma com as anteriores, fica guardada
+    para a empresa (só cadastro) e pode ser desfeita."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.token = "token-de-teste"
+        cls.dados = tempfile.TemporaryDirectory()
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", "ESTOQUE_TOKEN": cls.token, "ESTOQUE_DADOS": cls.dados.name}
+        cls.proc = subprocess.Popen([sys.executable, str(APP / "painel.py"), "--porta", "0", "--sem-navegador"],
+                                    stdout=subprocess.PIPE, text=True, env=env)
+        linha = cls.proc.stdout.readline()
+        assert linha.startswith("PORTA="), linha
+        cls.porta = int(linha.split("=")[1])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+        cls.proc.wait(5)
+        cls.dados.cleanup()
+
+    pedir = Painel.pedir
+
+    def json(self, rota, dados):
+        status, corpo = self.pedir("POST", rota, json.dumps(dados).encode())
+        return status, json.loads(corpo)
+
+    def novo_lote(self):
+        lote = json.loads(self.pedir("POST", "/api/lote")[1])["lote"]
+        xls = (APP / "tests" / "arquivos" / "cod_produto_antigo.xls").read_bytes()
+        self.pedir("POST", f"/api/enviar?lote={lote}&nome=estoque.xls", xls)
+        return lote
+
+    def converter(self, lote):
+        _, r = self.json("/api/converter", {"lote": lote, "arquivos": ["estoque.xls"], "campos": {
+            "cnpj": "11.222.333/0001-81", "uf": "CE", "cod_mun": "2304400", "data_inv": "31/12/2025"}})
+        self.assertNotIn("erro", r)
+        return {i["c"]: i for i in r["itens"]}, r
+
+    def ajustar(self, lote, chave, campos):
+        return self.json("/api/ajustar", {"lote": lote, "chave": chave, "campos": campos, "cnpj": "11222333000181"})
+
+    def test_corrige_soma_guarda_e_desfaz(self):
+        lote = self.novo_lote()
+        itens, _ = self.converter(lote)
+        caixa = itens["20"]
+        self.assertTrue(any("fracionada" in p for p in caixa["p"]))  # 3,5 CX
+        self.assertEqual(caixa["a"], [])
+
+        self.assertEqual(self.ajustar(lote, caixa["k"], {"qtd": "4", "ncm": "7318.15.00"}), (200, {"ok": True}))
+        itens, r = self.converter(lote)
+        self.assertEqual((itens["20"]["q"], itens["20"]["vt"], itens["20"]["n"]), ("4,000", "49,33", "73181500"))
+        self.assertEqual(itens["20"]["p"], [])  # a quantidade inteira resolveu a pendência
+        self.assertEqual(sorted(itens["20"]["a"]), ["ncm", "qtd"])
+        sped = self.pedir("GET", f"/baixar/{r['arquivo']}")[1].decode("latin-1")
+        self.assertIn("|H010|20|CX|4,000|12,333333|49,33|0||||49,33|", sped)
+        self.assertIn("|0200|20|PARAFUSO 3/8|||CX|00|73181500|", sped)
+
+        # Segunda correção do mesmo item: soma com a primeira
+        self.ajustar(lote, caixa["k"], {"descricao": "PARAFUSO SEXTAVADO 3/8"})
+        itens, _ = self.converter(lote)
+        self.assertEqual((itens["20"]["d"], itens["20"]["q"], itens["20"]["n"]), ("PARAFUSO SEXTAVADO 3/8", "4,000", "73181500"))
+
+        # Outro inventário da mesma empresa: vale o cadastro corrigido, não a quantidade
+        outro = self.novo_lote()
+        itens, _ = self.converter(outro)
+        self.assertEqual((itens["20"]["d"], itens["20"]["n"], itens["20"]["q"]), ("PARAFUSO SEXTAVADO 3/8", "73181500", "3,500"))
+        self.assertEqual(sorted(itens["20"]["a"]), ["descricao", "ncm"])
+
+        # Desfazer volta o que veio do arquivo, aqui e nos próximos inventários
+        self.ajustar(lote, caixa["k"], {})
+        for l in (lote, outro):
+            itens, _ = self.converter(l)
+            self.assertEqual((itens["20"]["d"], itens["20"]["n"], itens["20"]["q"], itens["20"]["a"]), ("PARAFUSO 3/8", "", "3,500", []))
+        guardadas = json.loads((Path(self.dados.name) / "ajustes.json").read_text(encoding="utf-8"))
+        self.assertNotIn(caixa["k"], guardadas.get("11222333000181", {}))
+
+    def test_pasta_dos_arquivos_gerados(self):
+        status, r = self.pedir("GET", "/api/pasta")
+        padrao = json.loads(r)
+        self.assertTrue(padrao["eh_padrao"])
+        self.assertEqual(padrao["pasta_saida"], str(Path(self.dados.name) / "saida"))
+        self.assertEqual(self.json("/api/pasta", {"pasta_saida": "relativa/sped"})[0], 400)
+        self.assertEqual(self.json("/api/pasta", {"pasta_saida": "/proc/nao-grava"})[0], 400)
+        with tempfile.TemporaryDirectory() as rede:
+            destino = Path(rede) / "fiscal" / "SPED"  # ainda não existe: o app cria
+            try:
+                status, r = self.json("/api/pasta", {"pasta_saida": f'"{destino}"'})  # colado com aspas do Explorador
+                self.assertEqual((status, r["pasta_saida"], r["eh_padrao"]), (200, str(destino), False))
+                _, gerado = self.converter(self.novo_lote())
+                self.assertTrue((destino / gerado["arquivo"]).is_file())
+                lista = json.loads(self.pedir("GET", "/api/gerados")[1])
+                self.assertEqual([g["arquivo"] for g in lista], [gerado["arquivo"]])
+                self.assertEqual(self.pedir("GET", f"/baixar/{gerado['arquivo']}")[0], 200)
+                self.assertEqual([p.name for p in destino.iterdir() if p.suffix == ".tmp"], [])  # teste de gravação apagado
+            finally:
+                _, r = self.json("/api/pasta", {"pasta_saida": ""})
+            self.assertTrue(r["eh_padrao"])
+
+    def test_correcao_invalida(self):
+        lote = self.novo_lote()
+        itens, _ = self.converter(lote)
+        self.assertEqual(self.ajustar(lote, "../../x", {"ncm": "1"})[0], 400)
+        self.assertEqual(self.ajustar(lote, itens["21"]["k"], ["ncm"])[0], 400)
+        self.assertEqual(self.ajustar("../x", itens["21"]["k"], {"ncm": "1"})[0], 400)
+        # Valor que não é número e NCM curto: o app avisa, não quebra
+        self.ajustar(lote, itens["21"]["k"], {"vl_unit": "abc", "ncm": "123", "campo_qualquer": "x"})
+        itens, _ = self.converter(lote)
+        self.assertTrue(any("não é um número" in p for p in itens["21"]["p"]))
+        self.assertTrue(any("não tem 8 dígitos" in p for p in itens["21"]["p"]))
+        self.assertEqual(itens["21"]["vt"], "81,50")
+
+
+if __name__ == "__main__":
+    unittest.main()
