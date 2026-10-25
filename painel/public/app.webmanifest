@@ -1,0 +1,13 @@
+{
+  "name": "Smart Fiscal",
+  "short_name": "Smart Fiscal",
+  "description": "Notas fiscais dos clientes e inventário do SPED Fiscal",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1d34c9",
+  "icons": [
+    { "src": "/icone.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "/icone.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
