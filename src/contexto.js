@@ -14,6 +14,7 @@ const { criarServicoSelecao } = require('./services/selecao')
 const { verificarAmbiente } = require('./ambiente')
 const { criarAutomacao } = require('./services/automacao')
 const { criarServicoBackup } = require('./services/backup')
+const { criarServicoCupons } = require('./services/cupons')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
 function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, agora, verificarAmbiente: verificar = true } = {}) {
@@ -41,6 +42,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     selecao: criarServicoSelecao(deps),
     automacao: criarAutomacao(deps),
     backup: criarServicoBackup(deps),
+    cupons: criarServicoCupons(deps),
     fechar: () => banco.close(),
   }
 }

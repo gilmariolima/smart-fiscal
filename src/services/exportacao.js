@@ -6,8 +6,11 @@
 //   ├─ entradas/canceladas/<chave>-nfe.xml  notas recebidas, completas e canceladas
 //   ├─ saidas/xml/<chave>-nfe.xml           notas emitidas pelo cliente (autXML), não canceladas
 //   ├─ saidas/canceladas/<chave>-nfe.xml    notas emitidas pelo cliente, canceladas
-//   └─ resumo.csv                           todas as notas da competência, inclusive as sem XML completo
-//                                           (pastas só existem quando têm notas)
+//   ├─ resumo.csv                           todas as notas da competência, inclusive as sem XML completo
+//   ├─ cupons/xml/<chave>-cfe.xml           CF-e (SAT/MFE) emitidos pelo cliente, não cancelados
+//   ├─ cupons/cancelados/<chave>-cfe.xml    CF-e cancelados, com o <chave>-cfe-canc.xml do cancelamento
+//   └─ cupons.csv                           todos os CF-e da competência
+//                                           (pastas e arquivos de cupons só existem quando há cupons)
 //
 // O layout de importação do Domínio e do Fortes ainda precisa ser confirmado com o escritório:
 // toda a montagem do pacote fica neste arquivo, para ajustar sem mexer no resto.
@@ -64,6 +67,24 @@ function montarCsv(notas) {
   return '﻿' + [COLUNAS_CSV.join(';'), ...notas.map(linhaCsv)].join('\r\n') + '\r\n'
 }
 
+const COLUNAS_CSV_CUPONS = ['chave', 'numero', 'equipamento', 'caixa', 'data_emissao', 'hora', 'valor_total', 'destinatario_doc', 'destinatario_nome', 'cancelado']
+
+function montarCsvCupons(cupons) {
+  const linha = (c) => [
+    comoTexto(c.chave),
+    celula(c.numero),
+    comoTexto(c.equipamento),
+    celula(c.caixa),
+    dataBr(c.data_emissao),
+    celula((c.data_emissao || '').slice(11, 19)),
+    valorBr(c.valor_total),
+    comoTexto(c.destinatario_doc),
+    celula(c.destinatario_nome),
+    c.cancelado ? 'sim' : 'não',
+  ].join(';')
+  return '﻿' + [COLUNAS_CSV_CUPONS.join(';'), ...cupons.map(linha)].join('\r\n') + '\r\n'
+}
+
 // ---------- ZIP ----------
 
 function gravarZip(destino, arquivos) {
@@ -104,6 +125,9 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
     notas: db.prepare(`SELECT * FROM notas WHERE cliente_id = ? AND competencia = ?
       ORDER BY data_emissao, emitente_cnpj, CAST(numero AS INTEGER)`),
     marcar: db.prepare('UPDATE notas SET exportada_em = ? WHERE id = ?'),
+    cupons: db.prepare(`SELECT c.*, k.caminho_xml AS caminho_xml_canc, (k.chave IS NOT NULL) AS cancelado
+      FROM cupons c LEFT JOIN cupons_cancelamentos k ON k.chave_venda = c.chave
+      WHERE c.cliente_id = ? AND c.competencia = ? ORDER BY c.data_emissao, c.equipamento, CAST(c.numero AS INTEGER)`),
     iniciarExecucao: db.prepare(`INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'exportacao', ?)`),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, docs_recebidos = @docs, erro = @erro, x_motivo = @x_motivo WHERE id = @id`),
   }
@@ -142,6 +166,24 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
       }
       arquivos.push({ nome: 'resumo.csv', conteudo: Buffer.from(montarCsv(notas), 'utf8'), data: agora() })
 
+      // CF-e emitidos pelo cliente no mês (importados dos XMLs)
+      const cupons = sql.cupons.all(cliente.id, competencia)
+      const porCupom = { validos: 0, cancelados: 0 }
+      for (const c of cupons) {
+        const pasta = c.cancelado ? 'cupons/cancelados' : 'cupons/xml'
+        for (const [rel, nome] of [[c.caminho_xml, `${c.chave}-cfe.xml`], [c.cancelado ? c.caminho_xml_canc : null, `${c.chave}-cfe-canc.xml`]]) {
+          if (!rel) continue
+          const caminho = armazenamento.absoluto(rel)
+          if (!fs.existsSync(caminho)) {
+            avisos.push(`XML do CF-e ${c.chave} não encontrado em ${caminho}.`)
+            continue
+          }
+          arquivos.push({ nome: `${pasta}/${nome}`, conteudo: fs.readFileSync(caminho), data: agora() })
+        }
+        porCupom[c.cancelado ? 'cancelados' : 'validos']++
+      }
+      if (cupons.length) arquivos.push({ nome: 'cupons.csv', conteudo: Buffer.from(montarCsvCupons(cupons), 'utf8'), data: agora() })
+
       fs.mkdirSync(config.pastaExports, { recursive: true })
       const nome = `${pastaDoCliente(cliente)}_${competencia}.zip`
       const destino = path.join(config.pastaExports, nome)
@@ -164,9 +206,11 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
         totalNotas: notas.length,
         avisos,
         porTipo,
+        cupons: porCupom,
       }
       for (const a of avisos) logger.warn(a, { cnpj: cliente.cnpj })
-      sql.fecharExecucao.run({ id: execId, fim: iso(), docs: incluidas.length, erro: null, x_motivo: `${nome} (${notas.length} notas no CSV)` })
+      const textoCupons = cupons.length ? ` e ${cupons.length} CF-e` : ''
+      sql.fecharExecucao.run({ id: execId, fim: iso(), docs: incluidas.length + cupons.length, erro: null, x_motivo: `${nome} (${notas.length} notas no CSV${textoCupons})` })
       logger.info('Exportação gerada', { cnpj: cliente.cnpj, competencia, arquivo: nome, xmls: resultado.xmls, canceladas: resultado.canceladas, semXml: resultado.semXml })
       return resultado
     } catch (e) {
@@ -179,4 +223,4 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
   return { exportar }
 }
 
-module.exports = { criarServicoExportacao, montarCsv, COLUNAS_CSV }
+module.exports = { criarServicoExportacao, montarCsv, montarCsvCupons, COLUNAS_CSV, COLUNAS_CSV_CUPONS }
