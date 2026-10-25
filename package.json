@@ -1,0 +1,120 @@
+{
+  "name": "smart-fiscal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smart Fiscal: captura das NF-e dos clientes (SEFAZ) e inventário do bloco H do SPED Fiscal, num app só.",
+  "type": "commonjs",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "app": "electron-builder install-app-deps && electron .",
+    "cli": "node src/cli.js",
+    "preparar-python": "node scripts/preparar-python.js",
+    "pretest": "node -e \"try { new (require('better-sqlite3'))(':memory:').close() } catch { process.exit(1) }\" || npm rebuild better-sqlite3",
+    "test": "node --test && node scripts/python.js -m unittest discover -s tests",
+    "painel:build": "vite build painel",
+    "painel:dev": "vite painel",
+    "postinstall": "vite build painel",
+    "pacote": "vite build painel && node scripts/preparar-python.js && electron-builder --win --x64 --publish never"
+  },
+  "author": "Gilmario Lima",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "better-sqlite3": "^13.0.3",
+    "commander": "^15.0.0",
+    "dotenv": "^18.0.7",
+    "electron-updater": "^6.8.11",
+    "express": "^5.3.0",
+    "fast-xml-parser": "^5.11.2",
+    "node-cron": "^4.6.0",
+    "node-forge": "^1.4.0",
+    "node-mde": "^0.14.13"
+  },
+  "overrides": {
+    "axios": "^1.20.0",
+    "node-forge": "^1.4.0",
+    "@xmldom/xmldom": "^0.8.15",
+    "fast-xml-parser": "^5.11.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "adm-zip": "^0.5.16",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router": "^8.4.0",
+    "vite": "^8.3.4"
+  },
+  "build": {
+    "appId": "com.gilmariolima.smartfiscal",
+    "productName": "Smart Fiscal",
+    "copyright": "Smart Fiscal",
+    "directories": {
+      "output": "pacote"
+    },
+    "files": [
+      "package.json",
+      ".env.example",
+      "electron/**/*",
+      "src/**/*",
+      "windows/icone.ico"
+    ],
+    "extraResources": [
+      {
+        "from": "windows/smart-fiscal-cli.cmd",
+        "to": "smart-fiscal-cli.cmd"
+      },
+      {
+        "from": "estoque",
+        "to": "estoque",
+        "filter": [
+          "**/*",
+          "!tests/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "windows/icone.ico",
+      "executableName": "Smart Fiscal"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Smart Fiscal",
+      "deleteAppDataOnUninstall": false,
+      "include": "windows/installer.nsh",
+      "artifactName": "Smart-Fiscal-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "icon": "painel/public/icone.png",
+      "category": "Office"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "gilmariolima",
+        "repo": "smart-fiscal",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
