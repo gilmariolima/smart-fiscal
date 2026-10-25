@@ -1,0 +1,466 @@
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const milhar = (v) => {
+  if (v === "" || v == null) return "";
+  const [i, d] = String(v).split(",");
+  return i.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + (d !== undefined ? "," + d : "");
+};
+const POR_PAGINA = 300;
+
+const estado = { lote: null, arquivos: [], principal: null, editados: new Set(), res: null, filtro: "todos", busca: "", limite: POR_PAGINA };
+
+async function api(url, opcoes = {}) {
+  const r = await fetch(url, opcoes);
+  const dados = await r.json().catch(() => ({ erro: "resposta inválida do servidor" }));
+  if (!r.ok && !dados.erro) dados.erro = `erro ${r.status}`;
+  return dados;
+}
+
+function aviso(msg, tipo = "ok") {
+  const el = document.createElement("div");
+  el.className = `aviso aviso-${tipo}`;
+  el.innerHTML = `<i class="fa-solid ${tipo === "ok" ? "fa-circle-check" : "fa-triangle-exclamation"}"></i><span>${esc(msg)}</span>`;
+  $("#avisos").append(el);
+  setTimeout(() => { el.style.opacity = "0"; setTimeout(() => el.remove(), 300); }, 4000);
+}
+
+function processando(txt) {
+  $("#processando").hidden = !txt;
+  if (txt) $("#procTxt").textContent = txt;
+}
+
+/* ---------------- abas ---------------- */
+function abrirAba(nome) {
+  $$(".navbtn").forEach((b) => b.classList.toggle("ativo", b.dataset.aba === nome));
+  $$("main > section").forEach((s) => (s.hidden = s.id !== `aba-${nome}`));
+  if (nome === "gerados") carregarGerados();
+  if (nome === "escritorio") carregarEscritorio();
+}
+$$(".navbtn").forEach((b) => b.addEventListener("click", () => abrirAba(b.dataset.aba)));
+
+/* ---------------- envio de arquivos ---------------- */
+async function enviar(lista) {
+  const arquivos = [...lista];
+  if (!arquivos.length) return;
+  processando("Enviando arquivos…");
+  try {
+    if (!estado.lote) estado.lote = (await api("/api/lote", { method: "POST" })).lote;
+    for (const f of arquivos) {
+      const r = await api(`/api/enviar?lote=${estado.lote}&nome=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+      if (r.erro) { aviso(`${f.name}: ${r.erro}`, "erro"); continue; }
+      if (!estado.arquivos.includes(r.nome)) estado.arquivos.push(r.nome);
+    }
+  } finally {
+    processando(null);
+  }
+  await converter();
+}
+
+async function converter(msg = "Gerando o SPED…") {
+  if (!estado.arquivos.length) return limparResultado();
+  const campos = {};
+  const form = $("#formEmp");
+  estado.editados.forEach((k) => (campos[k] = form.elements[k].value));
+  processando(msg);
+  let r;
+  try {
+    r = await api("/api/converter", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lote: estado.lote, arquivos: estado.arquivos, principal: estado.principal, campos }),
+    });
+  } finally {
+    processando(null);
+  }
+  estado.res = r;
+  estado.principal = r.principal || estado.principal;
+  desenharArquivos(r.arquivos || []);
+  $("#erroConv").hidden = !r.erro;
+  $("#erroConv").textContent = r.erro || "";
+  if (r.erro) {
+    $("#btnBaixar").hidden = true;
+    $("#btnDominio").hidden = true;
+    $("#btnPend").hidden = true;
+    // O formulário continua na tela: é nele que se resolve o erro (ex.: a data que o arquivo não traz)
+    $("#resultado").hidden = !r.campos;
+    if (r.campos) {
+      preencherFormulario(r.campos);
+      estado.res = { itens: [], fora: [] };
+      $("#segFora").hidden = true;
+      $("#nTodos").textContent = "0";
+      $("#nPend").textContent = "0";
+      $("#resumo").innerHTML = "";
+      $("#gerais").innerHTML = "";
+      $("#kpis").innerHTML = "";
+      desenharItens();
+      const campo = r.campo && $("#formEmp").elements[r.campo];
+      if (campo) {
+        campo.classList.add("falta");
+        campo.focus();
+      }
+    }
+    return;
+  }
+  estado.limite = POR_PAGINA;
+  desenharResultado();
+  atualizarContaGerados();
+}
+
+function desenharArquivos(infos) {
+  const tem = estado.arquivos.length > 0;
+  $("#cardArquivos").hidden = !tem;
+  $("#btnNovo").hidden = !tem;
+  $("#solta").classList.toggle("compacta", tem);
+  const porNome = Object.fromEntries(infos.map((i) => [i.nome, i]));
+  $("#listaArquivos").innerHTML = estado.arquivos.map((nome, n) => {
+    const i = porNome[nome] || { nome };
+    let uso;
+    if (i.erro) uso = `<span class="carimbo c-recus" title="${esc(i.erro)}">Não lido</span>`;
+    else if (nome === estado.principal) uso = `<span class="carimbo c-rec">Inventário</span>`;
+    else uso = `<span class="tag" title="Completa descrição, NCM, tipo e custo dos itens do inventário">Complemento</span>`;
+    const trocar = !i.erro && nome !== estado.principal
+      ? `<button class="icon-btn" data-principal="${esc(nome)}" title="Usar este arquivo como inventário"><i class="fa-solid fa-star"></i></button>` : `<span class="vago"></span>`;
+    return `<tr>
+      <td class="td canhoto"><span class="carbono">${String(n + 1).padStart(2, "0")}</span></td>
+      <td class="td"><span class="nome-arq">${esc(nome)}</span></td>
+      <td class="td col-larga">${esc(i.tipo || "")}${i.valores === false ? ' <span class="sub">sem valores</span>' : ""}</td>
+      <td class="td direita carbono">${i.itens != null ? esc(milhar(i.itens)) : ""}</td>
+      <td class="td">${uso}</td>
+      <td class="td"><div class="acoes">${trocar}<button class="icon-btn perigo" data-tirar="${esc(nome)}" title="Tirar arquivo"><i class="fa-solid fa-xmark"></i></button></div></td>
+    </tr>`;
+  }).join("");
+  const n = estado.arquivos.length;
+  const r = estado.res;
+  $("#contaConv").textContent = !n ? "Nenhum arquivo"
+    : `${n} ${n > 1 ? "arquivos" : "arquivo"}` + (r && !r.erro && r.campos?.data_inv ? ` · inventário em ${r.campos.data_inv}` : "");
+}
+
+$("#listaArquivos").addEventListener("click", async (e) => {
+  const tirar = e.target.closest("[data-tirar]");
+  const principal = e.target.closest("[data-principal]");
+  if (tirar) {
+    const nome = tirar.dataset.tirar;
+    await api(`/api/enviar?lote=${estado.lote}&nome=${encodeURIComponent(nome)}`, { method: "DELETE" });
+    estado.arquivos = estado.arquivos.filter((a) => a !== nome);
+    if (estado.principal === nome) estado.principal = null;
+    if (!estado.arquivos.length) return novoCliente();
+    converter();
+  }
+  if (principal) {
+    estado.principal = principal.dataset.principal;
+    ["data_inv", "periodo"].forEach((k) => estado.editados.delete(k));
+    converter();
+  }
+});
+
+/* ---------------- resultado ---------------- */
+function itensFiltrados() {
+  const b = estado.busca.trim().toUpperCase();
+  // "Fora do arquivo": os itens do inventário que não entraram no SPED, com o motivo
+  const fonte = estado.filtro === "fora" ? estado.res.fora || [] : estado.res.itens;
+  return fonte.filter((i) =>
+    (estado.filtro !== "pend" || i.p.length) &&
+    (!b || i.c.toUpperCase().includes(b) || (i.d || "").toUpperCase().includes(b)));
+}
+
+function desenharItens() {
+  const lista = itensFiltrados();
+  const mostra = lista.slice(0, estado.limite);
+  const fora = estado.filtro === "fora";
+  // Nos filtros de pendência e de fora, o motivo fica escrito embaixo da descrição
+  const motivos = (i) => (estado.filtro === "todos" ? [] : i.p).map((m) => `<span class="motivo">${esc(m)}</span>`).join("");
+  const carimbo = (i) => fora ? `<span class="carimbo c-recus" title="${esc(i.p.join("\n"))}">Fora</span>`
+    : i.p.length ? `<span class="carimbo c-pend" title="${esc(i.p.join("\n"))}">Pendência</span>`
+    : i.a.length ? `<span class="carimbo c-ajust" title="Corrigido no painel">Corrigido</span>`
+    : `<span class="carimbo c-ok">OK</span>`;
+  $("#listaItens").innerHTML = mostra.length ? mostra.map((i) => `<tr class="editavel" data-chave="${esc(i.k)}" title="Clique para corrigir">
+      <td class="td canhoto"><span class="codigo">${esc(i.c)}</span></td>
+      <td class="td d-col">${esc(i.d)}${motivos(i)}</td>
+      <td class="td col-larga">${esc(i.n)}</td>
+      <td class="td col-larga">${esc(i.u)}</td>
+      <td class="td direita carbono">${esc(milhar(i.q))}</td>
+      <td class="td direita col-larga carbono">${esc(milhar(i.vu))}</td>
+      <td class="td direita carbono">${esc(milhar(i.vt))}</td>
+      <td class="td col-selo">${carimbo(i)}</td>
+      <td class="td col-editar"><button class="icon-btn" type="button" tabindex="-1" aria-label="Corrigir"><i class="fa-solid fa-pen"></i></button></td>
+    </tr>`).join("")
+    : `<tr><td colspan="9" class="vazio-lista"><i class="fa-solid fa-magnifying-glass"></i><br>Nenhum item</td></tr>`;
+  const resto = lista.length - mostra.length;
+  $("#maisItens").hidden = resto <= 0;
+  $("#maisItens").textContent = `Mostrar mais ${milhar(Math.min(resto, POR_PAGINA))} de ${milhar(resto)}`;
+}
+
+function preencherFormulario(campos) {
+  const form = $("#formEmp");
+  // O que a pessoa já digitou fica: só preenche os campos que ela não mexeu
+  Object.entries(campos).forEach(([k, v]) => { if (form.elements[k] && !estado.editados.has(k)) form.elements[k].value = v; });
+  ["nome", "cnpj", "ie", "uf", "cod_mun", "cep", "end", "bairro"].forEach((k) => form.elements[k].classList.toggle("falta", !form.elements[k].value.trim()));
+  form.elements.data_inv.classList.remove("falta");
+  form.elements.periodo.classList.remove("falta");
+}
+
+function desenharResultado() {
+  const r = estado.res;
+  $("#resultado").hidden = false;
+  preencherFormulario(r.campos);
+  $("#nTodos").textContent = milhar(r.itens.length);
+  $("#nPend").textContent = milhar(r.itens.filter((i) => i.p.length).length);
+  $("#nFora").textContent = milhar(r.fora.length);
+  $("#segFora").hidden = !r.fora.length;
+  if (estado.filtro === "fora" && !r.fora.length) mudarFiltro("todos");
+
+  const nP = r.itens.filter((i) => i.p.length).length;
+  const kpi = (ic, rot, val, cls = "") => `<div class="kpi ${cls}"><i class="fa-solid ${ic}"></i><div><span>${esc(rot)}</span><b class="carbono">${esc(val)}</b></div></div>`;
+  $("#kpis").innerHTML = kpi("fa-boxes-stacked", "Itens no SPED", milhar(r.itens.length))
+    + kpi("fa-sack-dollar", "Valor do estoque", "R$ " + milhar(r.resumo.total))
+    + kpi(nP ? "fa-triangle-exclamation" : "fa-circle-check", "Com pendência", milhar(nP), nP ? "k-pend" : "k-ok")
+    + kpi("fa-ban", "Fora do arquivo", milhar(r.fora.length), r.fora.length ? "k-erro" : "");
+  const linhas = [["Total do inventário", milhar(r.resumo.total)]];
+  if (r.resumo.origem && r.resumo.origem !== r.resumo.total) linhas.push(["Total no arquivo do cliente", milhar(r.resumo.origem)]);
+  linhas.push(["Período", r.resumo.periodo], ["Leiaute", r.resumo.leiaute], ["Linhas do arquivo", milhar(r.resumo.linhas)]);
+  if (r.resumo.conteudo) linhas.push(["Conteúdo", r.resumo.conteudo]);
+  $("#resumo").innerHTML = linhas.map(([a, b]) => `<p><span>${esc(a)}</span><span class="carbono">${esc(b)}</span></p>`).join("");
+
+  const avisos = r.gerais.map((g) => g.msg);
+  if (r.fora.length) avisos.push(`${r.fora.length} ${r.fora.length > 1 ? "itens" : "item"} fora do arquivo`);
+  $("#gerais").innerHTML = avisos.map((m) => `<p><i class="fa-solid fa-triangle-exclamation"></i><span>${esc(m)}</span></p>`).join("");
+
+  $("#btnBaixar").hidden = false;
+  $("#btnBaixar").href = `/baixar/${encodeURIComponent(r.arquivo)}`;
+  $("#btnDominio").hidden = !r.dominio;
+  if (r.dominio) $("#btnDominio").href = `/baixar/${encodeURIComponent(r.dominio)}`;
+  $("#btnPend").hidden = !r.pendencias;
+  if (r.pendencias) $("#btnPend").href = `/baixar/${encodeURIComponent(r.pendencias)}`;
+  desenharArquivos(r.arquivos);
+  desenharItens();
+}
+
+function limparResultado() {
+  estado.res = null;
+  $("#resultado").hidden = true;
+  $("#btnBaixar").hidden = true;
+  $("#btnDominio").hidden = true;
+  $("#erroConv").hidden = true;
+  desenharArquivos([]);
+}
+
+function novoCliente() {
+  Object.assign(estado, { lote: null, arquivos: [], principal: null, res: null, busca: "", filtro: "todos" });
+  estado.editados.clear();
+  $("#formEmp").reset();
+  $("#busca").value = "";
+  $$("#segs .seg").forEach((s) => s.classList.toggle("on", s.dataset.f === "todos"));
+  limparResultado();
+}
+
+function mudarFiltro(f) {
+  estado.filtro = f;
+  estado.limite = POR_PAGINA;
+  $$("#segs .seg").forEach((x) => x.classList.toggle("on", x.dataset.f === f));
+  desenharItens();
+}
+$("#segs").addEventListener("click", (e) => {
+  const s = e.target.closest(".seg");
+  if (s) mudarFiltro(s.dataset.f);
+});
+$("#busca").addEventListener("input", (e) => { estado.busca = e.target.value; estado.limite = POR_PAGINA; desenharItens(); });
+$("#maisItens").addEventListener("click", () => { estado.limite += POR_PAGINA; desenharItens(); });
+$("#formEmp").addEventListener("input", (e) => {
+  if (!e.target.name) return;
+  estado.editados.add(e.target.name);
+  e.target.classList.remove("falta");
+});
+$("#formEmp").addEventListener("submit", (e) => { e.preventDefault(); converter(); });
+$("#btnGerar").addEventListener("click", () => converter().then(() => !estado.res?.erro && aviso("SPED gerado de novo")));
+$("#btnNovo").addEventListener("click", novoCliente);
+$("#btnAdd").addEventListener("click", () => $("#escolher").click());
+$("#solta").addEventListener("click", () => $("#escolher").click());
+$("#escolher").addEventListener("change", (e) => { enviar(e.target.files); e.target.value = ""; });
+
+let arrasto = 0;
+document.addEventListener("dragenter", (e) => { if (e.dataTransfer.types.includes("Files")) { arrasto++; document.body.classList.add("arrastando"); } });
+document.addEventListener("dragleave", () => { if (--arrasto <= 0) { arrasto = 0; document.body.classList.remove("arrastando"); } });
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  arrasto = 0;
+  document.body.classList.remove("arrastando");
+  if (!$("#aba-converter").hidden && e.dataTransfer.files.length) enviar(e.dataTransfer.files);
+});
+
+/* ---------------- corrigir item ---------------- */
+const CAMPOS_ITEM = ["codigo", "descricao", "ncm", "unidade", "tipo", "qtd", "vl_unit"];
+let itemAberto = null;
+$("#formItem").elements.tipo.innerHTML = $("#formEmp").elements.tipo_item.innerHTML;
+
+function abrirItem(chave) {
+  const r = estado.res;
+  const i = [...r.itens, ...(r.fora || [])].find((x) => x.k === chave);
+  if (!i) return;
+  const f = $("#formItem");
+  // O que aparece no formulário é o valor atual; só o que mudar vira correção
+  const atuais = { codigo: i.c, descricao: i.d === "(sem descrição no arquivo)" ? "" : i.d, ncm: i.n, unidade: i.u,
+    tipo: i.t || r.campos.tipo_item || "00", qtd: milhar(i.q), vl_unit: milhar(i.vu) };
+  itemAberto = { chave, atuais };
+  CAMPOS_ITEM.forEach((k) => (f.elements[k].value = atuais[k] ?? ""));
+  $("#itemCod").textContent = i.c;
+  $("#itemPend").innerHTML = i.p.map((m) => `<p><i class="fa-solid fa-triangle-exclamation"></i><span>${esc(m)}</span></p>`).join("");
+  $("#itemDesfazer").hidden = !i.a.length;
+  $("#modalItem").hidden = false;
+  // O cursor vai para o campo da primeira pendência
+  const pend = i.p.join(" ");
+  const campo = [[/NCM/, "ncm"], [/sem quantidade|fracionada|quantidade zero/, "qtd"], [/sem valor|unitário|negativo/, "vl_unit"],
+    [/unidade/, "unidade"], [/tipo do item/, "tipo"], [/código/, "codigo"]].find(([re]) => re.test(pend));
+  f.elements[campo ? campo[1] : "descricao"].focus();
+}
+
+async function salvarItem(campos) {
+  const r = await api("/api/ajustar", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lote: estado.lote, chave: itemAberto.chave, campos, cnpj: $("#formEmp").elements.cnpj.value }),
+  });
+  if (r.erro) return aviso(r.erro, "erro");
+  $("#modalItem").hidden = true;
+  await converter("Gerando de novo com a correção…");
+  if (!estado.res?.erro) aviso(Object.keys(campos).length ? "Item corrigido e SPED gerado de novo" : "Correção desfeita");
+}
+
+$("#listaItens").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-chave]");
+  if (tr && !window.getSelection().toString()) abrirItem(tr.dataset.chave);
+});
+$("#formItem").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const campos = {};
+  CAMPOS_ITEM.forEach((k) => {
+    const v = f.elements[k].value.trim();
+    if (v && v !== String(itemAberto.atuais[k] ?? "")) campos[k] = v;
+  });
+  // Nada mudou: fecha sem gerar de novo (as correções já salvas continuam)
+  if (!Object.keys(campos).length) { $("#modalItem").hidden = true; return; }
+  salvarItem(campos);
+});
+$("#itemDesfazer").addEventListener("click", () => salvarItem({}));
+$("#modalItem").addEventListener("click", (e) => { if (e.target.id === "modalItem" || e.target.closest("[data-fechar]")) $("#modalItem").hidden = true; });
+
+/* ---------------- arquivos gerados ---------------- */
+let gerados = [];
+async function atualizarContaGerados() {
+  gerados = await api("/api/gerados");
+  const c = $("#contGerados");
+  c.hidden = !gerados.length;
+  c.textContent = gerados.length;
+  return gerados;
+}
+
+function mostrarPasta(p) {
+  $("#pastaSaida").value = p.pasta_saida;
+  $("#pastaPadrao").hidden = p.eh_padrao;
+  const nota = $("#pastaNota");
+  nota.classList.toggle("pasta-erro", !p.acessivel);
+  nota.textContent = !p.acessivel ? "A pasta não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED não pode ser gerado até ela voltar."
+    : p.eh_padrao ? ""
+    : "Os próximos arquivos vão para esta pasta. Os gerados antes continuam na pasta anterior.";
+}
+
+$("#formPasta").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await salvarPasta($("#pastaSaida").value);
+});
+$("#pastaPadrao").addEventListener("click", () => salvarPasta(""));
+async function salvarPasta(valor) {
+  const r = await api("/api/pasta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pasta_saida: valor }) });
+  if (r.erro) return aviso(r.erro, "erro");
+  aviso(r.eh_padrao ? "Voltou para a pasta padrão" : "Pasta dos arquivos gerados salva");
+  carregarGerados();
+}
+
+async function carregarGerados() {
+  api("/api/pasta").then((p) => !p.erro && mostrarPasta(p));
+  await atualizarContaGerados();
+  $("#contaGer").textContent = gerados.length ? `${gerados.length} ${gerados.length > 1 ? "arquivos" : "arquivo"} na pasta` : "Nenhum arquivo gerado";
+  $("#listaGerados").innerHTML = gerados.length ? gerados.map((g) => `<tr>
+      <td class="td canhoto"><span class="carbono">${esc(g.inventario || "—")}</span><small title="${esc(g.arquivo)}">${esc(g.arquivo.replace(/^SPED_/, "").replace(/\.txt$/, ""))}</small></td>
+      <td class="td">${esc(g.nome)}</td>
+      <td class="td col-larga">${esc(g.cnpj)}</td>
+      <td class="td direita carbono">${esc(milhar(g.itens))}</td>
+      <td class="td direita carbono">${esc(milhar(g.total))}</td>
+      <td class="td col-larga">${esc(g.data)}</td>
+      <td class="td"><div class="acoes">
+        <a class="btn btn-primary btn-p" href="/baixar/${encodeURIComponent(g.arquivo)}">Baixar</a>
+        <button class="icon-btn" data-menu="${esc(g.arquivo)}" title="Mais"><i class="fa-solid fa-ellipsis"></i></button>
+      </div></td>
+    </tr>`).join("")
+    : `<tr><td colspan="7" class="vazio-lista"><i class="fa-solid fa-box-open"></i><br>Os arquivos gerados aparecem aqui</td></tr>`;
+}
+
+function fecharMenu() { $(".menu-pop")?.remove(); }
+document.addEventListener("click", (e) => { if (!e.target.closest(".menu-pop, [data-menu]")) fecharMenu(); });
+
+$("#listaGerados").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-menu]");
+  if (!b) return;
+  fecharMenu();
+  const g = gerados.find((x) => x.arquivo === b.dataset.menu);
+  const menu = document.createElement("div");
+  menu.className = "menu-pop";
+  menu.innerHTML = `
+    <button class="menu-item" data-acao="ver"><i class="fa-solid fa-eye"></i>Ver arquivo</button>
+    ${g.dominio ? `<a class="menu-item" href="/baixar/${encodeURIComponent(g.dominio)}"><i class="fa-solid fa-file-export"></i>Baixar para o Domínio</a>` : ""}
+    ${g.pendencias ? `<a class="menu-item" href="/baixar/${encodeURIComponent(g.pendencias)}"><i class="fa-solid fa-file-csv"></i>Baixar pendências</a>` : ""}
+    <button class="menu-item perigo" data-acao="excluir"><i class="fa-solid fa-trash"></i>Excluir</button>`;
+  document.body.append(menu);
+  const p = b.getBoundingClientRect();
+  menu.style.top = `${p.bottom + window.scrollY + 6}px`;
+  menu.style.left = `${Math.max(12, p.right + window.scrollX - menu.offsetWidth)}px`;
+  menu.addEventListener("click", async (ev) => {
+    const acao = ev.target.closest("[data-acao]")?.dataset.acao;
+    fecharMenu();
+    if (acao === "ver") verArquivo(g.arquivo);
+    if (acao === "excluir" && confirm(`Excluir ${g.arquivo}?`)) {
+      await api(`/api/gerado/${encodeURIComponent(g.arquivo)}`, { method: "DELETE" });
+      aviso("Arquivo excluído");
+      carregarGerados();
+    }
+  });
+});
+
+let verAtual = { nome: "", de: 0 };
+async function verArquivo(nome, de = 0) {
+  const r = await api(`/api/ver/${encodeURIComponent(nome)}?de=${de}`);
+  if (r.erro) return aviso(r.erro, "erro");
+  verAtual = { nome, de: de + r.linhas.length };
+  $("#verTit").textContent = nome;
+  const html = r.linhas.map((l, n) => `<span>${de + n + 1}</span>${esc(l)}`).join("\n");
+  if (de === 0) $("#verTxt").innerHTML = html; else $("#verTxt").insertAdjacentHTML("beforeend", "\n" + html);
+  const resto = r.total - verAtual.de;
+  $("#verMais").hidden = resto <= 0;
+  $("#verMais").textContent = `Mostrar mais linhas (faltam ${milhar(resto)})`;
+  $("#modalVer").hidden = false;
+}
+$("#verMais").addEventListener("click", () => verArquivo(verAtual.nome, verAtual.de));
+$("#modalVer").addEventListener("click", (e) => { if (e.target.id === "modalVer" || e.target.closest("[data-fechar]")) $("#modalVer").hidden = true; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("#modalVer").hidden = true; $("#modalItem").hidden = true; fecharMenu(); } });
+
+$("#btnPasta").addEventListener("click", async () => {
+  const r = await api("/api/abrir-pasta", { method: "POST" });
+  if (r.erro) aviso(r.erro, "erro");
+});
+
+/* ---------------- escritório ---------------- */
+async function carregarEscritorio() {
+  const d = await api("/api/escritorio");
+  const f = $("#formEsc");
+  [...f.elements].forEach((el) => { if (el.name) el.value = d[el.name] || ""; });
+}
+$("#formEsc").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const dados = Object.fromEntries(new FormData(e.target));
+  const r = await api("/api/escritorio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (r.erro) return aviso(r.erro, "erro");
+  aviso("Dados do escritório salvos");
+  if (estado.arquivos.length) converter();
+});
+
+atualizarContaGerados();
