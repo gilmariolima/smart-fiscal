@@ -14,6 +14,11 @@ export default function ReciboExportacao({ r, aoFechar }) {
         {plural(r.canceladas, 'cancelada', 'canceladas')}, {inteiro(r.semXml)} sem XML completo · {plural(r.totalNotas, 'nota', 'notas')} no
         resumo.csv.
       </p>
+      {!!(r.cupons?.validos || r.cupons?.cancelados) && (
+        <p>
+          {plural(r.cupons.validos, 'cupom fiscal (CF-e)', 'cupons fiscais (CF-e)')}, {plural(r.cupons.cancelados, 'cancelado', 'cancelados')} no cupons.csv.
+        </p>
+      )}
       {!!r.avisos?.length && (
         <ul className="recibo-avisos">
           {r.avisos.map((a, i) => (
