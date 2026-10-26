@@ -38,7 +38,7 @@ Quem veio do SmartDoc e do Estoque SPED já tem tudo isso e pode pular esta part
 
 1. **Cadastros → Contador do SPED:** preencha nome, CPF, CRC, e-mail e município (código IBGE) do contador e clique em **Salvar**. Sem isso, o SPED sai sem o registro 0100, e o PVA recusa.
 2. **Cadastros → Clientes → Novo cliente:** CNPJ, razão social, UF e o certificado A1 com a senha, para cada cliente que vai ter as notas buscadas.
-3. A busca de notas começa em **homologação** (testes da SEFAZ). Para passar para produção, veja "Primeiro teste: homologação" em [docs/NOTAS.md](docs/NOTAS.md).
+3. A busca de notas já trabalha em **produção** (as notas reais da SEFAZ). Não há nada para trocar.
 
 ## 4. Usar
 

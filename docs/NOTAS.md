@@ -30,7 +30,7 @@ Funciona sozinho em segundo plano (agendado) e também por comandos manuais.
 
 | Variável | Padrão | Para que serve |
 |---|---|---|
-| `TP_AMB` | `2` | `2` = homologação (testes), `1` = produção. Comece em 2. |
+| `TP_AMB` | `2` | `2` = homologação (testes), `1` = produção. No app Smart Fiscal é sempre `1`: a instalação já cria o `.env` em produção e passa para `1` um `.env` que esteja em `2` (menos no modo demonstração, `SEFAZ_MOCK=1`). |
 | `MASTER_KEY` | (vazia) | Obrigatória. 64 caracteres hexadecimais. Sem ela o sistema não inicia. |
 | `CRON_CAPTURA` | `0 8,13 * * *` | Quando a busca automática roda (formato cron). Padrão: todo dia às 8h e às 13h. Não use menos de 1 hora entre buscas. |
 | `INTERVALO_ENTRE_CHAMADAS_MS` | `2000` | Pausa entre chamadas à SEFAZ. |
@@ -110,6 +110,8 @@ Também dá para cadastrar no painel: menu **Clientes**, linha **Escritório** l
 - `ambiente:producao` também zera a fila (NSU) do escritório.
 
 ## Primeiro teste: homologação
+
+**No app Smart Fiscal isto não se aplica:** ele trabalha sempre em produção. Ao abrir, se encontrar o `.env` ou o banco em homologação (de uma instalação antiga), passa os dois para produção sozinho. Os clientes e os certificados continuam; as notas de teste e a posição na fila de homologação são descartadas. O que segue vale para quem roda o motor das notas pela linha de comando.
 
 Antes de usar em produção, teste com o certificado de **um** cliente no ambiente de homologação da SEFAZ:
 
