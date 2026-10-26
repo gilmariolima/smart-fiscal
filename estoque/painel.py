@@ -16,6 +16,7 @@ import shutil
 import sys
 import threading
 import traceback
+import unicodedata
 import uuid
 import webbrowser
 from datetime import datetime
@@ -65,6 +66,30 @@ def dentro(pasta, nome):
     if arq.resolve().parent != pasta.resolve():
         raise PedidoInvalido("nome de arquivo inválido")
     return arq
+
+
+def gerado(nome):
+    """Arquivo gerado pelo caminho relativo à pasta dos gerados (empresa/AAAA-MM/arquivo), nunca fora dela."""
+    pasta = pasta_saida()
+    partes = [p for p in unquote(nome).replace("\\", "/").split("/") if p]
+    if not partes or len(partes) > 3 or any(not p.strip(". ") for p in partes):
+        raise PedidoInvalido("nome de arquivo inválido")
+    arq = pasta.joinpath(*(nome_seguro(p) for p in partes))
+    if not arq.resolve().is_relative_to(pasta.resolve()):
+        raise PedidoInvalido("nome de arquivo inválido")
+    return arq
+
+
+def slug(texto):
+    """Nome seguro para pasta, igual ao das pastas de XMLs: sem acento, só letras, números, '-' e '_'."""
+    s = "".join(c for c in unicodedata.normalize("NFD", str(texto or "")) if not unicodedata.combining(c))
+    return re.sub(r"[^A-Za-z0-9-]+", "_", s).strip("_")[:40]
+
+
+def subpasta(cnpj, nome, ano_mes):
+    """Pasta do arquivo gerado, como a dos XMLs das notas: <CNPJ>_<empresa>/<AAAA-MM do inventário>."""
+    cnpj, nome = gs.so_cnpj(cnpj) or "sem-cnpj", slug(nome)
+    return Path(f"{cnpj}_{nome}" if nome else cnpj) / ano_mes
 
 
 class PedidoInvalido(ValueError):
@@ -250,7 +275,8 @@ def converter(dados):
             return {"erro": str(e), "campo": e.campo, "arquivos": arquivos, "principal": principal.caminho.name,
                     "campos": campos_conhecidos(principal, extras, campos, args)}
         try:
-            arq, arq_pend, arq_dom = gs.gravar(res, pasta_saida())
+            saida = pasta_saida()
+            arq, arq_pend, arq_dom = gs.gravar(res, saida / subpasta(res.emp.get("cnpj"), res.emp.get("nome"), f"{res.data_inv:%Y-%m}"))
         except OSError as e:
             return {"erro": f"Não foi possível salvar na pasta {pasta_saida()}: {e.strerror or e}. Confira se ela (ou o servidor) "
                             "está acessível, ou troque a pasta na aba Arquivos gerados.", "arquivos": arquivos,
@@ -291,37 +317,70 @@ def converter(dados):
             "conteudo": "Só bloco H (E110 zerada)",
         },
         "itens": itens, "fora": fora, "gerais": gerais,
-        "arquivo": arq.name, "pendencias": arq_pend.name if res.pendencias else "", "dominio": arq_dom.name,
+        "arquivo": arq.relative_to(saida).as_posix(), "dominio": arq_dom.relative_to(saida).as_posix(),
+        "pendencias": arq_pend.relative_to(saida).as_posix() if res.pendencias else "",
     }
 
 
+def cabecalho(arq):
+    """Empresa, CNPJ, inventário, total e itens lidos do próprio arquivo SPED."""
+    info = {"nome": "", "cnpj": "", "inventario": "", "total": "", "itens": 0, "linhas": 0}
+    with open(arq, encoding="latin-1") as fp:
+        for linha in fp:
+            c = linha.rstrip("\r\n").split("|")
+            info["linhas"] += 1
+            if len(c) < 4:  # linha em branco ou arquivo mexido à mão
+                continue
+            if c[1] == "0000" and len(c) > 7:
+                info["nome"], info["cnpj"] = c[6], c[7]
+            elif c[1] == "H005":
+                info["inventario"] = f"{c[2][:2]}/{c[2][2:4]}/{c[2][4:]}"
+                info["total"] = c[3]
+            elif c[1] == "H010":
+                info["itens"] += 1
+    return info
+
+
+def irmaos(arq):
+    """O SPED e os arquivos que andam com ele: pendências e o do Domínio."""
+    return [arq, arq.with_name(arq.stem + "_pendencias.csv"), arq.with_name("DOMINIO_" + arq.name.removeprefix("SPED_"))]
+
+
+def organizar_gerados(pasta):
+    """Leva os arquivos soltos na pasta (gerados antes das subpastas) para <CNPJ>_<empresa>/<AAAA-MM>.
+    Mover não muda a data do arquivo; um que já existe no destino não é substituído."""
+    for arq in list(pasta.glob("SPED_*.txt")):
+        try:
+            info = cabecalho(arq)
+            if len(info["inventario"]) != 10:
+                continue
+            destino = pasta / subpasta(info["cnpj"], info["nome"], f"{info['inventario'][6:]}-{info['inventario'][3:5]}")
+            destino.mkdir(parents=True, exist_ok=True)
+            for a in irmaos(arq):
+                if a.exists() and not (destino / a.name).exists():
+                    a.rename(destino / a.name)
+        except OSError:
+            continue
+
+
 def gerados():
-    lista = []
+    pasta = pasta_saida()
     try:
-        arquivos = sorted(pasta_saida().glob("SPED_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+        organizar_gerados(pasta)
+        # Os soltos que não deu para mover e os das subpastas <empresa>/<AAAA-MM>
+        arquivos = [*pasta.glob("SPED_*.txt"), *pasta.glob("*/*/SPED_*.txt")]
+        arquivos.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:  # pasta de rede fora do ar: a aba mostra o aviso da pasta
         arquivos = []
+    lista = []
     for arq in arquivos:
-        info = {"arquivo": arq.name, "data": datetime.fromtimestamp(arq.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
-                "nome": "", "cnpj": "", "inventario": "", "total": "", "itens": 0, "linhas": 0}
-        with open(arq, encoding="latin-1") as fp:
-            for linha in fp:
-                c = linha.rstrip("\r\n").split("|")
-                info["linhas"] += 1
-                if len(c) < 4:  # linha em branco ou arquivo mexido à mão
-                    continue
-                if c[1] == "0000" and len(c) > 7:
-                    info["nome"], info["cnpj"] = c[6], c[7]
-                elif c[1] == "H005":
-                    info["inventario"] = f"{c[2][:2]}/{c[2][2:4]}/{c[2][4:]}"
-                    info["total"] = c[3]
-                elif c[1] == "H010":
-                    info["itens"] += 1
-        pend = arq.with_name(arq.stem + "_pendencias.csv")
-        info["pendencias"] = pend.name if pend.exists() else ""
-        dom = arq.with_name("DOMINIO_" + arq.name.removeprefix("SPED_"))
-        info["dominio"] = dom.name if dom.exists() else ""
-        lista.append(info)
+        _, pend, dom = irmaos(arq)
+        lista.append({
+            "arquivo": arq.relative_to(pasta).as_posix(), "pasta": arq.parent.relative_to(pasta).as_posix(),
+            "data": datetime.fromtimestamp(arq.stat().st_mtime).strftime("%d/%m/%Y %H:%M"), **cabecalho(arq),
+            "pendencias": pend.relative_to(pasta).as_posix() if pend.exists() else "",
+            "dominio": dom.relative_to(pasta).as_posix() if dom.exists() else "",
+        })
     return lista
 
 
@@ -436,13 +495,13 @@ class Painel(BaseHTTPRequestHandler):
             if rota == "/api/escritorio":
                 return self.responder(gs.carregar_json(gs.ESCRITORIO))
             if rota.startswith("/baixar/"):
-                arq = dentro(pasta_saida(), rota[8:])
+                arq = gerado(rota[8:])
                 if arq.is_file():
                     tipo = "text/csv; charset=utf-8" if arq.suffix == ".csv" else "text/plain; charset=iso-8859-1"
                     return self.responder(arq.read_bytes(), tipo, extra={
                         "Content-Disposition": f"attachment; filename*=UTF-8''{quote(arq.name)}"})
             if rota.startswith("/api/ver/"):
-                arq = dentro(pasta_saida(), rota[9:])
+                arq = gerado(rota[9:])
                 if arq.is_file():
                     de = (q.get("de") or ["0"])[0]
                     de = int(de) if de.isdigit() else 0
@@ -512,10 +571,14 @@ class Painel(BaseHTTPRequestHandler):
                 arq.unlink(missing_ok=True)
                 return self.responder({"ok": True})
             if rota.startswith("/api/gerado/"):
-                arq = dentro(pasta_saida(), rota[12:])
-                arq.unlink(missing_ok=True)
-                arq.with_name(arq.stem + "_pendencias.csv").unlink(missing_ok=True)
-                arq.with_name("DOMINIO_" + arq.name.removeprefix("SPED_")).unlink(missing_ok=True)
+                arq = gerado(rota[12:])
+                for a in irmaos(arq):
+                    a.unlink(missing_ok=True)
+                # Apaga as pastas do mês e da empresa que ficaram vazias
+                raiz, pasta = pasta_saida().resolve(), arq.parent
+                while pasta.resolve() != raiz and pasta.is_dir() and not any(pasta.iterdir()):
+                    pasta.rmdir()
+                    pasta = pasta.parent
                 return self.responder({"ok": True})
             self.responder({"erro": "não encontrado"}, status=404)
         except PedidoInvalido as e:

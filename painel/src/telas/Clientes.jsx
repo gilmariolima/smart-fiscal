@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
+import BotaoIcone from '../componentes/BotaoIcone.jsx'
 import Etiqueta from '../componentes/Etiqueta.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useAoTerminarCaptura, useResumo } from '../layout/ResumoProvider.jsx'
@@ -134,13 +135,17 @@ function Pendencias({ notas: n }) {
 function Acoes({ c, cadastroLiberado, onAtivo, ocupado }) {
   return (
     <span className="acoes-cliente">
-      {cadastroLiberado && <Link to={`/clientes/${c.cnpj}/certificado`}>Certificado</Link>}
+      {cadastroLiberado && <BotaoIcone icone="fa-id-card" dica="Trocar o certificado" to={`/clientes/${c.cnpj}/certificado`} />}
       {cadastroLiberado && (
-        <button type="button" className="botao-link" onClick={() => onAtivo(c)} disabled={ocupado}>
-          {c.ativo ? 'Desativar' : 'Reativar'}
-        </button>
+        <BotaoIcone
+          icone={c.ativo ? 'fa-power-off' : 'fa-rotate-left'}
+          dica={c.ativo ? 'Desativar (fica fora das capturas)' : 'Reativar (volta a entrar nas capturas)'}
+          onClick={() => onAtivo(c)}
+          disabled={ocupado}
+          perigo={c.ativo}
+        />
       )}
-      <Link to={`/notas/${c.cnpj}`}>Notas ›</Link>
+      <BotaoIcone icone="fa-folder-open" dica="Ver as notas" to={`/notas/${c.cnpj}`} />
     </span>
   )
 }
@@ -295,7 +300,9 @@ export default function Clientes() {
               <th scope="col">Certificado</th>
               <th scope="col">Última captura</th>
               <th scope="col">Pendências</th>
-              <th scope="col">Ações</th>
+              <th scope="col" className="col-acoes">
+                <span className="so-leitor">Ações</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -325,7 +332,7 @@ export default function Clientes() {
                     <Certificado c={c} />
                   </td>
                   <td>{c.ativo ? <UltimaCaptura c={c} capturandoAgora={capturandoAgora} fila={fila} /> : '—'}</td>
-                  <td className="sem-quebra">
+                  <td>
                     <Pendencias notas={c.notas} />
                   </td>
                   <td className="sem-quebra">

@@ -1294,6 +1294,23 @@ tr.editavel:hover .botao-icone {
   font-size: 13px;
 }
 
+.pasta-atual {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--apagado);
+  overflow-wrap: anywhere;
+}
+
+.pasta-atual i {
+  margin-right: 4px;
+}
+
+.pasta-atual .mono {
+  color: var(--texto);
+}
+
 .pasta-nota {
   margin: 8px 0 0;
   font-size: 12.5px;
@@ -2229,12 +2246,17 @@ tr.editavel:hover .botao-icone {
 }
 
 .tabela-clientes td.nome-cliente {
-  min-width: 160px;
+  min-width: 140px;
   font-weight: 600;
 }
 
 .tabela-clientes .secundario {
   font-weight: 400;
+  white-space: normal;
+}
+
+.tabela-clientes .pendencias {
+  min-width: 120px;
 }
 
 .tabela-clientes .marcar input:disabled {
@@ -2264,8 +2286,17 @@ tr.editavel:hover .botao-icone {
 
 .acoes-cliente {
   display: inline-flex;
-  gap: 12px;
+  gap: 6px;
   align-items: center;
+}
+
+a.botao-icone {
+  text-decoration: none;
+}
+
+.botao-icone:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ---------- cadastro ---------- */

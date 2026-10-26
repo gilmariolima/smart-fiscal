@@ -4,10 +4,14 @@ import { baixar, milhar, sped } from './api.js'
 import Modal from './Modal.jsx'
 import { useSped } from './SpedProvider.jsx'
 
+// Só o nome do arquivo: na lista ele vem com a pasta da empresa e do mês (CNPJ_Empresa/AAAA-MM/...).
+const nomeDe = (arquivo) => arquivo.split('/').pop()
+
 function Pasta({ aoMudar }) {
   const { aviso } = useSped()
   const [pasta, setPasta] = useState(null)
   const [texto, setTexto] = useState('')
+  const [trocando, setTrocando] = useState(false)
   const carregar = useCallback(() => sped('/api/pasta').then((p) => {
     if (p.erro) return
     setPasta(p)
@@ -21,24 +25,39 @@ function Pasta({ aoMudar }) {
     aviso(r.eh_padrao ? 'Voltou para a pasta padrão' : 'Pasta dos arquivos gerados salva')
     setPasta(r)
     setTexto(r.pasta_saida)
+    setTrocando(false)
     aoMudar()
   }
 
-  const nota = !pasta ? '' : !pasta.acessivel
+  if (!pasta) return null
+  const nota = !pasta.acessivel
     ? 'A pasta não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED não pode ser gerado até ela voltar.'
-    : pasta.eh_padrao ? '' : 'Os próximos arquivos vão para esta pasta. Os gerados antes continuam na pasta anterior.'
+    : trocando && !pasta.eh_padrao ? 'Os próximos arquivos vão para a pasta nova. Os gerados antes continuam na pasta anterior.' : ''
   return (
     <form className="cartao pasta-saida" autoComplete="off" onSubmit={(e) => { e.preventDefault(); salvar(texto) }}>
-      <label htmlFor="pastaSaida" className="rot">Pasta onde os arquivos são salvos</label>
-      <div className="pasta-linha">
-        <div className="campo-busca pasta-campo">
-          <i className="fa-solid fa-folder" />
-          <input id="pastaSaida" className="entrada" spellCheck={false} placeholder="C:\Fiscal\SPED ou \\servidor\fiscal\SPED"
-            value={texto} onChange={(e) => setTexto(e.target.value)} />
+      {trocando ? (
+        <>
+          <label htmlFor="pastaSaida" className="rot">Nova pasta para os arquivos gerados</label>
+          <div className="pasta-linha">
+            <div className="campo-busca pasta-campo">
+              <i className="fa-solid fa-folder" />
+              <input id="pastaSaida" className="entrada" spellCheck={false} placeholder="C:\Fiscal\SPED ou \\servidor\fiscal\SPED"
+                value={texto} onChange={(e) => setTexto(e.target.value)} autoFocus />
+            </div>
+            <button type="submit" className="botao botao-azul">Salvar</button>
+            {!pasta.eh_padrao && <button type="button" className="botao botao-claro" onClick={() => salvar('')}>Usar a pasta padrão</button>}
+            <button type="button" className="botao botao-claro" onClick={() => { setTexto(pasta.pasta_saida); setTrocando(false) }}>Cancelar</button>
+          </div>
+        </>
+      ) : (
+        <div className="pasta-linha">
+          <p className="pasta-atual">
+            <i className="fa-solid fa-folder" /> Cada empresa tem a sua pasta, separada por mês do inventário, em{' '}
+            <span className="mono" title={pasta.pasta_saida}>{pasta.pasta_saida}</span>
+          </p>
+          <button type="button" className="botao botao-claro" onClick={() => setTrocando(true)}>Trocar pasta</button>
         </div>
-        <button type="submit" className="botao botao-azul">Salvar</button>
-        {pasta && !pasta.eh_padrao && <button type="button" className="botao botao-claro" onClick={() => salvar('')}>Usar a pasta padrão</button>}
-      </div>
+      )}
       {nota && <p className={`pasta-nota${pasta.acessivel ? '' : ' pasta-erro'}`}>{nota}</p>}
     </form>
   )
@@ -85,7 +104,7 @@ function VerArquivo({ nome, aoFechar }) {
   useEffect(() => { carregar(0) }, [carregar])
   const resto = total - linhas.length
   return (
-    <Modal titulo={nome} aoFechar={aoFechar} classe="modal-ver">
+    <Modal titulo={nomeDe(nome)} aoFechar={aoFechar} classe="modal-ver">
       <div className="ver-txt">
         {linhas.map((l, n) => <div key={n}><span>{n + 1}</span>{l}</div>)}
       </div>
@@ -114,7 +133,7 @@ export default function Gerados() {
   }
   async function excluir(g) {
     setMenu(null)
-    if (!window.confirm(`Excluir ${g.arquivo}?`)) return
+    if (!window.confirm(`Excluir ${nomeDe(g.arquivo)}?`)) return
     const r = await sped(`/api/gerado/${encodeURIComponent(g.arquivo)}`, { method: 'DELETE' })
     if (r.erro) return aviso(r.erro, 'erro')
     aviso('Arquivo excluído')
@@ -143,7 +162,7 @@ export default function Gerados() {
               <tr key={g.arquivo}>
                 <td>
                   {g.inventario || '—'}
-                  <span className="secundario" title={g.arquivo}>{g.arquivo.replace(/^SPED_/, '').replace(/\.txt$/, '')}</span>
+                  <span className="secundario" title={g.arquivo}>{nomeDe(g.arquivo).replace(/^SPED_/, '').replace(/\.txt$/, '')}</span>
                 </td>
                 <td>{g.nome}</td>
                 <td className="col-larga mono">{g.cnpj}</td>

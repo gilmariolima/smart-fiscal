@@ -56,7 +56,7 @@ function copiarDadosAnteriores({ dados, anteriores }) {
     const temp = `${destino}.copiando`
     fs.rmSync(temp, { recursive: true, force: true })
     fs.mkdirSync(path.dirname(destino), { recursive: true })
-    fs.cpSync(a.origem, temp, { recursive: true })
+    fs.cpSync(a.origem, temp, { recursive: true, preserveTimestamps: true })
     fs.rmSync(destino, { recursive: true, force: true })
     fs.renameSync(temp, destino)
     copiados.push({ nome: a.nome, de: a.origem, para: destino })
