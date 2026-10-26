@@ -34,9 +34,10 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque })
   agendador.iniciar()
 
-  // Backup: 1 min depois de ligar e a cada hora; o serviço só copia se ainda não houver a cópia do dia.
+  // Backup: 1 min depois de ligar e a cada hora; o serviço só copia se houver pasta escolhida
+  // (a pasta pode ser escolhida depois, na tela Backup) e ainda não houver a cópia do dia.
   const cancelarBackup = []
-  if (ctx.backup?.ativo) {
+  if (ctx.backup) {
     const backup = () => ctx.backup.fazerBackup()
     cancelarBackup.push(relogio.depois(backup, BACKUP_INICIAL_MS), relogio.aCada(backup, BACKUP_INTERVALO_MS))
   }
@@ -54,7 +55,7 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
       if (painel) await painel.fechar()
       for (const cancelar of cancelarBackup) cancelar()
       await agendador.parar()
-      if (ctx.backup?.ativo) await ctx.backup.aguardar()
+      if (ctx.backup) await ctx.backup.aguardar()
       logger.info('Servidor encerrado')
     })()
     return parando

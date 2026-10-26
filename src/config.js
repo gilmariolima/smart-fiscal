@@ -79,8 +79,10 @@ function carregarConfig(env = process.env) {
     pastaCerts: pasta(env.PASTA_CERTS, './certs'),
     pastaLogs: pasta(env.PASTA_LOGS, './logs'),
     caminhoBanco: path.join(pasta(env.PASTA_DADOS, './data'), 'nfe.db'),
-    // Sem PASTA_BACKUP o backup automático fica desligado.
+    // Sem PASTA_BACKUP (e sem pasta escolhida na tela Backup) o backup automático fica desligado.
     pastaBackup: (env.PASTA_BACKUP || '').trim() ? pasta(env.PASTA_BACKUP.trim()) : null,
+    // Dados do SPED (Smart Fiscal): entram na cópia diária do backup.
+    pastaEstoque: (env.ESTOQUE_DADOS || '').trim() ? path.resolve(env.ESTOQUE_DADOS.trim()) : null,
     sefazMock: env.SEFAZ_MOCK === '1',
   })
 }

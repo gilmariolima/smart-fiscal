@@ -639,6 +639,25 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     res.json(recibo(r))
   })
 
+  // ---------- backup ----------
+
+  app.get('/api/backup', (req, res) => {
+    res.json(ctx.backup.estado())
+  })
+
+  app.post('/api/backup/pasta', (req, res) => {
+    exigirLocal(req)
+    const r = comoErroHttp(() => ctx.backup.definirPasta(String(req.body?.pasta ?? '')))
+    if (r.pasta) ctx.backup.fazerBackup()
+    res.json({ ok: true, mensagem: r.pasta ? 'Pasta do backup salva. O primeiro backup já começou.' : 'Backup automático desligado.', avisos: r.avisos, estado: ctx.backup.estado() })
+  })
+
+  app.post('/api/backup/agora', (req, res) => {
+    if (!ctx.backup.ativo) throw new ErroHttp(409, 'Escolha a pasta do backup primeiro.')
+    ctx.backup.fazerBackup({ forcar: true })
+    res.status(202).json({ ok: true, mensagem: 'Backup iniciado.', estado: ctx.backup.estado() })
+  })
+
   app.get('/api/execucoes', (req, res) => {
     res.json(sql.execucoes.all())
   })

@@ -11,7 +11,7 @@ const { montarAmbiente, inserirNotas, silencioso } = require('./apoio/ambiente')
 
 const HORA = 3600e3
 
-function montar(t, { semPasta = false } = {}) {
+function montar(t, { semPasta = false, comEstoque = false } = {}) {
   const amb = montarAmbiente()
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-backup-'))
   t.after(() => {
@@ -33,14 +33,22 @@ function montar(t, { semPasta = false } = {}) {
   gravarXml('11222333000181_Exemplo/2026-10/2-nfe.xml')
   inserirNotas(amb.db, amb.ids[0], 3)
   const pastaBackup = semPasta ? null : path.join(base, 'backup')
+  const pastaEstoque = comEstoque ? path.join(base, 'estoque') : null
+  if (comEstoque) {
+    fs.mkdirSync(path.join(pastaEstoque, 'saida'), { recursive: true })
+    fs.writeFileSync(path.join(pastaEstoque, 'empresas.json'), '{}')
+    fs.writeFileSync(path.join(pastaEstoque, 'saida', 'SPED.txt'), '|0000|')
+    fs.writeFileSync(path.join(pastaEstoque, 'painel.log'), 'log')
+    fs.writeFileSync(path.join(pastaEstoque, 'painel.token'), 'token')
+  }
   let agora = new Date('2026-10-13T15:00:00Z')
   const servico = criarServicoBackup({
     db: amb.db,
-    config: { ...amb.deps.config, raiz, pastaCerts, pastaBackup },
+    config: { ...amb.deps.config, raiz, pastaCerts, pastaBackup, pastaEstoque },
     logger: silencioso,
     agora: () => agora,
   })
-  return { amb, servico, pastaBackup, gravarXml, avancar: (ms) => (agora = new Date(agora.getTime() + ms)), definir: (d) => (agora = new Date(d)) }
+  return { amb, base, raiz, servico, pastaBackup, gravarXml, avancar: (ms) => (agora = new Date(agora.getTime() + ms)), definir: (d) => (agora = new Date(d)) }
 }
 
 const diarios = (pastaBackup) => fs.readdirSync(path.join(pastaBackup, 'diarios')).sort()
@@ -116,7 +124,7 @@ test('sem PASTA_BACKUP o backup fica desligado e o estado avisa', async (t) => {
   assert.equal(r.desligado, true)
   const e = m.servico.estado()
   assert.equal(e.configurado, false)
-  assert.match(e.alerta, /PASTA_BACKUP/)
+  assert.match(e.alerta, /tela Backup/)
 })
 
 test('pasta indisponível: erro registrado na execução e no alerta', async (t) => {
@@ -143,4 +151,39 @@ test('estado: em dia sem alerta; mais de 2 dias sem backup avisa', async (t) => 
   assert.ok(ok.ultimoEm)
   m.avancar(3 * 24 * HORA)
   assert.match(m.servico.estado().alerta, /3 dias/)
+})
+
+test('cópia do dia leva os dados do SPED, sem os logs nem o token', async (t) => {
+  const m = montar(t, { comEstoque: true })
+  await m.servico.fazerBackup()
+  const estoque = path.join(m.pastaBackup, 'diarios', '2026-10-13', 'estoque')
+  assert.equal(fs.readFileSync(path.join(estoque, 'empresas.json'), 'utf8'), '{}')
+  assert.equal(fs.readFileSync(path.join(estoque, 'saida', 'SPED.txt'), 'utf8'), '|0000|')
+  assert.ok(!fs.existsSync(path.join(estoque, 'painel.log')))
+  assert.ok(!fs.existsSync(path.join(estoque, 'painel.token')))
+  assert.equal(m.servico.estado().incluiSped, true)
+})
+
+test('pasta escolhida na tela: vale mais que o .env, testa a gravação e "nenhuma" desliga', async (t) => {
+  const m = montar(t)
+  assert.equal(m.servico.estado().origem, 'env')
+  assert.throws(() => m.servico.definirPasta('backup'), /endereço completo/)
+  assert.throws(() => m.servico.definirPasta(path.join(m.raiz, 'bkp')), /dentro da pasta de dados/)
+  const bloqueio = path.join(m.base, 'arquivo')
+  fs.writeFileSync(bloqueio, 'x')
+  assert.throws(() => m.servico.definirPasta(path.join(bloqueio, 'sub')), /Não consegui gravar/)
+
+  const nova = path.join(m.base, 'Backup Smart Fiscal')
+  const r = m.servico.definirPasta(`"${nova}"`)
+  assert.equal(r.pasta, nova)
+  assert.deepEqual(fs.readdirSync(nova), [], 'o arquivo de teste é apagado')
+  assert.deepEqual([m.servico.estado().pasta, m.servico.estado().origem], [nova, 'painel'])
+  assert.equal((await m.servico.fazerBackup()).ok, true)
+  assert.ok(fs.existsSync(path.join(nova, 'diarios', '2026-10-13', 'nfe.db')))
+  assert.ok(!fs.existsSync(m.pastaBackup), 'a pasta do .env não é usada')
+
+  assert.equal(m.servico.definirPasta('  ').pasta, null)
+  assert.equal(m.servico.ativo, false)
+  assert.deepEqual([m.servico.estado().configurado, m.servico.estado().origem], [false, null])
+  assert.equal((await m.servico.fazerBackup()).desligado, true)
 })
