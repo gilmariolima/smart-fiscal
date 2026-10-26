@@ -14,7 +14,7 @@ const ORDEM_PADRAO = 'emissao-desc'
 
 const SITUACOES = [
   ['sem_xml', 'Todas sem XML'],
-  ['resumo', 'Aguardando ciência'],
+  ['resumo', 'Aguardando ciência do cliente'],
   ['aguardando_xml', 'Aguardando XML'],
   ['esgotada', 'Esgotada'],
   ['ciencia_erro', 'Erro na ciência'],

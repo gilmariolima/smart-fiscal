@@ -5,6 +5,7 @@ const assert = require('node:assert/strict')
 const { criarServicoManifestacao } = require('../src/services/manifestacao')
 const { criarServicoCaptura } = require('../src/services/captura')
 const { montarAmbiente, inserirNotas, nota } = require('./apoio/ambiente')
+const { criarSefazMock } = require('../src/sefaz/mock-client')
 
 // SEFAZ falsa de eventos: grava os lotes recebidos e responde com `responder(lote)`.
 function sefazEventos(responder) {
@@ -124,7 +125,7 @@ test('sem pendências não chama a SEFAZ nem registra execução', async (t) => 
 })
 
 test('com a SEFAZ simulada: ciência das notas capturadas; a cancelada fica de fora', async (t) => {
-  const amb = montarAmbiente()
+  const amb = montarAmbiente({ mock: criarSefazMock() })
   t.after(amb.limpar)
   await criarServicoCaptura(amb.deps).capturarCliente(amb.ids[0])
   const r = await criarServicoManifestacao(amb.deps).enviarCiencias(amb.ids[0])

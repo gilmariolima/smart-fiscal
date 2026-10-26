@@ -176,7 +176,7 @@ function FormNovo({ escritorio }) {
   )
 }
 
-function FormTroca({ alvo, escritorio }) {
+function FormTroca({ alvo, escritorio, aoSalvar, aoExcluir }) {
   const envio = useEnvioDeCertificado()
   const nome = escritorio ? alvo.razaoSocial : nomeDe(alvo)
   const titulo = escritorio ? 'Certificado do escritório' : `Certificado de ${nome}`
@@ -221,7 +221,85 @@ function FormTroca({ alvo, escritorio }) {
           </div>
         </form>
       )}
+      {escritorio && !envio.recibo && <DadosDoEscritorio alvo={alvo} aoSalvar={aoSalvar} aoExcluir={aoExcluir} />}
     </Pagina>
+  )
+}
+
+// Razão social e UF do escritório, e a exclusão. O CNPJ não muda: para outro CNPJ, exclua e cadastre de novo.
+function DadosDoEscritorio({ alvo, aoSalvar, aoExcluir }) {
+  const [campos, setCampos] = useState({ razao: alvo.razaoSocial, uf: alvo.uf })
+  const [enviando, setEnviando] = useState(false)
+  const [erro, setErro] = useState(null)
+  const [aviso, setAviso] = useState(null)
+  const { recarregar } = useResumo()
+
+  async function executar(acao) {
+    setEnviando(true)
+    setErro(null)
+    setAviso(null)
+    try {
+      await acao()
+    } catch (e) {
+      setErro(e.message)
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  const salvar = (e) => {
+    e.preventDefault()
+    executar(async () => {
+      const r = await api.post('/api/escritorio/dados', { razao: campos.razao.trim(), uf: campos.uf })
+      setAviso(r.mensagem)
+      aoSalvar({ razaoSocial: r.razaoSocial, uf: r.uf })
+      recarregar()
+    })
+  }
+
+  const excluir = () => {
+    const pergunta = `Excluir o escritório ${alvo.razaoSocial}?
+
+O cadastro e o certificado dele saem do Smart Fiscal e as notas de saída pelo autXML param de chegar. Os XMLs já recebidos continuam nas pastas.`
+    if (!window.confirm(pergunta)) return
+    executar(async () => {
+      await api.post('/api/escritorio/excluir', {})
+      recarregar()
+      aoExcluir()
+    })
+  }
+
+  return (
+    <form className="formulario" onSubmit={salvar} aria-label="Dados do escritório">
+      <strong className="formulario-titulo">Dados do escritório</strong>
+      {erro && <p className="faixa faixa-erro" role="alert">{erro}</p>}
+      {aviso && <p className="faixa faixa-ok" role="status">{aviso}</p>}
+      <label className="campo">
+        <span>Razão social</span>
+        <input value={campos.razao} onChange={(e) => setCampos((c) => ({ ...c, razao: e.target.value }))} required autoComplete="off" />
+      </label>
+      <div className="linha-campos">
+        <label className="campo campo-uf">
+          <span>UF</span>
+          <select value={campos.uf} onChange={(e) => setCampos((c) => ({ ...c, uf: e.target.value }))} required>
+            {UFS.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="formulario-nota">O CNPJ é o do certificado e não muda. Para usar outro CNPJ, exclua o escritório e cadastre de novo.</p>
+      <div className="formulario-acoes">
+        <button type="submit" className="botao botao-azul" disabled={enviando}>
+          Salvar dados
+        </button>
+        <button type="button" className="botao botao-perigo" onClick={excluir} disabled={enviando}>
+          Excluir escritório
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -239,7 +317,7 @@ function Escritorio() {
   const [existia, setExistia] = useState(undefined)
   if (existia === undefined && !carregando && !erro) setExistia(dados)
   if (existia === undefined) return <Pagina titulo="Escritório" subtitulo={erro ? '' : 'Carregando…'} erro={erro} />
-  return existia ? <FormTroca alvo={existia} escritorio /> : <FormNovo escritorio />
+  return existia ? <FormTroca alvo={existia} escritorio aoSalvar={(d) => setExistia((e) => ({ ...e, ...d }))} aoExcluir={() => setExistia(null)} /> : <FormNovo escritorio />
 }
 
 // Rotas #/clientes/novo, #/clientes/:cnpj/certificado e #/escritorio. Fora do computador do Smart Fiscal, só o aviso.

@@ -11,7 +11,6 @@ const GRUPOS = [
     itens: [
       { para: '/notas', rotulo: 'Notas', icone: 'fa-folder-open' },
       { para: '/pendentes', rotulo: 'XMLs não baixados', icone: 'fa-file-circle-exclamation' },
-      { para: '/cupons', rotulo: 'Cupons (CF-e)', icone: 'fa-receipt' },
       { para: '/exportar', rotulo: 'Exportar', icone: 'fa-file-export' },
       { para: '/execucoes', rotulo: 'Execuções', icone: 'fa-clock-rotate-left' },
     ],
@@ -34,7 +33,7 @@ const GRUPOS = [
 ]
 
 const SITUACOES_SEM_XML = [
-  { chave: 'aguardandoCiencia', status: 'resumo', rotulo: 'Aguardando ciência' },
+  { chave: 'aguardandoCiencia', status: 'resumo', rotulo: 'Aguardando o cliente', dica: 'Notas só com resumo: o XML chega depois que o cliente der ciência' },
   { chave: 'aguardandoXml', status: 'aguardando_xml', rotulo: 'Aguardando XML' },
   { chave: 'esgotada', status: 'esgotada', rotulo: 'Esgotada' },
   { chave: 'cienciaErro', status: 'ciencia_erro', rotulo: 'Erro na ciência' },
@@ -54,7 +53,7 @@ function SemXml() {
       <ul>
         {SITUACOES_SEM_XML.map((s) => (
           <li key={s.chave} className={contagem[s.chave] ? undefined : 'zerada'}>
-            <Link to={`/pendentes?status=${s.status}`}>
+            <Link to={`/pendentes?status=${s.status}`} title={s.dica}>
               {s.rotulo}
               <strong>{inteiro(contagem[s.chave])}</strong>
             </Link>

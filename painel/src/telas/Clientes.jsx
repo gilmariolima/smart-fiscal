@@ -112,7 +112,7 @@ function UltimaCaptura({ c, capturandoAgora, fila }) {
 
 function Pendencias({ notas: n }) {
   const itens = [
-    n.resumo > 0 && { texto: `${inteiro(n.resumo)} aguardando ciência` },
+    n.resumo > 0 && { texto: `${inteiro(n.resumo)} aguardando ciência do cliente` },
     n.ciencia > 0 && {
       texto: `${inteiro(n.ciencia)} sem XML`,
       titulo: n.esgotadas ? `${plural(n.esgotadas, 'esgotou', 'esgotaram')} as tentativas de download` : 'Ciência dada; o XML completo ainda não chegou.',

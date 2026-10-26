@@ -27,7 +27,7 @@ function sefazChave(responder) {
 const so137 = () => ({ status: 200, data: { cStat: '137', xMotivo: 'Nenhum documento localizado', docZip: [] } })
 
 test('com a SEFAZ simulada: captura → ciência → download deixa a nota completa', async (t) => {
-  const amb = montarAmbiente()
+  const amb = montarAmbiente({ mock: criarSefazMock() })
   t.after(amb.limpar)
   await criarServicoCaptura(amb.deps).capturarCliente(amb.ids[0])
   await criarServicoManifestacao(amb.deps).enviarCiencias(amb.ids[0])
@@ -119,7 +119,8 @@ test('ciclo completo com a SEFAZ simulada; rodar de novo não duplica nada', asy
   assert.equal(r.ok, true)
   assert.equal(r.clientes.length, 2)
   assert.equal(r.clientes[0].captura.cStat, '656')
-  assert.equal(r.clientes[1].download.baixadas, 1)
+  assert.equal(r.clientes[1].ciencia, undefined)
+  assert.equal(r.clientes[1].download.consultas, 0, 'o XML veio pela fila de NSU, depois da ciência do dono')
 
   const status = amb.db.prepare('SELECT status, cancelada FROM notas ORDER BY id').all()
   assert.deepEqual(status, [
@@ -162,15 +163,14 @@ test('trava pelo banco: execução aberta recente bloqueia; antiga (processo ca�
   assert.equal((await ciclo.executarCiclo()).ok, true)
 })
 
-test('ciclo: CNPJ não cadastrado e comandos isolados de ciência e download', async (t) => {
-  const amb = montarAmbiente()
+test('ciclo: CNPJ não cadastrado e download isolado das notas com ciência enviada antes', async (t) => {
+  const amb = montarAmbiente({ mock: criarSefazMock() })
   t.after(amb.limpar)
   const ciclo = criarServicoCiclo(amb.deps)
   assert.match((await ciclo.executarCiclo({ cnpj: '00000000000000' })).erro, /não cadastrado/)
 
   await criarServicoCaptura(amb.deps).capturarCliente(amb.ids[0])
-  const c = await ciclo.somenteCiencia({ cnpj: CNPJ_MOCK_OK })
-  assert.equal(c.clientes[0].ciencia.enviadas, 1)
+  await criarServicoManifestacao(amb.deps).enviarCiencias(amb.ids[0])
   const d = await ciclo.somenteDownload({ cnpj: CNPJ_MOCK_OK })
   assert.equal(d.clientes[0].download.baixadas, 1)
   assert.ok(nota(amb.db, amb.db.prepare("SELECT chave FROM notas WHERE ciencia_protocolo IS NOT NULL").get().chave).caminho_xml)

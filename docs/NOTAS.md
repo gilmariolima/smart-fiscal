@@ -7,7 +7,7 @@ Captura de NF-e destinadas aos clientes do escritório.
 Sistema que roda no computador do escritório e, para cada cliente:
 
 1. consulta na SEFAZ (web service **NFeDistribuicaoDFe**, Ambiente Nacional) as NF-e emitidas contra o CNPJ do cliente;
-2. registra a **Ciência da Operação** (evento 210210) para liberar o XML completo;
+2. espera a **Ciência da Operação**, que o **dono da empresa** dá no sistema dele (o escritório não dá ciência); depois dela, a SEFAZ libera o XML completo;
 3. baixa e guarda o XML completo (`nfeProc`) organizado por cliente e competência;
 4. guarda os dados das notas num banco SQLite;
 5. mostra tudo num **painel web local**;
@@ -147,22 +147,20 @@ Ele faz duas coisas no mesmo processo:
 - **painel:** abre em `http://127.0.0.1:3030`.
 
 Se o escritório estiver cadastrado, o ciclo começa pela captura do escritório (veja [Notas de saída](#notas-de-saída-autxml)). Depois, o **ciclo** faz, para cada cliente ativo, um de cada vez:
-1. consulta os documentos novos na SEFAZ (por NSU);
-2. envia a ciência das notas que chegaram só como resumo (em lotes de até 20);
-3. baixa o XML completo das notas com ciência (consulta por chave, com limite por ciclo).
+1. consulta os documentos novos na SEFAZ (por NSU). As notas que chegam só como resumo ficam **aguardando a ciência do cliente**: avise o dono da empresa. Depois que ele der ciência, o XML completo entra na fila e chega numa das capturas seguintes;
+2. baixa por chave o XML das notas que já tinham ciência enviada por versões antigas do app (com limite por ciclo).
 
 Clientes em espera (1 h depois de "nenhum documento") ou bloqueados pela SEFAZ são pulados automaticamente.
 
-### Busca automática e ciência automática
+### Busca automática
 
-Na tela **Início** do painel há duas chaves de liga/desliga. Elas valem na hora, sem reiniciar, e ficam salvas no banco:
+Na tela **Início** do painel há a chave **Busca automática**. Ela vale na hora, sem reiniciar, e fica salva no banco:
 
-| Chave | Ligada (padrão) | Desligada |
-|---|---|---|
-| **Busca automática** | Busca as notas novas nos horários do `CRON_CAPTURA` e 15 s depois de ligar. | Só busca quando você manda capturar (**Capturar agora** no Início ou **Capturar selecionados** em Clientes). |
-| **Ciência automática** | Depois de cada busca, dá ciência nas notas novas e baixa o XML completo. | A busca traz só os resumos. A ciência sai quando você clica em **Dar ciência** na faixa que aparece no **Início** (vale para todos os clientes), sempre com confirmação. |
+| Ligada (padrão) | Desligada |
+|---|---|
+| Busca as notas novas nos horários do `CRON_CAPTURA` e 15 s depois de ligar. | Só busca quando você manda capturar (**Capturar agora** no Início ou **Capturar selecionados** em Clientes). |
 
-A ciência fica registrada na nota e o fornecedor vê; por isso há a opção de desligá-la e conferir as notas antes. Com a ciência desligada, o download das notas que já têm ciência continua automático. O `status` da linha de comando mostra como estão as duas chaves.
+O app **não dá ciência**: quem dá é o dono da empresa. Quando há notas só com resumo, o **Início** mostra quantas aguardam a ciência do cliente, com o atalho para a lista. O `status` da linha de comando mostra como está a busca automática.
 
 Para parar o servidor no terminal: **Ctrl+C** (ele termina o ciclo em andamento antes de sair).
 
@@ -174,7 +172,7 @@ O painel tem um menu lateral com seis telas e, embaixo, o bloco **Notas sem XML*
 
 | Tela | O que mostra |
 |---|---|
-| **Início** | Atalhos com ícones grandes para as telas, o quadro de **Certificados** (no prazo, a vencer em 30 dias, vencidos), no cabeçalho as chaves de **Busca automática** e **Ciência automática** e o botão **Capturar agora** (leva a Clientes) e, com a ciência automática desligada, a faixa **Dar ciência**. |
+| **Início** | Atalhos com ícones grandes para as telas, o quadro de **Certificados** (no prazo, a vencer em 30 dias, vencidos), no cabeçalho a chave de **Busca automática** e o botão **Capturar agora** (leva a Clientes) e, quando há notas só com resumo, a faixa com quantas **aguardam a ciência do cliente**. |
 | **Notas** | Pastas **Cliente → Ano → Mês**. Dentro do mês: lista com filtros (Todas / Entradas / Saídas, situação, busca por CNPJ, nome ou número, e a opção de buscar em todas as pastas), 50 por página, ordenação pelo cabeçalho, colunas de emitente e destinatário e o botão **Ações** de cada nota (**Ver nota**, **Baixar XML**, **Baixar XML + eventos** — ZIP com a nota e os eventos que têm arquivo, como cancelamento e carta de correção — e **Imprimir DANFE**, que abre a nota já na impressão), além de **Reprocessar** para nota de entrada com erro na ciência ou sem XML depois das tentativas. Marque as notas (ou **Marcar todos**) e use **Baixar selecionados** (até 2.000 por ZIP). **Exportar mês (Domínio/Fortes)** gera o pacote do mês. Clique no número da nota (ou em **Ver**) para abrir a nota legível no formato do DANFE: emitente, destinatário, fatura, impostos, transporte, produtos, dados adicionais e eventos (ciência, cancelamento, CT-e, MDF-e). **Imprimir / PDF** usa a impressão do navegador em A4 (escolha "Salvar como PDF"). Nota só com resumo mostra os dados do resumo. É uma visualização para conferência, não o leiaute oficial do DANFE com todas as medidas. |
 | **XMLs não baixados** | Notas de todos os clientes que ainda não têm o XML completo (canceladas ficam de fora), com filtro por situação: aguardando ciência, aguardando XML (ainda dentro do limite de tentativas), esgotada, erro na ciência. Cada linha tem o mesmo botão **Ações** da pasta do mês. |
 | **Clientes** | Linha do escritório no alto (certificado e situação) e a lista de clientes, com certificado, última captura (sucesso, erro, espera ou bloqueio da SEFAZ) e pendências. Marque um, vários ou **Marcar todos** e use **Capturar selecionados** (até 500). No computador do sistema, também **Novo cliente**, **Certificado**, **Desativar** e **Reativar**. |
@@ -187,7 +185,7 @@ O botão **Capturar agora** (no Início) leva à tela **Clientes**, onde se capt
 
 **Mexer no painel:** o código fica em `painel\`. Para desenvolver, deixe o `servidor` rodando e, em outro PowerShell, rode `npm run painel:dev`; ele abre uma cópia do painel que atualiza ao salvar e conversa com o servidor.
 
-O painel só lê dados, com estas exceções: ligar e desligar a busca e a ciência automáticas, disparar captura, dar ciência, gerar exportação, reprocessar uma nota e, só no próprio computador do sistema, cadastrar clientes, trocar certificado e desativar/reativar.
+O painel só lê dados, com estas exceções: ligar e desligar a busca automática, disparar captura, gerar exportação, reprocessar uma nota e, só no próprio computador do sistema, cadastrar clientes, trocar certificado e desativar/reativar.
 
 **Acessar de outro computador da rede** (opcional): no `.env`, `PAINEL_HOST=0.0.0.0` e uma `PAINEL_SENHA`. O navegador vai pedir usuário e senha (o usuário pode ser qualquer um; vale a senha). Libere a porta no Firewall do Windows só para a rede interna.
 
@@ -207,9 +205,6 @@ entradas\canceladas\<chave>-nfe.xml   entradas completas que foram canceladas
 saidas\xml\<chave>-nfe.xml            saídas completas e não canceladas
 saidas\canceladas\<chave>-nfe.xml     saídas completas que foram canceladas
 resumo.csv                            todas as notas da competência, inclusive as sem XML completo
-cupons\xml\<chave>-cfe.xml           CF-e (SAT/MFE) do cliente, não cancelados
-cupons\cancelados\<chave>-cfe.xml    CF-e cancelados, com o <chave>-cfe-canc.xml do cancelamento
-cupons.csv                            todos os CF-e da competência (só quando há cupons)
 ```
 
 Exportar o CNPJ do escritório é recusado (ele não tem notas próprias).
@@ -219,19 +214,6 @@ O `resumo.csv` abre direto no Excel: separador `;`, acentos corretos, valores co
 A competência é o **mês de emissão** da nota.
 
 > **Confirmar com o escritório:** Domínio e Fortes importam o XML de NF-e de entrada, mas a forma exata da importação (pasta, nome dos arquivos, se o ZIP serve direto) precisa ser testada nos dois sistemas antes de adotar o pacote como padrão. Ajustes ficam todos em `src/services/exportacao.js`.
-
-## Cupons fiscais (CF-e do SAT/MFE)
-
-O CF-e é o cupom que o cliente emite na venda ao consumidor (no Ceará, pelo MFE). Diferente da NF-e, não há serviço nacional da SEFAZ para baixar os cupons: o XML fica no computador do cliente (e no Portal CF-e da SEFAZ, cupom a cupom). Por isso o Smart Fiscal **importa** os XMLs:
-
-1. Em **Notas fiscais → Cupons (CF-e)**, solte os XMLs (soltos, uma pasta inteira ou um ZIP) que o cliente mandou ou que você baixou no portal.
-2. Cada cupom vai para o cliente cadastrado com o **CNPJ do emitente**. Cupom de quem não é cliente não entra e aparece no resultado (cadastre o cliente e importe de novo). Importar o mesmo arquivo de novo não duplica nada.
-3. O cancelamento (`CFeCanc`) fica junto do cupom cancelado, mesmo que chegue antes da venda.
-4. Escolha o cliente e o mês para conferir: cupons válidos, total vendido, cancelados, total por dia e **números faltando** na sequência de cada equipamento (venda e cancelamento usam a mesma numeração). Também avisa cupom de teste (homologação) e cancelamento sem a venda importada.
-
-Os XMLs ficam em `xmls\<CNPJ>_<apelido>\cfe\<AAAA-MM>\` e os cupons entram no pacote do mês em **Exportar** (pasta `cupons` e `cupons.csv`, colunas `chave; numero; equipamento; caixa; data_emissao; hora; valor_total; destinatario_doc; destinatario_nome; cancelado`).
-
-Busca automática dos cupons na SEFAZ-CE: não há serviço oficial documentado para baixar os CF-e em lote; o Portal CF-e consulta e baixa cupom a cupom. Se a SEFAZ-CE oferecer esse serviço, a busca automática entra aqui, como a das NF-e.
 
 ## Comandos
 
@@ -245,8 +227,7 @@ Todos com `npm run cli -- <comando>` (ou `node src/cli.js <comando>`). Ajuda: `n
 | `escritorio:cert --pfx` | Troca o certificado do escritório. |
 | `cliente:list` | Lista os clientes e o escritório: CNPJ, papel, nome, ativo, NSU, última consulta, último erro, validade do certificado. |
 | `cliente:ativar --cnpj` / `cliente:desativar --cnpj` | Liga ou desliga a captura de um cliente. |
-| `capturar [--cnpj] [--forcar]` | Ciclo completo (consulta → ciência → download) agora. `--forcar` ignora a espera de 1 h, nunca o bloqueio da SEFAZ. |
-| `ciencia [--cnpj]` | Só envia a ciência das notas em resumo. |
+| `capturar [--cnpj] [--forcar]` | Ciclo completo (consulta → download) agora. `--forcar` ignora a espera de 1 h, nunca o bloqueio da SEFAZ. |
 | `baixar [--cnpj]` | Só tenta baixar o XML das notas com ciência enviada. |
 | `exportar --cnpj --competencia AAAA-MM` | Gera o pacote ZIP + CSV. |
 | `manifestar --chave [--cnpj] --evento confirmacao\|desconhecimento\|nao-realizada [--justificativa] [--sim]` | Evento conclusivo manual, só para notas de entrada; `--cnpj` é necessário quando a chave existe em mais de um cliente. Mostra a nota e pede confirmação `s/N`. `nao-realizada` exige justificativa de 15 a 255 caracteres. |
@@ -272,8 +253,8 @@ O sistema segue as regras do web service de distribuição para não ser bloquea
 - **Consumo indevido (cStat 656):** a SEFAZ bloqueia consultas daquele CNPJ por **1 hora**. O sistema marca o bloqueio e pula o cliente; nem o `--forcar` passa por cima.
 - **Consulta por chave** gasta a mesma cota: no máximo `MAX_CONSULTAS_CHAVE_POR_CICLO` por cliente em cada ciclo.
 - **Um cliente por vez**, com pausa entre chamadas. Um cliente com erro nunca interrompe os outros.
-- **Ciência automática** só para notas autorizadas e não canceladas. Rejeições ficam como "erro na ciência" no painel e não são reenviadas sozinhas (use **Reprocessar**).
-- O XML completo só fica disponível **depois da ciência**; normalmente chega no mesmo ciclo ou no seguinte.
+- O app **não dá ciência**. O XML completo só fica disponível **depois que o dono da empresa der a ciência** no sistema dele; aí chega numa das capturas seguintes.
+- Notas que ficaram com "erro na ciência" em versões antigas: **Reprocessar** faz a nota voltar a aguardar a ciência do cliente.
 - **Cancelamento** (evento 110111) marca a nota como cancelada; o XML do evento fica guardado junto.
 - Fora do escopo: NFS-e, CT-e e eventos conclusivos automáticos.
 

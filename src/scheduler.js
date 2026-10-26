@@ -1,6 +1,6 @@
 'use strict'
 
-// Agendador: dispara o ciclo completo (consulta → ciência → download) no horário de CRON_CAPTURA.
+// Agendador: dispara o ciclo completo (consulta → download) no horário de CRON_CAPTURA.
 // Clientes bloqueados (656) ou na espera de 1 h (137) são pulados dentro do próprio ciclo.
 
 const nodeCron = require('node-cron')
@@ -38,7 +38,7 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
     emExecucao = (async () => {
       try {
         const r = await ciclo.executarCiclo()
-        const comErro = (r.clientes || []).filter((c) => c.erro || c.captura?.ok === false || c.ciencia?.ok === false || c.download?.ok === false)
+        const comErro = (r.clientes || []).filter((c) => c.erro || c.captura?.ok === false || c.download?.ok === false)
         if (r.escritorio && (r.escritorio.erro || r.escritorio.captura?.ok === false)) comErro.push(r.escritorio)
         ultima = { inicio, fim: agora().toISOString(), origem, ok: r.ok, erro: r.erro || null, clientes: (r.clientes || []).length, clientesComErro: comErro.length }
         if (r.ok) logger.info('Ciclo concluído', { origem, clientes: ultima.clientes, clientesComErro: ultima.clientesComErro })

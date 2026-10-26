@@ -13,7 +13,6 @@ const express = require('express')
 const { COLUNAS_PUBLICAS } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
 const { detalharNfe } = require('../services/detalheNota')
-const { ErroCupom } = require('../services/cupons')
 
 const POR_PAGINA = 50
 const HOSTS_LOCAIS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
@@ -132,9 +131,7 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
         SUM(CASE WHEN competencia = @competencia AND tipo = 'entrada' THEN 1 ELSE 0 END) entradas_no_mes,
         SUM(CASE WHEN competencia = @competencia AND tipo = 'saida' THEN 1 ELSE 0 END) saidas_no_mes
       FROM notas GROUP BY cliente_id`),
-    // Meses com NF-e ou com CF-e (cliente só de cupom também exporta)
-    competencias: db.prepare(`SELECT competencia FROM notas WHERE competencia IS NOT NULL
-      UNION SELECT competencia FROM cupons WHERE competencia IS NOT NULL ORDER BY competencia DESC`),
+    competencias: db.prepare('SELECT DISTINCT competencia FROM notas WHERE competencia IS NOT NULL ORDER BY competencia DESC'),
     mesesDoCliente: db.prepare(`SELECT competencia,
         SUM(tipo = 'entrada') entradas, SUM(tipo = 'saida') saidas
       FROM notas WHERE cliente_id = ? AND competencia IS NOT NULL GROUP BY competencia ORDER BY competencia DESC`),
@@ -364,39 +361,6 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     fs.createReadStream(arquivo).pipe(res)
   })
 
-  // ---------- CF-e (cupons do SAT/MFE) ----------
-
-  // Um arquivo por pedido (XML ou ZIP), cru: o painel manda um de cada vez e soma os resultados.
-  const corpoCupom = express.raw({ type: () => true, limit: '300mb' })
-  app.post('/api/cupons/importar', corpoCupom, (req, res) => {
-    if (!Buffer.isBuffer(req.body) || !req.body.length) throw new ErroHttp(400, 'Arquivo vazio.')
-    const nome = String(req.query.nome || 'arquivo').slice(0, 200)
-    res.json(ctx.cupons.importar([{ nome, conteudo: req.body }]))
-  })
-
-  const cuponsOu400 = (fn) => {
-    try {
-      return fn()
-    } catch (e) {
-      if (e instanceof ErroCupom) throw new ErroHttp(404, e.message)
-      throw e
-    }
-  }
-  app.get('/api/cupons/competencias', (req, res) => res.json(cuponsOu400(() => ctx.cupons.competencias(String(req.query.cnpj || '')))))
-  app.get('/api/cupons', (req, res) => {
-    const competencia = String(req.query.competencia || '')
-    if (!/^\d{4}-\d{2}$/.test(competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
-    res.json(cuponsOu400(() => ctx.cupons.mes(String(req.query.cnpj || ''), competencia)))
-  })
-  app.get('/api/cupons/:id/xml', (req, res) => {
-    const x = ctx.cupons.xml(Number(req.params.id), req.query.cancelamento === '1')
-    const arquivo = x && dentroDe(config.pastaXmls, x.relativo)
-    if (!arquivo || !fs.existsSync(arquivo)) throw new ErroHttp(404, 'XML do cupom não encontrado.')
-    res.set('Content-Type', 'application/xml; charset=utf-8')
-    res.attachment(x.nome)
-    fs.createReadStream(arquivo).pipe(res)
-  })
-
   // XML da nota + eventos da chave que têm arquivo (cancelamento, carta de correção), num ZIP.
   app.get('/api/notas/:id/xml-eventos', (req, res) => {
     const nota = notaOu404(req.params.id)
@@ -446,8 +410,8 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     }
     if (nota.status === 'ciencia_erro') {
       sql.reenviarCiencia.run(agora().toISOString(), nota.id)
-      logger.info('Ciência reprocessada pelo painel', { chave: nota.chave })
-      return res.json({ ok: true, mensagem: 'A ciência será enviada de novo na próxima captura.' })
+      logger.info('Nota com erro na ciência volta a aguardar a ciência do cliente', { chave: nota.chave })
+      return res.json({ ok: true, mensagem: 'A nota volta a aguardar a ciência do cliente.' })
     }
     throw new ErroHttp(409, 'Só dá para reprocessar notas com ciência enviada ou com erro na ciência.')
   })
@@ -505,24 +469,10 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     res.status(202).json({ ok: true, mensagem: cnpj ? `Captura de ${cnpj} iniciada.` : 'Captura de todos os clientes iniciada.' })
   })
 
-  // Ciência (e download) à mão, para quando a ciência automática está desligada.
-  app.post('/api/ciencia', (req, res) => {
-    const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined
-    if (cnpj && !sql.clientePorCnpj.get(cnpj)) throw new ErroHttp(404, 'Cliente não cadastrado.')
-    if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
-    capturaManual = Promise.resolve(ctx.ciclo.cienciaEDownload({ cnpj }))
-      .catch((e) => logger.error('Erro na ciência pelo painel', { erro: e.message }))
-      .finally(() => {
-        capturaManual = null
-      })
-    logger.info('Ciência disparada pelo painel', { cnpj: cnpj || 'todos' })
-    res.status(202).json({ ok: true, mensagem: cnpj ? `Ciência de ${cnpj} iniciada.` : 'Ciência de todos os clientes iniciada.' })
-  })
-
   app.post('/api/automacao', (req, res) => {
     const b = req.body || {}
     const mudancas = {}
-    for (const nome of ['captura', 'ciencia']) {
+    for (const nome of ['captura']) {
       if (b[nome] === undefined) continue
       if (typeof b[nome] !== 'boolean') throw new ErroHttp(400, 'Use ligado (true) ou desligado (false).')
       mudancas[nome] = b[nome]
@@ -568,7 +518,6 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
       canceladas: r.canceladas,
       semXml: r.semXml,
       porTipo: r.porTipo,
-      cupons: r.cupons,
       totalNotas: r.totalNotas,
       avisos: r.avisos,
       url: `/api/exportacoes/${encodeURIComponent(r.nome)}`,
@@ -665,6 +614,20 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     const pfx = lerPfx(b)
     const r = comoErroHttp(() => ctx.clientes.cadastrarEscritorio({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), pfx, senha: b.senha }))
     res.status(201).json(recibo(r))
+  })
+
+  app.post('/api/escritorio/dados', (req, res) => {
+    exigirLocal(req)
+    const b = req.body || {}
+    const c = comoErroHttp(() => ctx.clientes.editarEscritorio({ razao: String(b.razao || ''), uf: String(b.uf || '') }))
+    res.json({ ok: true, mensagem: 'Dados do escritório salvos.', razaoSocial: c.razao_social, uf: c.uf })
+  })
+
+  app.post('/api/escritorio/excluir', (req, res) => {
+    exigirLocal(req)
+    if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para excluir o escritório.')
+    const c = comoErroHttp(() => ctx.clientes.excluirEscritorio())
+    res.json({ ok: true, mensagem: `Escritório ${c.razao_social} excluído.` })
   })
 
   app.post('/api/escritorio/certificado', (req, res) => {

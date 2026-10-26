@@ -22,7 +22,7 @@ const SITUACOES = [
   ['', 'Todas as situações'],
   ['completa', 'XML completo'],
   ['sem_xml', 'Sem XML'],
-  ['resumo', 'Aguardando ciência'],
+  ['resumo', 'Aguardando ciência do cliente'],
   ['ciencia_erro', 'Erro na ciência'],
   ['esgotada', 'Esgotada'],
   ['cancelada', 'Cancelada'],

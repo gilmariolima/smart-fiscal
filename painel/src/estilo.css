@@ -504,6 +504,16 @@ h2 {
   border-color: #b9c0cc;
 }
 
+.botao-perigo {
+  background: var(--fundo);
+  color: var(--erro);
+  border-color: var(--erro-borda);
+}
+
+.botao-perigo:hover {
+  background: var(--erro-fundo);
+}
+
 .botao-pequeno {
   height: 30px;
   padding: 0 12px;
@@ -1293,46 +1303,6 @@ tr.editavel:hover .botao-icone {
   grid-column: 1 / -1;
   padding-top: 6px;
   border-top: 1px solid var(--borda-clara);
-}
-
-/* cupons (CF-e) */
-.recibo-cupons {
-  margin-bottom: 18px;
-}
-
-.recibo-cupons .cartao-tit {
-  align-items: center;
-}
-
-.recibo-corpo {
-  padding: 12px 18px 16px;
-}
-
-.recibo-corpo p {
-  margin: 0 0 6px;
-}
-
-.secundario-linha {
-  color: var(--apagado);
-  font-size: 13px;
-}
-
-.filtros-cupons {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: 14px;
-  padding: 14px 18px;
-  margin-bottom: 18px;
-}
-
-.avisos-cupons {
-  margin: 0 0 18px;
-}
-
-@media (max-width: 760px) {
-  .filtros-cupons {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* janela por cima da tela, "processando" e avisos */
@@ -2276,6 +2246,14 @@ tr.editavel:hover .botao-icone {
   border: 1px solid var(--borda);
   border-radius: var(--raio);
   box-shadow: var(--sombra);
+}
+
+.formulario + .formulario {
+  margin-top: 20px;
+}
+
+.formulario-titulo {
+  font-size: 15px;
 }
 
 .formulario-acoes .botao + a,

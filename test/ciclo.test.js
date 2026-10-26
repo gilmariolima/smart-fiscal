@@ -175,13 +175,13 @@ test('ciclo: captura do escritório que falha não impede os clientes', async (t
   assert.equal(r.clientes[0].captura.ok, true)
 })
 
-test('somenteCiencia e somenteDownload com o CNPJ do escritório não fazem nada', async (t) => {
+test('somenteDownload com o CNPJ do escritório não faz nada', async (t) => {
   const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, CNPJ_MOCK_ESCRITORIO] })
   t.after(amb.limpar)
   amb.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(amb.ids[1])
   const ciclo = criarServicoCiclo(amb.deps)
 
-  for (const r of [await ciclo.somenteCiencia({ cnpj: CNPJ_MOCK_ESCRITORIO }), await ciclo.somenteDownload({ cnpj: CNPJ_MOCK_ESCRITORIO }), await ciclo.cienciaEDownload({ cnpj: CNPJ_MOCK_ESCRITORIO })]) {
+  for (const r of [await ciclo.somenteDownload({ cnpj: CNPJ_MOCK_ESCRITORIO })]) {
     assert.equal(r.ok, true)
     assert.deepEqual(r.clientes, [])
     assert.equal(r.escritorio, undefined)
