@@ -414,7 +414,14 @@ async function iniciar() {
     if (producao) ctx.logger.warn('Banco das notas passado de homologação para produção', producao)
     if (copiados.length) ctx.logger.info('Dados dos apps anteriores copiados', { copiados })
     if (motorEstoque?.erro) ctx.logger.error('Motor do SPED', { erro: motorEstoque.erro })
-    servidor = await iniciarServidor(ctx, { estoque: () => motorEstoque })
+    servidor = await iniciarServidor(ctx, {
+      estoque: () => motorEstoque,
+      // O botão do painel; fora do app instalado no Windows não há atualização
+      atualizacao: {
+        estado: () => (atualizacao ? atualizacao.estado() : { situacao: 'indisponivel' }),
+        verificar: async () => (atualizacao ? atualizacao.verificar() : { situacao: 'indisponivel' }),
+      },
+    })
     urlPainel = `http://127.0.0.1:${servidor.painel.porta}`
 
     // Primeira vez: liga junto com o Windows (a busca automática de notas depende disso).

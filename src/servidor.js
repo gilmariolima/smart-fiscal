@@ -11,6 +11,7 @@ const { criarAgendador } = require('./scheduler')
  * @param {boolean} [opcoes.comPainel] sobe o painel web (padrão true)
  * @param {object} [opcoes.relogio] { depois(fn, ms), aCada(fn, ms) } → função que cancela (injetável nos testes)
  * @param {Function} [opcoes.estoque] () => motor do SPED, para onde o painel repassa /estoque
+ * @param {object} [opcoes.atualizacao] { estado(), verificar() } da atualização automática do app
  * @returns {Promise<{ agendador, painel, parar: () => Promise<void> }>}
  */
 const BACKUP_INICIAL_MS = 60e3
@@ -27,11 +28,11 @@ const relogioReal = {
   },
 }
 
-async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque } = {}) {
+async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque, atualizacao } = {}) {
   const { config, logger } = ctx
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, ...(cron ? { cron } : {}) })
   let painel = null
-  if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque })
+  if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao })
   agendador.iniciar()
 
   // Backup: 1 min depois de ligar e a cada hora; o serviço só copia se houver pasta escolhida
