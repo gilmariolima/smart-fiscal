@@ -410,8 +410,8 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     }
     if (nota.status === 'ciencia_erro') {
       sql.reenviarCiencia.run(agora().toISOString(), nota.id)
-      logger.info('Ciência reprocessada pelo painel', { chave: nota.chave })
-      return res.json({ ok: true, mensagem: 'A ciência será enviada de novo na próxima captura.' })
+      logger.info('Nota com erro na ciência volta a aguardar a ciência do cliente', { chave: nota.chave })
+      return res.json({ ok: true, mensagem: 'A nota volta a aguardar a ciência do cliente.' })
     }
     throw new ErroHttp(409, 'Só dá para reprocessar notas com ciência enviada ou com erro na ciência.')
   })
@@ -469,24 +469,10 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     res.status(202).json({ ok: true, mensagem: cnpj ? `Captura de ${cnpj} iniciada.` : 'Captura de todos os clientes iniciada.' })
   })
 
-  // Ciência (e download) à mão, para quando a ciência automática está desligada.
-  app.post('/api/ciencia', (req, res) => {
-    const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined
-    if (cnpj && !sql.clientePorCnpj.get(cnpj)) throw new ErroHttp(404, 'Cliente não cadastrado.')
-    if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
-    capturaManual = Promise.resolve(ctx.ciclo.cienciaEDownload({ cnpj }))
-      .catch((e) => logger.error('Erro na ciência pelo painel', { erro: e.message }))
-      .finally(() => {
-        capturaManual = null
-      })
-    logger.info('Ciência disparada pelo painel', { cnpj: cnpj || 'todos' })
-    res.status(202).json({ ok: true, mensagem: cnpj ? `Ciência de ${cnpj} iniciada.` : 'Ciência de todos os clientes iniciada.' })
-  })
-
   app.post('/api/automacao', (req, res) => {
     const b = req.body || {}
     const mudancas = {}
-    for (const nome of ['captura', 'ciencia']) {
+    for (const nome of ['captura']) {
       if (b[nome] === undefined) continue
       if (typeof b[nome] !== 'boolean') throw new ErroHttp(400, 'Use ligado (true) ou desligado (false).')
       mudancas[nome] = b[nome]
@@ -628,6 +614,20 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     const pfx = lerPfx(b)
     const r = comoErroHttp(() => ctx.clientes.cadastrarEscritorio({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), pfx, senha: b.senha }))
     res.status(201).json(recibo(r))
+  })
+
+  app.post('/api/escritorio/dados', (req, res) => {
+    exigirLocal(req)
+    const b = req.body || {}
+    const c = comoErroHttp(() => ctx.clientes.editarEscritorio({ razao: String(b.razao || ''), uf: String(b.uf || '') }))
+    res.json({ ok: true, mensagem: 'Dados do escritório salvos.', razaoSocial: c.razao_social, uf: c.uf })
+  })
+
+  app.post('/api/escritorio/excluir', (req, res) => {
+    exigirLocal(req)
+    if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para excluir o escritório.')
+    const c = comoErroHttp(() => ctx.clientes.excluirEscritorio())
+    res.json({ ok: true, mensagem: `Escritório ${c.razao_social} excluído.` })
   })
 
   app.post('/api/escritorio/certificado', (req, res) => {

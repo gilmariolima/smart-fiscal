@@ -406,7 +406,7 @@ export default function Nota() {
           {dados.erroXml ||
             (nota.cancelada
               ? 'Nota cancelada pelo emitente: a SEFAZ não entrega o XML completo.'
-              : 'XML completo ainda não disponível: a SEFAZ só mandou o resumo. Ele chega depois da ciência da operação.')}
+              : 'XML completo ainda não disponível: a SEFAZ só mandou o resumo. Ele chega na próxima captura depois que o cliente der ciência da operação.')}
         </p>
         <Resumo nota={nota} />
       </>

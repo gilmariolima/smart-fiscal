@@ -1,15 +1,13 @@
 'use strict'
 
-// Ciclo completo por cliente: consulta por NSU → ciência → download por chave.
-// Com a ciência automática desligada, o ciclo só consulta e baixa as notas que já têm ciência;
-// a ciência sai pelo botão "Dar ciência" (cienciaEDownload).
+// Ciclo por cliente: consulta por NSU → download por chave das notas com ciência enviada antes.
+// O escritório não dá ciência: o dono da empresa dá, e o XML completo chega numa consulta seguinte.
 // Um cliente por vez; erro em um cliente não interrompe os outros.
 // Trava: em memória (mesmo processo) + no banco (CLI e servidor ao mesmo tempo).
 
 const { criarServicoCaptura } = require('./captura')
 const { criarServicoManifestacao } = require('./manifestacao')
 const { criarServicoDownload } = require('./download')
-const { criarAutomacao } = require('./automacao')
 
 const JANELA_TRAVA_MS = 30 * 60e3 // execução sem fim há mais de 30 min = processo que caiu
 
@@ -18,7 +16,6 @@ function criarServicoCiclo(deps) {
   const captura = criarServicoCaptura(deps)
   const manifestacao = criarServicoManifestacao(deps)
   const download = criarServicoDownload({ ...deps, captura })
-  const automacao = criarAutomacao(deps)
   let rodando = false
 
   const sql = {
@@ -100,26 +97,17 @@ function criarServicoCiclo(deps) {
 
   /** Ciclo completo. `forcar` ignora a espera de 1 h da consulta por NSU (nunca o bloqueio do 656). */
   function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente } = {}) {
-    const comCiencia = automacao.obter().ciencia
     return comTrava({ cnpj, cnpjs }, async (cliente) => ({
       captura: await captura.capturarCliente(cliente.id, { forcar }),
-      ciencia: comCiencia ? await manifestacao.enviarCiencias(cliente.id) : { pulado: 'ciência automática desligada' },
       download: await download.baixarPendentes(cliente.id),
     }), async (escritorio) => ({ captura: await captura.capturarCliente(escritorio.id, { forcar }) }), aoIniciarCliente)
   }
 
-  /** Ciência das notas em resumo + download (botão "Dar ciência" com a ciência automática desligada). */
-  const cienciaEDownload = ({ cnpj } = {}) =>
-    comTrava({ cnpj }, async (c) => ({ ciencia: await manifestacao.enviarCiencias(c.id), download: await download.baixarPendentes(c.id) }))
-
-  const somenteCiencia = ({ cnpj } = {}) => comTrava({ cnpj }, async (c) => ({ ciencia: await manifestacao.enviarCiencias(c.id) }))
   const somenteDownload = ({ cnpj } = {}) => comTrava({ cnpj }, async (c) => ({ download: await download.baixarPendentes(c.id) }))
 
   return {
     executarCiclo,
-    somenteCiencia,
     somenteDownload,
-    cienciaEDownload,
     manifestar: (args) => manifestacao.manifestar(args),
     cicloEmAndamento,
   }

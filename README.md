@@ -2,7 +2,7 @@
 
 O app do escritório para duas rotinas fiscais, numa janela só:
 
-- **Notas fiscais:** busca na SEFAZ as NF-e emitidas contra os clientes, dá ciência, baixa os XMLs, organiza por cliente e mês e exporta para o Domínio e o Fortes. Funciona sozinho nos horários marcados. Detalhes em [docs/NOTAS.md](docs/NOTAS.md).
+- **Notas fiscais:** busca na SEFAZ as NF-e emitidas contra os clientes, baixa os XMLs depois que o cliente dá ciência, organiza por cliente e mês e exporta para o Domínio e o Fortes. Funciona sozinho nos horários marcados. Detalhes em [docs/NOTAS.md](docs/NOTAS.md).
 - **SPED Fiscal:** converte o inventário do cliente (relatório, `.FS` da Fortes, bloco H ou planilha) no SPED EFD ICMS/IPI com o bloco H, pronto para o PVA, com as pendências para conferir e a correção dos itens no próprio painel. Detalhes em [docs/SPED.md](docs/SPED.md).
 
 Junta o antigo **SmartDoc** (notas) e o antigo **Estoque SPED** (inventário), com a estrutura, a atualização automática e o visual do Estoque SPED.

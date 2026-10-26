@@ -36,10 +36,6 @@ function linhaResultado(r) {
     const c = r.captura
     partes.push(c.pulado ? `consulta pulada (${c.pulado})` : c.ok ? `consulta ${c.docs} doc(s), cStat ${c.cStat}` : `consulta com ERRO: ${c.erro}`)
   }
-  if (r.ciencia) {
-    const c = r.ciencia
-    partes.push(c.pulado ? `ciência pulada (${c.pulado})` : c.ok ? `ciência ${c.enviadas}/${c.pendentes}${c.erros ? `, ${c.erros} rejeitada(s)` : ''}` : `ciência com ERRO: ${c.erro}`)
-  }
   if (r.download) {
     const d = r.download
     partes.push(d.pulado ? `download pulado (${d.pulado})` : d.ok ? `download ${d.baixadas}/${d.consultas}` : `download com ERRO: ${d.erro}`)
@@ -193,13 +189,9 @@ function criarPrograma(io) {
   }
 
   opcaoCnpj(programa.command('capturar'))
-    .description('Ciclo completo: consulta por NSU → ciência → download dos XMLs')
+    .description('Ciclo completo: consulta por NSU → download dos XMLs')
     .option('--forcar', 'ignora a espera de 1 h após "nenhum documento" (não ignora bloqueio por consumo indevido)')
     .action((o) => rodar(contexto().ciclo.executarCiclo, o))
-
-  opcaoCnpj(programa.command('ciencia'))
-    .description('Só envia a ciência das notas em resumo')
-    .action((o) => rodar(contexto().ciclo.somenteCiencia, o))
 
   opcaoCnpj(programa.command('baixar'))
     .description('Só tenta baixar o XML das notas com ciência enviada')
@@ -325,7 +317,7 @@ function criarPrograma(io) {
       log(escritorio ? `Escritório: ${escritorio.cnpj} - ${escritorio.razao_social} | ${escritorio.ativo ? 'ativo' : 'inativo'} | certificado até ${dataHora(escritorio.cert_validade)}` : 'Escritório: não cadastrado (use escritorio:add)')
       const [proxima] = require('./scheduler').proximosHorarios(c.config.cronCaptura)
       const auto = c.automacao.obter()
-      log(`Busca automática: ${auto.captura ? 'ligada' : 'desligada'} | ciência automática: ${auto.ciencia ? 'ligada' : 'desligada'} (mude no painel, em Visão geral)`)
+      log(`Busca automática: ${auto.captura ? 'ligada' : 'desligada'} (mude no painel, no Início)`)
       log(`Agendamento: ${c.config.cronCaptura} | próximo horário: ${dataHora(proxima)} (com o servidor rodando${auto.captura ? '' : ', mas a busca automática está desligada'})`)
       log('\nNotas por status:')
       log(tabela(r.notasPorStatus, [['Status', 'status'], ['Total', 'total'], ['Canceladas', 'canceladas']]))

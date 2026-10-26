@@ -39,7 +39,7 @@ function pastasTemporarias() {
 // Programa em processo, com banco em memória e respostas de terminal simuladas.
 function montarPrograma({ respostas = [], interativo = true } = {}) {
   const p = pastasTemporarias()
-  const ctx = criarContexto({ config: carregarConfig(p.env), logger: silencioso, db: abrirBanco(':memory:'), fabricaSefaz: ((m) => (c) => m.cliente(c.cnpj))(criarSefazMock()) })
+  const ctx = criarContexto({ config: carregarConfig(p.env), logger: silencioso, db: abrirBanco(':memory:'), fabricaSefaz: ((m) => (c) => m.cliente(c.cnpj))(criarSefazMock({ cienciaDoDono: true })) })
   const saida = []
   const perguntas = []
   const responder = async (msg) => {
@@ -84,7 +84,7 @@ test('capturar, status, desativar e manifestar', async (t) => {
 
   m.saida.length = 0
   await m.executar('capturar')
-  assert.deepEqual(m.saida, [`${CNPJ_MOCK_OK}: consulta 4 doc(s), cStat 138 | ciência 1/1 | download 1/1`])
+  assert.deepEqual(m.saida, [`${CNPJ_MOCK_OK}: consulta 5 doc(s), cStat 138 | download 0/0`])
 
   m.saida.length = 0
   await m.executar('status')
@@ -171,7 +171,7 @@ test('processo real: cadastro com senha pelo pipe, captura duas vezes sem duplic
 
   const c1 = cli(p.env, ['capturar'])
   assert.equal(c1.status, 0, c1.stderr)
-  assert.match(c1.stdout, /ciência 1\/1 \| download 1\/1/)
+  assert.match(c1.stdout, /consulta 5 doc\(s\), cStat 138 \| download 0\/0/)
   const c2 = cli(p.env, ['capturar', '--forcar'])
   assert.equal(c2.status, 0, c2.stderr)
   assert.match(c2.stdout, /cStat 137/)

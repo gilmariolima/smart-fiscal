@@ -14,7 +14,7 @@ function subtitulo(resumo) {
   return resumo.ultimaCaptura ? `Última captura ${quando(resumo.ultimaCaptura)}` : 'Nenhuma captura ainda'
 }
 
-// Notas em resumo aguardando ciência (canceladas não recebem ciência).
+// Notas só em resumo: o XML completo chega depois que o cliente der ciência (canceladas não contam).
 function pendentesDeCiencia(resumo) {
   const linha = resumo.notasPorStatus?.find((s) => s.status === 'resumo')
   return linha ? (linha.total || 0) - (linha.canceladas || 0) : 0
@@ -24,7 +24,7 @@ const ATALHOS = [
   { para: '/notas', icone: 'notas', cor: 'azul', titulo: 'Notas', texto: 'Pastas de cada cliente, por ano e mês' },
   { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e situação da captura' },
   { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar empresa com o certificado A1', soNoPc: true },
-  { para: '/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Notas aguardando ciência ou XML' },
+  { para: '/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Notas aguardando a ciência do cliente' },
   { para: '/exportar', icone: 'exportar', cor: 'laranja', titulo: 'Exportar', texto: 'ZIP do mês para o Domínio/Fortes' },
   { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Histórico de consultas e downloads' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado para as notas de saída', soNoPc: true },
@@ -117,38 +117,21 @@ export default function Inicio() {
     }
   }
 
-  function mudarAutomacao(nome, ligar) {
-    const pergunta = `Ligar a ciência automática?\n\nNa próxima busca o sistema dá ciência sozinho nas ${plural(pendentes, 'nota pendente', 'notas pendentes')} e nas que chegarem depois.`
-    if (nome === 'ciencia' && ligar && pendentes && !window.confirm(pergunta)) return
+  function mudarBusca(ligar) {
     enviar(async () => {
-      await api.post('/api/automacao', { [nome]: ligar })
-      return `${nome === 'captura' ? 'Busca' : 'Ciência'} automática ${ligar ? 'ligada' : 'desligada'}.`
+      await api.post('/api/automacao', { captura: ligar })
+      return `Busca automática ${ligar ? 'ligada' : 'desligada'}.`
     })
-  }
-
-  const darCiencia = () => {
-    const pergunta = `Dar ciência em ${plural(pendentes, 'nota', 'notas')} de todos os clientes?
-
-A ciência é uma manifestação na SEFAZ, aparece para o fornecedor e não pode ser desfeita.`
-    if (!window.confirm(pergunta)) return
-    enviar(async () => (await api.post('/api/ciencia', {})).mensagem)
   }
 
   const automacao = (
     <div className="automacao">
       <Interruptor
         ligado={auto.captura}
-        onChange={(v) => mudarAutomacao('captura', v)}
+        onChange={mudarBusca}
         desabilitado={enviando}
         rotulo="Busca automática"
         descricao={auto.captura ? 'Busca as notas novas nos horários do agendamento.' : 'Só busca quando você manda capturar.'}
-      />
-      <Interruptor
-        ligado={auto.ciencia}
-        onChange={(v) => mudarAutomacao('ciencia', v)}
-        desabilitado={enviando}
-        rotulo="Ciência automática"
-        descricao={auto.ciencia ? 'Dá ciência e baixa o XML completo depois de cada busca.' : 'A ciência só sai quando você clica em Dar ciência.'}
       />
       <div className="automacao-captura">
         <Link className="botao botao-azul" to="/clientes">
@@ -172,12 +155,15 @@ A ciência é uma manifestação na SEFAZ, aparece para o fornecedor e não pode
         </p>
       )}
 
-      {!auto.ciencia && pendentes > 0 && (
+      {pendentes > 0 && (
         <div className="faixa faixa-ambar faixa-ciencia">
-          <span>{plural(pendentes, 'nota aguarda', 'notas aguardam')} a sua ciência para o XML completo ser baixado.</span>
-          <button type="button" className="botao botao-azul" onClick={darCiencia} disabled={enviando || resumo.capturaEmAndamento}>
-            {resumo.capturaEmAndamento ? 'Capturando…' : `Dar ciência em ${plural(pendentes, 'nota', 'notas')}`}
-          </button>
+          <span>
+            {plural(pendentes, 'nota aguarda', 'notas aguardam')} a ciência do cliente: avise o dono da empresa. Depois que ele der
+            ciência, o XML completo chega sozinho na próxima captura.
+          </span>
+          <Link className="botao botao-claro" to="/pendentes">
+            Ver as notas
+          </Link>
         </div>
       )}
     </Pagina>

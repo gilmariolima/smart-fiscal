@@ -5,7 +5,8 @@
 // - 'normal': fila de documentos por NSU. Lote 1 = resNFe A e B (138); lote 2 = procNFe C
 //   (chegou direto, sem resumo) e o cancelamento (110111) de B; depois 137.
 //   A ciência (210210) de uma nota coloca o procNFe dela no fim da fila, com NSU novo,
-//   e libera o XML completo na consulta por chave.
+//   e libera o XML completo na consulta por chave. Com `cienciaDoDono`, o dono da empresa
+//   dá a ciência fora do app logo depois que o resumo sai na distribuição (menos na nota cancelada B).
 // - '656': toda consulta de distribuição devolve consumo indevido.
 // - 'escritorio': certificado do escritório (CNPJ no autXML). Só procNFe de notas de saída dos clientes
 //   (S1, S2, E1, F1), cancelamento de S2 e um resNFe que deve ser ignorado; depois 137.
@@ -83,7 +84,7 @@ const doc = (nsu, schema, xml) => ({ nsu, schema, xml, json: xmlParaJson(xml) })
  * @param {Date}   [opcoes.dataBase] data de emissão das notas simuladas (padrão: agora)
  * @param {string} [opcoes.tpAmb]
  */
-function criarSefazMock({ cenarios = { [CNPJ_MOCK_656]: { modo: '656' } }, tamanhoLote = 2, dataBase = new Date(), tpAmb = '2' } = {}) {
+function criarSefazMock({ cenarios = { [CNPJ_MOCK_656]: { modo: '656' } }, tamanhoLote = 2, dataBase = new Date(), tpAmb = '2', cienciaDoDono = false } = {}) {
   const estados = new Map()
   const chamadas = []
   let seqProt = 0
@@ -134,11 +135,21 @@ function criarSefazMock({ cenarios = { [CNPJ_MOCK_656]: { modo: '656' } }, taman
     for (const n of notasDoCliente(cnpj, dataBase)) st.notas.set(n.chave, n)
     const [a, b, c] = [...st.notas.values()]
     c.liberada = true // chega completa sem resumo
+    b.cancelada = true
     adicionar(st, 'resNFe_v1.01.xsd', xmlResNFe(a))
     adicionar(st, 'resNFe_v1.01.xsd', xmlResNFe(b))
     adicionar(st, 'procNFe_v4.00.xsd', xmlNfeProc(c, cnpj, tpAmb))
     adicionar(st, 'procEventoNFe_v1.00.xsd', xmlCancelamento(b, tpAmb, dataSefaz(dataBase), nProt()))
     return st
+  }
+
+  /** O dono deu ciência fora do app: o procNFe da nota entra no fim da fila (o maxNSU desta resposta ainda não o conta). */
+  function liberarPeloDono(st, d) {
+    if (d.schema !== 'resNFe_v1.01.xsd' || st.modo !== 'normal') return
+    const n = [...st.notas.values()].find((x) => d.xml.includes(x.chave))
+    if (!n || n.liberada || n.cancelada) return
+    n.liberada = true
+    adicionar(st, 'procNFe_v4.00.xsd', xmlNfeProc(n, st.cnpj, tpAmb))
   }
 
   function adicionar(st, schema, xml) {
@@ -177,6 +188,7 @@ function criarSefazMock({ cenarios = { [CNPJ_MOCK_656]: { modo: '656' } }, taman
         return distribuicao(st(), (maxNSU) => {
           const pendentes = st().docs.filter((d) => d.nsu > pad(ultNSU, 15)).slice(0, tamanhoLote)
           if (!pendentes.length) return resposta('137', 'Nenhum documento localizado', { ultNSU: maxNSU, maxNSU })
+          if (cienciaDoDono) for (const d of pendentes) liberarPeloDono(st(), d)
           return resposta('138', 'Documento localizado', { ultNSU: pendentes.at(-1).nsu, maxNSU, docZip: pendentes })
         })
       },

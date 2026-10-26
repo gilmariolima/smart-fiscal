@@ -26,5 +26,5 @@ export default function SituacaoNota({ nota: n, limite }) {
         Aguardando XML
       </Etiqueta>
     )
-  return <Etiqueta cor="ambar">Aguardando ciência</Etiqueta>
+  return <Etiqueta cor="ambar" titulo="Avise o dono da empresa: depois da ciência dele, o XML completo chega na próxima captura.">Aguardando ciência do cliente</Etiqueta>
 }

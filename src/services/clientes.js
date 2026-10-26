@@ -44,6 +44,10 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     trocarCert: db.prepare(`UPDATE clientes SET cert_arquivo = @cert_arquivo, cert_senha_enc = @cert_senha_enc,
       cert_validade = @cert_validade, ultimo_erro = NULL WHERE cnpj = @cnpj`),
     ativo: db.prepare('UPDATE clientes SET ativo = ? WHERE cnpj = ?'),
+    dados: db.prepare('UPDATE clientes SET razao_social = @razao_social, uf = @uf WHERE id = @id'),
+    notasDe: db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?'),
+    apagarExecucoes: db.prepare('DELETE FROM execucoes WHERE cliente_id = ?'),
+    apagar: db.prepare('DELETE FROM clientes WHERE id = ?'),
   }
 
   /** Abre o .pfx e confere senha, validade e raiz do CNPJ. Lança Error com a mensagem para o usuário. */
@@ -125,6 +129,33 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     return r
   }
 
+  /** Muda a razão social e a UF do escritório. O CNPJ não muda: é o do certificado. */
+  function editarEscritorio({ razao, uf }) {
+    const atual = sql.escritorio.get()
+    if (!atual) throw new Error('Escritório não cadastrado.')
+    validarDados({ cnpj: atual.cnpj, razao, uf })
+    sql.dados.run({ id: atual.id, razao_social: String(razao).trim(), uf: String(uf).trim().toUpperCase() })
+    logger.info('Dados do escritório alterados', { cnpj: atual.cnpj })
+    return sql.escritorio.get()
+  }
+
+  /**
+   * Exclui o escritório: o cadastro, o certificado guardado e o histórico de execuções dele.
+   * Os XMLs já recebidos ficam nas pastas dos clientes (e em fora da carteira) e as notas não mudam.
+   */
+  function excluirEscritorio() {
+    const atual = sql.escritorio.get()
+    if (!atual) throw new Error('Escritório não cadastrado.')
+    if (sql.notasDe.get(atual.id).n) throw new Error('O escritório tem notas no próprio nome; não dá para excluir.')
+    db.transaction(() => {
+      sql.apagarExecucoes.run(atual.id)
+      sql.apagar.run(atual.id)
+    })()
+    fs.rmSync(path.join(config.pastaCerts, atual.cert_arquivo), { force: true })
+    logger.info('Escritório excluído', { cnpj: atual.cnpj })
+    return atual
+  }
+
   /** Troca o certificado (renovação anual). */
   function trocarCertificado({ cnpj, pfx, senha }) {
     const c = somenteDigitos(cnpj)
@@ -152,7 +183,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, obterEscritorio, trocarCertificado, definirAtivo, listar, obter, validarCertificado }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, listar, obter, validarCertificado }
 }
 
 module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS }

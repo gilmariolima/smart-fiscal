@@ -10,7 +10,7 @@ const { criarSefazMock, CNPJ_MOCK_OK } = require('../../src/sefaz/mock-client')
 const AGORA = new Date('2026-10-09T12:00:00Z')
 const silencioso = { info() {}, warn() {}, error() {} }
 
-function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock(), fabrica, agora = () => AGORA, config = {} } = {}) {
+function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cienciaDoDono: true }), fabrica, agora = () => AGORA, config = {} } = {}) {
   const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-teste-'))
   const db = abrirBanco(':memory:')
   const ins = db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, ?, ?, 'CE', 'x.pfx', 'a:b:c')`)

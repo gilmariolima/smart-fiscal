@@ -36,7 +36,7 @@ async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPaine
     PASTA_EXPORTS: path.join(base, 'exports'),
     ...envExtra,
   }
-  const mock = criarSefazMock()
+  const mock = criarSefazMock({ cienciaDoDono: true })
   const fabricaSefaz = (c) => {
     const real = mock.cliente(c.cnpj)
     if (!atrasoSefazMs) return real
@@ -134,7 +134,7 @@ test('resumo, clientes e execuções depois de um ciclo; nenhuma senha na API', 
   assert.match(bloq.ultimoErro, /656/)
 
   const execucoes = (await pedir('/api/execucoes')).corpo
-  assert.ok(execucoes.length >= 4)
+  assert.ok(execucoes.length >= 2)
   assert.ok(execucoes.every((e) => 'cliente_nome' in e))
 
   const tudo = JSON.stringify([resumo.corpo, clientes, execucoes])
@@ -566,11 +566,42 @@ test('escritório pelo painel: cadastra só do próprio PC, aparece em /api/escr
   assert.ok(ctx.clientes.obterEscritorio())
 })
 
+test('escritório: edita razão social e UF; excluir apaga cadastro, certificado e execuções, e permite cadastrar de novo', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const { config } = ctx
+  assert.equal((await pedir('/api/escritorio/dados', { method: 'POST', body: { razao: 'X', uf: 'CE' } })).status, 404)
+  assert.equal((await pedir('/api/escritorio/excluir', { method: 'POST', body: {} })).status, 404)
+
+  const cert = gerarPfx({ cnpj: CNPJ_NOVO })
+  const corpo = { cnpj: CNPJ_NOVO, razao: 'Contabilidade Teste', uf: 'CE', pfx: pfxBase64(cert), senha: cert.senha }
+  assert.equal((await pedir('/api/escritorio', { method: 'POST', body: corpo })).status, 201)
+
+  const editar = await pedir('/api/escritorio/dados', { method: 'POST', body: { razao: '  Contabilidade Nova Ltda ', uf: 'pi' } })
+  assert.equal(editar.status, 200)
+  const esc = (await pedir('/api/escritorio')).corpo
+  assert.deepEqual([esc.razaoSocial, esc.uf, esc.cnpj], ['Contabilidade Nova Ltda', 'PI', CNPJ_NOVO])
+  assert.equal((await pedir('/api/escritorio/dados', { method: 'POST', body: { razao: ' ', uf: 'CE' } })).status, 400)
+  assert.equal((await pedir('/api/escritorio/dados', { method: 'POST', body: { razao: 'Y', uf: 'XX' } })).status, 400)
+
+  const { id, cert_arquivo } = ctx.db.prepare("SELECT id, cert_arquivo FROM clientes WHERE papel = 'escritorio'").get()
+  ctx.db.prepare("INSERT INTO execucoes (cliente_id, tipo, inicio, fim) VALUES (?, 'captura', '2026-10-01', '2026-10-01')").run(id)
+  const pfx = path.join(config.pastaCerts, cert_arquivo)
+  assert.ok(fs.existsSync(pfx))
+
+  const excluir = await pedir('/api/escritorio/excluir', { method: 'POST', body: {} })
+  assert.equal(excluir.status, 200)
+  assert.match(excluir.corpo.mensagem, /Contabilidade Nova Ltda excluído/)
+  assert.equal((await pedir('/api/escritorio')).corpo, null)
+  assert.ok(!fs.existsSync(pfx))
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) n FROM execucoes WHERE cliente_id = ?').get(id).n, 0)
+  assert.equal((await pedir('/api/escritorio', { method: 'POST', body: corpo })).status, 201)
+})
+
 test('escritório: cadastro e troca de certificado recusados fora do próprio PC', async (t) => {
   const { pedir } = await montar(t, {}, { ehLocal: () => false })
   const cert = gerarPfx({ cnpj: CNPJ_NOVO })
   const corpo = { cnpj: CNPJ_NOVO, razao: 'Contabilidade Teste', uf: 'CE', pfx: pfxBase64(cert), senha: cert.senha }
-  for (const caminho of ['/api/escritorio', '/api/escritorio/certificado']) {
+  for (const caminho of ['/api/escritorio', '/api/escritorio/certificado', '/api/escritorio/dados', '/api/escritorio/excluir']) {
     const r = await pedir(caminho, { method: 'POST', body: corpo })
     assert.equal(r.status, 403, caminho)
   }
@@ -579,25 +610,20 @@ test('escritório: cadastro e troca de certificado recusados fora do próprio PC
 
 // ---------- chaves de automação e ciência à mão ----------
 
-test('automação pelo painel: liga e desliga, recusa valor inválido; ciência à mão', async (t) => {
+test('automação pelo painel: liga e desliga a busca, recusa valor inválido; não há ciência', async (t) => {
   const { pedir } = await montar(t)
-  assert.deepEqual((await pedir('/api/resumo')).corpo.automacao, { captura: true, ciencia: true })
+  assert.deepEqual((await pedir('/api/resumo')).corpo.automacao, { captura: true })
 
-  const desligar = await pedir('/api/automacao', { method: 'POST', body: { ciencia: false } })
-  assert.equal(desligar.status, 200)
-  assert.deepEqual(desligar.corpo.automacao, { captura: true, ciencia: false })
   const semBusca = await pedir('/api/automacao', { method: 'POST', body: { captura: false } })
+  assert.equal(semBusca.status, 200)
   assert.equal(semBusca.corpo.agendador.automatica, false)
-  assert.deepEqual((await pedir('/api/resumo')).corpo.automacao, { captura: false, ciencia: false })
+  assert.deepEqual((await pedir('/api/resumo')).corpo.automacao, { captura: false })
 
-  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { ciencia: 'sim' } })).status, 400)
+  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { captura: 'sim' } })).status, 400)
+  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { ciencia: true } })).status, 400)
   assert.equal((await pedir('/api/automacao', { method: 'POST', body: {} })).status, 400)
-  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { ciencia: true }, headers: { 'X-Painel': '0' } })).status, 403)
-
-  assert.equal((await pedir('/api/ciencia', { method: 'POST', body: { cnpj: '11444777000161' } })).status, 404)
-  const ciencia = await pedir('/api/ciencia', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK } })
-  assert.equal(ciencia.status, 202)
-  assert.match(ciencia.corpo.mensagem, /Ciência de 11222333000181 iniciada/)
+  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { captura: true }, headers: { 'X-Painel': '0' } })).status, 403)
+  assert.equal((await pedir('/api/ciencia', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK } })).status, 404)
 })
 
 test('busca casa com nome, CNPJ e número', async (t) => {

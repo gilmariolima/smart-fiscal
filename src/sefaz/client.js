@@ -83,7 +83,7 @@ let mockCompartilhado = null
  */
 function criarFabricaSefaz(config) {
   if (config.sefazMock) {
-    if (!mockCompartilhado) mockCompartilhado = require('./mock-client').criarSefazMock()
+    if (!mockCompartilhado) mockCompartilhado = require('./mock-client').criarSefazMock({ cienciaDoDono: true })
     return (cliente) => mockCompartilhado.cliente(cliente.cnpj)
   }
   return (cliente) => {
