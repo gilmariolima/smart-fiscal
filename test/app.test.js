@@ -8,7 +8,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { test } = require('node:test')
-const { pastaDados, subpastas, appsAnteriores, copiarDadosAnteriores, prepararEnv } = require('../electron/dados')
+const { pastaDados, subpastas, appsAnteriores, copiarDadosAnteriores, prepararEnv, garantirProducao } = require('../electron/dados')
 const { pastaMotor, caminhoPython, iniciarMotor } = require('../electron/motor')
 const { criarAtualizacao } = require('../electron/atualizar')
 
@@ -37,6 +37,29 @@ test('pasta de dados fica fora da pasta do programa, com uma parte para cada mot
   assert.equal(pastaDados({ env: { SMART_FISCAL_DADOS: '/srv/sf' } }), path.resolve('/srv/sf'))
 })
 
+test('garantirProducao: .env em homologação passa para TP_AMB=1 e mantém o resto; demonstração e produção ficam', () => {
+  const pasta = tmp()
+  const arquivo = path.join(pasta, '.env')
+  assert.equal(garantirProducao(pasta), false, 'sem .env não faz nada')
+
+  fs.writeFileSync(arquivo, 'TP_AMB=2   # homologação\nMASTER_KEY=abc\nCRON_CAPTURA=0 8 * * *\n')
+  assert.equal(garantirProducao(pasta), true)
+  const depois = fs.readFileSync(arquivo, 'utf8')
+  assert.match(depois, /^TP_AMB=1 /m)
+  assert.doesNotMatch(depois, /TP_AMB=2/)
+  assert.match(depois, /^MASTER_KEY=abc$/m)
+  assert.match(depois, /^CRON_CAPTURA=0 8 \* \* \*$/m)
+  assert.equal(garantirProducao(pasta), false, 'já em produção')
+
+  fs.writeFileSync(arquivo, 'MASTER_KEY=abc\n')
+  assert.equal(garantirProducao(pasta), true, 'sem TP_AMB (o padrão é homologação)')
+  assert.match(fs.readFileSync(arquivo, 'utf8'), /^TP_AMB=1 [^\n]*\nMASTER_KEY=abc\n$/)
+
+  fs.writeFileSync(arquivo, 'TP_AMB=2\nSEFAZ_MOCK=1\nMASTER_KEY=abc\n')
+  assert.equal(garantirProducao(pasta), false, 'demonstração fica como está')
+  assert.match(fs.readFileSync(arquivo, 'utf8'), /^TP_AMB=2$/m)
+})
+
 test('prepararEnv cria .env com MASTER_KEY nova e nunca sobrescreve', () => {
   const pasta = path.join(tmp(), 'notas')
   const modelo = path.join(RAIZ, '.env.example')
@@ -44,6 +67,8 @@ test('prepararEnv cria .env com MASTER_KEY nova e nunca sobrescreve', () => {
   assert.equal(r.criado, true)
   const conteudo = fs.readFileSync(r.arquivo, 'utf8')
   assert.match(conteudo, /^MASTER_KEY=[0-9a-f]{64}$/m)
+  assert.match(conteudo, /^TP_AMB=1 /m, 'instalação nova já sai em produção')
+  assert.doesNotMatch(conteudo, /^TP_AMB=2/m)
   assert.equal(prepararEnv(pasta, modelo).criado, false)
   assert.equal(fs.readFileSync(r.arquivo, 'utf8'), conteudo)
 })

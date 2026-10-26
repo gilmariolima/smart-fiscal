@@ -11,7 +11,7 @@ const { app, BrowserWindow, Menu, Tray, Notification, dialog, nativeImage, shell
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
-const { NOME, pastaDados, subpastas, appsAnteriores, copiarDadosAnteriores, prepararEnv } = require('./dados')
+const { NOME, pastaDados, subpastas, appsAnteriores, copiarDadosAnteriores, prepararEnv, garantirProducao } = require('./dados')
 const { pastaMotor, caminhoPython, iniciarMotor } = require('./motor')
 const { criarAtualizacao } = require('./atualizar')
 
@@ -253,6 +253,22 @@ function criarBandeja() {
 
 // ---------- erros ao ligar ----------
 
+/**
+ * Banco que ainda está em homologação (de uma instalação anterior a esta regra): passa para produção.
+ * Clientes e certificados ficam; as notas de teste e a posição na fila de homologação são descartadas.
+ */
+function bancoParaProducao() {
+  const { criarContexto } = require('../src/contexto')
+  const { ambienteDaConfig, ambienteDoBanco, passarParaProducao: passar } = require('../src/ambiente')
+  const c = criarContexto({ nivelConsole: 'error', verificarAmbiente: false })
+  try {
+    if (ambienteDaConfig(c.config) !== 'producao' || ambienteDoBanco(c.db) !== 'homologacao') return null
+    return passar({ db: c.db, config: c.config, logger: c.logger })
+  } finally {
+    c.fechar()
+  }
+}
+
 /** O banco é de homologação e o .env já está em produção: oferece a troca (o mesmo que ambiente:producao). */
 function podePassarParaProducao() {
   try {
@@ -384,6 +400,7 @@ async function iniciar() {
     const partes = subpastas(pasta)
     fs.mkdirSync(partes.estoque, { recursive: true })
     const env = prepararEnv(partes.notas, path.join(RAIZ, '.env.example'))
+    const paraProducao = garantirProducao(partes.notas)
     process.env.SMARTDOC_DADOS = partes.notas
     process.env.ESTOQUE_DADOS = partes.estoque
     process.env.SMART_FISCAL_VERSAO = app.getVersion()
@@ -391,7 +408,10 @@ async function iniciar() {
     await ligarMotorEstoque(partes.estoque)
     const { criarContexto } = require('../src/contexto')
     const { iniciarServidor } = require('../src/servidor')
+    const producao = bancoParaProducao()
     ctx = criarContexto({ nivelConsole: 'warn' })
+    if (paraProducao) ctx.logger.warn('Configuração das notas passada de homologação para produção (TP_AMB=1)')
+    if (producao) ctx.logger.warn('Banco das notas passado de homologação para produção', producao)
     if (copiados.length) ctx.logger.info('Dados dos apps anteriores copiados', { copiados })
     if (motorEstoque?.erro) ctx.logger.error('Motor do SPED', { erro: motorEstoque.erro })
     servidor = await iniciarServidor(ctx, { estoque: () => motorEstoque })
@@ -422,7 +442,7 @@ async function iniciar() {
         type: 'info',
         title: NOME,
         message: 'Configuração criada',
-        detail: `O Smart Fiscal criou a configuração das notas em\n${env.arquivo}\ncom uma MASTER_KEY nova, em homologação.\n\n`
+        detail: `O Smart Fiscal criou a configuração das notas em\n${env.arquivo}\ncom uma MASTER_KEY nova, em produção.\n\n`
           + 'Guarde uma cópia desse arquivo num lugar seguro: sem a MASTER_KEY os certificados cadastrados não abrem.',
         buttons: ['Abrir a pasta', 'OK'],
         defaultId: 1,

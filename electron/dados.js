@@ -64,21 +64,42 @@ function copiarDadosAnteriores({ dados, anteriores }) {
   return copiados
 }
 
+const LINHA_PRODUCAO = 'TP_AMB=1                       # 1 = produção: o Smart Fiscal trabalha sempre em produção'
+
 /**
- * Primeira vez: cria o .env das notas a partir do modelo com uma MASTER_KEY nova (homologação).
- * Um .env que já existe NUNCA é tocado: a MASTER_KEY é o que abre os certificados guardados.
+ * Primeira vez: cria o .env das notas a partir do modelo com uma MASTER_KEY nova, em produção.
+ * Um .env que já existe nunca é recriado: a MASTER_KEY é o que abre os certificados guardados.
  */
 function prepararEnv(pasta, caminhoModelo) {
   const arquivo = path.join(pasta, '.env')
   if (fs.existsSync(arquivo)) return { criado: false, arquivo }
   const modelo = fs.readFileSync(caminhoModelo, 'utf8')
   const chave = crypto.randomBytes(32).toString('hex')
-  const conteudo = /^MASTER_KEY=.*$/m.test(modelo)
+  const comChave = /^MASTER_KEY=.*$/m.test(modelo)
     ? modelo.replace(/^MASTER_KEY=.*$/m, `MASTER_KEY=${chave}`)
     : `MASTER_KEY=${chave}\n${modelo}`
+  const conteudo = /^TP_AMB=.*$/m.test(comChave) ? comChave.replace(/^TP_AMB=.*$/m, LINHA_PRODUCAO) : `${LINHA_PRODUCAO}\n${comChave}`
   fs.mkdirSync(pasta, { recursive: true })
   fs.writeFileSync(arquivo, conteudo, { encoding: 'utf8', flag: 'wx' })
   return { criado: true, arquivo }
 }
 
-module.exports = { NOME, pastaDados, subpastas, appsAnteriores, copiarDadosAnteriores, prepararEnv }
+/**
+ * O Smart Fiscal trabalha sempre em produção: um .env em homologação (TP_AMB=2, ou sem TP_AMB)
+ * passa para TP_AMB=1, mantendo o resto (MASTER_KEY inclusive). O modo demonstração (SEFAZ_MOCK=1) fica como está.
+ * @returns {boolean} se o .env foi mudado
+ */
+function garantirProducao(pasta) {
+  const arquivo = path.join(pasta, '.env')
+  if (!fs.existsSync(arquivo)) return false
+  const texto = fs.readFileSync(arquivo, 'utf8')
+  if (/^\s*SEFAZ_MOCK\s*=\s*1\b/m.test(texto)) return false
+  if (/^\s*TP_AMB\s*=\s*1\b/m.test(texto)) return false
+  const novo = /^\s*TP_AMB\s*=.*$/m.test(texto) ? texto.replace(/^\s*TP_AMB\s*=.*$/m, LINHA_PRODUCAO) : `${LINHA_PRODUCAO}\n${texto}`
+  const temp = `${arquivo}.${process.pid}.tmp`
+  fs.writeFileSync(temp, novo, 'utf8')
+  fs.renameSync(temp, arquivo)
+  return true
+}
+
+module.exports = { NOME, pastaDados, subpastas, appsAnteriores, copiarDadosAnteriores, prepararEnv, garantirProducao }
