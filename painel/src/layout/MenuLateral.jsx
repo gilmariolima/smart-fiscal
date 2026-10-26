@@ -29,6 +29,7 @@ const GRUPOS = [
       { para: '/clientes', rotulo: 'Clientes', icone: 'fa-users' },
       { para: '/escritorio', rotulo: 'Escritório', icone: 'fa-building' },
       { para: '/sped/contador', rotulo: 'Contador do SPED', icone: 'fa-user-tie' },
+      { para: '/pastas', rotulo: 'Pastas', icone: 'fa-folder-tree' },
       { para: '/backup', rotulo: 'Backup', icone: 'fa-shield-halved' },
     ],
   },

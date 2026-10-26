@@ -14,6 +14,7 @@ const { criarServicoSelecao } = require('./services/selecao')
 const { verificarAmbiente } = require('./ambiente')
 const { criarAutomacao } = require('./services/automacao')
 const { criarServicoBackup } = require('./services/backup')
+const { criarServicoPastas } = require('./services/pastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
 function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, agora, verificarAmbiente: verificar = true } = {}) {
@@ -29,6 +30,8 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   }
   const deps = { db: banco, config, logger: log, fabricaSefaz: fabricaSefaz || criarFabricaSefaz(config) }
   if (agora) deps.agora = agora
+  // Antes dos outros serviços: aplica as pastas escolhidas na tela Pastas.
+  const pastas = criarServicoPastas(deps)
   return {
     config,
     logger: log,
@@ -41,6 +44,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     selecao: criarServicoSelecao(deps),
     automacao: criarAutomacao(deps),
     backup: criarServicoBackup(deps),
+    pastas,
     fechar: () => banco.close(),
   }
 }

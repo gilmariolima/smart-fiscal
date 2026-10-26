@@ -66,6 +66,11 @@ function carregarConfig(env = process.env) {
     throw err
   }
 
+  // XMLs e exportações podem ir para outra pasta pela tela Pastas: quem troca grava no próprio
+  // config (config.pastaXmls = ...) e o caminho novo vale na hora para todo o sistema.
+  const pastasPadrao = Object.freeze({ xmls: pasta(env.PASTA_XMLS, './xmls'), exports: pasta(env.PASTA_EXPORTS, './exports') })
+  const escolhidas = {}
+
   return Object.freeze({
     raiz: base,
     tpAmb,
@@ -74,8 +79,19 @@ function carregarConfig(env = process.env) {
     ...numeros,
     painelHost,
     painelSenha,
-    pastaXmls: pasta(env.PASTA_XMLS, './xmls'),
-    pastaExports: pasta(env.PASTA_EXPORTS, './exports'),
+    pastasPadrao,
+    get pastaXmls() {
+      return escolhidas.xmls || pastasPadrao.xmls
+    },
+    set pastaXmls(valor) {
+      escolhidas.xmls = valor ? path.resolve(valor) : null
+    },
+    get pastaExports() {
+      return escolhidas.exports || pastasPadrao.exports
+    },
+    set pastaExports(valor) {
+      escolhidas.exports = valor ? path.resolve(valor) : null
+    },
     pastaCerts: pasta(env.PASTA_CERTS, './certs'),
     pastaLogs: pasta(env.PASTA_LOGS, './logs'),
     caminhoBanco: path.join(pasta(env.PASTA_DADOS, './data'), 'nfe.db'),

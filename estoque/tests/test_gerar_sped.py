@@ -10,6 +10,7 @@ import time
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote
 
 APP = Path(__file__).resolve().parents[1]
 TMP = tempfile.mkdtemp(prefix="estoque-teste-")
@@ -325,8 +326,11 @@ class Painel(unittest.TestCase):
                 self.assertNotIn("/", gravado)
                 self.assertNotIn("\\", gravado)
                 self.assertTrue(gravado.strip("."))
-        self.assertEqual(self.pedir("GET", "/baixar/..")[0], 404)
-        self.assertEqual(self.pedir("GET", "/api/ver/..")[0], 404)
+        for rota in ("/baixar/..", "/api/ver/..", "/baixar/a/../../escritorio.json", "/baixar/..%2F..%2Fescritorio.json",
+                     "/baixar/a%5C..%5C..%5Cescritorio.json", "/baixar/a/b/c/SPED_x.txt"):
+            with self.subTest(rota=rota):
+                self.assertEqual(self.pedir("GET", rota)[0], 400)
+        self.assertEqual(self.pedir("GET", "/baixar/nao-existe.txt")[0], 404)
         self.assertEqual(self.pedir("POST", "/api/enviar?lote=../x&nome=a.txt", b"x")[0], 400)
 
     def test_pendencias_do_item_e_itens_fora_pelo_painel(self):
@@ -447,6 +451,29 @@ class PainelCorrecoes(unittest.TestCase):
             finally:
                 _, r = self.json("/api/pasta", {"pasta_saida": ""})
             self.assertTrue(r["eh_padrao"])
+
+    def test_gerados_por_empresa_e_mes(self):
+        _, gerado = self.converter(self.novo_lote())
+        saida = Path(self.dados.name) / "saida"
+        pasta, nome = gerado["arquivo"].rsplit("/", 1)
+        self.assertRegex(pasta, r"^\d{14}(_[A-Za-z0-9_-]+)?/\d{4}-\d{2}$")
+        self.assertTrue((saida / gerado["arquivo"]).is_file())
+        self.assertTrue(gerado["dominio"].startswith(pasta + "/DOMINIO_"))
+        # Arquivo solto de antes das subpastas: a lista leva para a pasta da empresa, com a mesma data
+        solto = saida / "SPED_00000000000191_30062025.txt"
+        solto.write_text("|0000|017|0|01062025|30062025|LOJA SÃO JOSÉ LTDA|00000000000191|\n|H005|30062025|10,00|01|\n",
+                         encoding="latin-1")
+        os.utime(solto, (1700000000, 1700000000))
+        lista = {g["arquivo"]: g for g in json.loads(self.pedir("GET", "/api/gerados")[1])}
+        movido = "00000000000191_LOJA_SAO_JOSE_LTDA/2025-06/SPED_00000000000191_30062025.txt"
+        self.assertEqual(set(lista), {gerado["arquivo"], movido})
+        self.assertFalse(solto.exists())
+        self.assertEqual((saida / movido).stat().st_mtime, 1700000000)
+        self.assertEqual(self.pedir("GET", "/baixar/" + quote(movido, safe=""))[0], 200)
+        # Excluir apaga também as pastas que ficaram vazias
+        self.assertEqual(self.pedir("DELETE", "/api/gerado/" + quote(movido, safe=""))[0], 200)
+        self.assertFalse((saida / "00000000000191_LOJA_SAO_JOSE_LTDA").exists())
+        self.assertTrue((saida / pasta).is_dir())
 
     def test_correcao_invalida(self):
         lote = self.novo_lote()

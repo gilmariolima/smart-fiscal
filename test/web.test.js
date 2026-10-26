@@ -659,6 +659,57 @@ test('backup: trocar a pasta fora do próprio PC é recusado', async (t) => {
   assert.equal((await pedir('/api/backup')).corpo.configurado, false)
 })
 
+// ---------- pastas ----------
+
+const xmlsEm = (pasta) => (fs.existsSync(pasta) ? fs.readdirSync(pasta, { recursive: true }).filter((n) => n.endsWith('.xml')) : [])
+
+test('pastas: troca a dos XMLs levando os arquivos, as notas continuam abrindo, volta para a padrão', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  await ctx.ciclo.executarCiclo()
+  const padrao = ctx.config.pastaXmls
+  const antes = xmlsEm(padrao)
+  assert.ok(antes.length > 0)
+  const nota = ctx.db.prepare('SELECT id FROM notas WHERE caminho_xml IS NOT NULL LIMIT 1').get()
+  const estranho = path.join(padrao, 'anotacoes.txt') // o que não é do Smart Fiscal fica onde está
+  fs.writeFileSync(estranho, 'x')
+  const nova = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-web-xmls-'))
+  t.after(() => fs.rmSync(nova, { recursive: true, force: true }))
+
+  const inicio = (await pedir('/api/pastas')).corpo
+  assert.deepEqual(inicio.pastas.map((p) => [p.tipo, p.ehPadrao]), [['xmls', true], ['exports', true]])
+  assert.equal((await pedir('/api/pastas', { method: 'POST', body: { tipo: 'xmls', pasta: 'relativa' } })).status, 400)
+  assert.equal((await pedir('/api/pastas', { method: 'POST', body: { tipo: 'xmls', pasta: path.join(padrao, 'dentro') } })).status, 400)
+  assert.equal((await pedir('/api/pastas', { method: 'POST', body: { tipo: 'outra', pasta: nova } })).status, 400)
+
+  const r = await pedir('/api/pastas', { method: 'POST', body: { tipo: 'xmls', pasta: `"${nova}"` } })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.match(r.corpo.mensagem, new RegExp(`${antes.length} arquivo`))
+  assert.deepEqual(r.corpo.estado.pastas[0], { tipo: 'xmls', nome: 'XMLs das notas', pasta: nova, padrao, ehPadrao: false })
+  assert.equal(ctx.config.pastaXmls, nova)
+  assert.deepEqual(xmlsEm(nova).sort(), antes.sort())
+  assert.deepEqual(xmlsEm(padrao), [])
+  assert.ok(fs.existsSync(estranho))
+  assert.equal((await pedir(`/api/notas/${nota.id}/xml`)).status, 200)
+  assert.equal(ctx.db.prepare("SELECT valor FROM sistema WHERE chave = 'pasta_xmls'").get().valor, nova)
+
+  const volta = await pedir('/api/pastas', { method: 'POST', body: { tipo: 'xmls', pasta: '' } })
+  assert.equal(volta.corpo.estado.pastas[0].ehPadrao, true)
+  assert.deepEqual(xmlsEm(padrao).sort(), antes.sort())
+  assert.equal((await pedir(`/api/notas/${nota.id}/xml`)).status, 200)
+})
+
+test('pastas: a escolha salva vale ao abrir de novo; trocar fora do próprio PC é recusado', async (t) => {
+  const { pedir, ctx } = await montar(t, {}, { ehLocal: () => false })
+  const nova = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-web-exp-'))
+  t.after(() => fs.rmSync(nova, { recursive: true, force: true }))
+  assert.equal((await pedir('/api/pastas', { method: 'POST', body: { tipo: 'exports', pasta: nova } })).status, 403)
+  assert.equal((await pedir('/api/pastas/abrir', { method: 'POST', body: { tipo: 'exports' } })).status, 403)
+  ctx.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_exports', ?)").run(nova)
+  const config = carregarConfig({ MASTER_KEY: 'a'.repeat(64), SEFAZ_MOCK: '1', PASTA_EXPORTS: path.join(os.tmpdir(), 'nao-usada') })
+  criarContexto({ config, logger: silencioso, db: ctx.db })
+  assert.equal(config.pastaExports, nova)
+})
+
 // ---------- chaves de automação e ciência à mão ----------
 
 test('automação pelo painel: liga e desliga a busca, recusa valor inválido; não há ciência', async (t) => {

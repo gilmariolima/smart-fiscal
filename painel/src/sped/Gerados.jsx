@@ -1,46 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import Pagina from '../layout/Pagina.jsx'
 import { baixar, milhar, sped } from './api.js'
 import Modal from './Modal.jsx'
 import { useSped } from './SpedProvider.jsx'
 
-function Pasta({ aoMudar }) {
-  const { aviso } = useSped()
+// Só o nome do arquivo: na lista ele vem com a pasta da empresa e do mês (CNPJ_Empresa/AAAA-MM/...).
+const nomeDe = (arquivo) => arquivo.split('/').pop()
+
+// Só aparece quando a pasta não está acessível; trocar a pasta é na tela Pastas.
+function PastaForaDoAr() {
   const [pasta, setPasta] = useState(null)
-  const [texto, setTexto] = useState('')
-  const carregar = useCallback(() => sped('/api/pasta').then((p) => {
-    if (p.erro) return
-    setPasta(p)
-    setTexto(p.pasta_saida)
-  }), [])
-  useEffect(() => { carregar() }, [carregar])
-
-  async function salvar(valor) {
-    const r = await sped('/api/pasta', { method: 'POST', json: { pasta_saida: valor } })
-    if (r.erro) return aviso(r.erro, 'erro')
-    aviso(r.eh_padrao ? 'Voltou para a pasta padrão' : 'Pasta dos arquivos gerados salva')
-    setPasta(r)
-    setTexto(r.pasta_saida)
-    aoMudar()
-  }
-
-  const nota = !pasta ? '' : !pasta.acessivel
-    ? 'A pasta não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED não pode ser gerado até ela voltar.'
-    : pasta.eh_padrao ? '' : 'Os próximos arquivos vão para esta pasta. Os gerados antes continuam na pasta anterior.'
+  useEffect(() => { sped('/api/pasta').then((p) => !p.erro && setPasta(p)) }, [])
+  if (!pasta || pasta.acessivel) return null
   return (
-    <form className="cartao pasta-saida" autoComplete="off" onSubmit={(e) => { e.preventDefault(); salvar(texto) }}>
-      <label htmlFor="pastaSaida" className="rot">Pasta onde os arquivos são salvos</label>
-      <div className="pasta-linha">
-        <div className="campo-busca pasta-campo">
-          <i className="fa-solid fa-folder" />
-          <input id="pastaSaida" className="entrada" spellCheck={false} placeholder="C:\Fiscal\SPED ou \\servidor\fiscal\SPED"
-            value={texto} onChange={(e) => setTexto(e.target.value)} />
-        </div>
-        <button type="submit" className="botao botao-azul">Salvar</button>
-        {pasta && !pasta.eh_padrao && <button type="button" className="botao botao-claro" onClick={() => salvar('')}>Usar a pasta padrão</button>}
-      </div>
-      {nota && <p className={`pasta-nota${pasta.acessivel ? '' : ' pasta-erro'}`}>{nota}</p>}
-    </form>
+    <p className="faixa faixa-ambar">
+      A pasta {pasta.pasta_saida} não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED
+      não pode ser gerado até ela voltar. Para usar outra, vá em <Link to="/pastas">Pastas</Link>.
+    </p>
   )
 }
 
@@ -85,7 +62,7 @@ function VerArquivo({ nome, aoFechar }) {
   useEffect(() => { carregar(0) }, [carregar])
   const resto = total - linhas.length
   return (
-    <Modal titulo={nome} aoFechar={aoFechar} classe="modal-ver">
+    <Modal titulo={nomeDe(nome)} aoFechar={aoFechar} classe="modal-ver">
       <div className="ver-txt">
         {linhas.map((l, n) => <div key={n}><span>{n + 1}</span>{l}</div>)}
       </div>
@@ -114,7 +91,7 @@ export default function Gerados() {
   }
   async function excluir(g) {
     setMenu(null)
-    if (!window.confirm(`Excluir ${g.arquivo}?`)) return
+    if (!window.confirm(`Excluir ${nomeDe(g.arquivo)}?`)) return
     const r = await sped(`/api/gerado/${encodeURIComponent(g.arquivo)}`, { method: 'DELETE' })
     if (r.erro) return aviso(r.erro, 'erro')
     aviso('Arquivo excluído')
@@ -129,7 +106,7 @@ export default function Gerados() {
       erro={erro}
       acoes={<button type="button" className="botao botao-claro" onClick={abrirPasta}><i className="fa-solid fa-folder-open" />Abrir pasta</button>}
     >
-      <Pasta aoMudar={carregar} />
+      <PastaForaDoAr />
       <div className="tabela-moldura">
         <table className="tabela">
           <thead>
@@ -143,7 +120,7 @@ export default function Gerados() {
               <tr key={g.arquivo}>
                 <td>
                   {g.inventario || '—'}
-                  <span className="secundario" title={g.arquivo}>{g.arquivo.replace(/^SPED_/, '').replace(/\.txt$/, '')}</span>
+                  <span className="secundario" title={g.arquivo}>{nomeDe(g.arquivo).replace(/^SPED_/, '').replace(/\.txt$/, '')}</span>
                 </td>
                 <td>{g.nome}</td>
                 <td className="col-larga mono">{g.cnpj}</td>
