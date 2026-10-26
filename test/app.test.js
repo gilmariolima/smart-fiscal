@@ -173,6 +173,7 @@ function atualizadorFalso({ falhar = false } = {}) {
     async checkForUpdates() {
       this.procurou++
       if (falhar) throw new Error('sem internet')
+      return this.resposta
     },
     quitAndInstall(silencioso, reabrir) { this.instalou = { silencioso, reabrir } },
   }
@@ -217,6 +218,33 @@ test('atualização: sem internet, só anota no log', async () => {
   await a.procurar()
   assert.match(fs.readFileSync(log, 'utf8'), /erro .*sem internet/)
   assert.equal(a.instalarAoSair(), false)
+})
+
+test('verificar atualizações: sem versão nova, com versão nova baixando, já baixada e sem internet', async () => {
+  const atualizador = atualizadorFalso()
+  let perguntas = 0
+  const a = criarAtualizacao({ atualizador, perguntar: async () => (perguntas++, { response: 1 }), sair: () => {} })
+  assert.equal(a.estado().situacao, 'nada')
+
+  atualizador.resposta = { isUpdateAvailable: false, updateInfo: { version: '1.3.1' } }
+  assert.equal((await a.verificar()).situacao, 'atualizado')
+
+  atualizador.resposta = { isUpdateAvailable: true, updateInfo: { version: '1.4.0' } }
+  assert.deepEqual([(await a.verificar()).situacao, a.estado().versao], ['baixando', '1.4.0'])
+  atualizador.ouvintes['download-progress']({ percent: 42.4 })
+  assert.equal(a.estado().progresso, 42)
+  const antes = atualizador.procurou
+  assert.equal((await a.verificar()).situacao, 'baixando', 'baixando: não procura de novo')
+  assert.equal(atualizador.procurou, antes)
+
+  await atualizador.ouvintes['update-downloaded']({ version: '1.4.0' })
+  assert.deepEqual([a.estado().situacao, perguntas], ['pronta', 1])
+  assert.equal((await a.verificar()).situacao, 'pronta')
+  assert.equal(perguntas, 2, 'já baixada: pergunta de novo se reinicia')
+
+  const semRede = criarAtualizacao({ atualizador: atualizadorFalso({ falhar: true }), perguntar: async () => ({ response: 1 }), sair: () => {} })
+  const r = await semRede.verificar()
+  assert.deepEqual([r.situacao, r.mensagem], ['erro', 'sem internet'])
 })
 
 test('publicação: o pacote publica no GitHub deste repositório e leva o electron-updater', () => {

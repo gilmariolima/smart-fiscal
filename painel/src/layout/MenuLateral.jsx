@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
+import { api } from '../api.js'
 import { inteiro } from '../formato.js'
 import { useResumo } from './ResumoProvider.jsx'
 
@@ -62,6 +63,65 @@ function SemXml() {
         ))}
       </ul>
     </section>
+  )
+}
+
+// Texto ao lado do botão "Verificar atualizações", conforme a situação da atualização do app.
+function textoDaAtualizacao(a) {
+  switch (a?.situacao) {
+    case 'procurando':
+      return 'Procurando…'
+    case 'atualizado':
+      return 'Você está na versão mais nova.'
+    case 'baixando':
+      return `Baixando a versão ${a.versao || 'nova'}${a.progresso ? ` (${a.progresso}%)` : ''}…`
+    case 'pronta':
+      return `Versão ${a.versao} pronta: reinicie para instalar.`
+    case 'erro':
+      return 'Não deu para verificar agora (sem internet?).'
+    case 'indisponivel':
+      return 'A atualização só funciona no app instalado.'
+    default:
+      return ''
+  }
+}
+
+// Rodapé do menu: a versão e o botão "Verificar atualizações". Enquanto baixa, confere a cada 2 s.
+function Versao({ versao }) {
+  const [atualizacao, setAtualizacao] = useState(null)
+  const [mostrar, setMostrar] = useState(false)
+
+  useEffect(() => {
+    if (!mostrar || !['baixando', 'procurando'].includes(atualizacao?.situacao)) return undefined
+    const t = setTimeout(() => api.get('/api/atualizacao').then(setAtualizacao, () => {}), 2000)
+    return () => clearTimeout(t)
+  }, [mostrar, atualizacao])
+
+  async function verificar() {
+    setMostrar(true)
+    setAtualizacao({ situacao: 'procurando' })
+    try {
+      setAtualizacao(await api.post('/api/atualizacao/verificar', {}))
+    } catch {
+      setAtualizacao({ situacao: 'erro' })
+    }
+  }
+
+  const ocupado = ['procurando', 'baixando'].includes(atualizacao?.situacao)
+  return (
+    <div className="menu-versao">
+      <div className="menu-versao-linha">
+        <span>Versão {versao}</span>
+        <button type="button" className="botao-link menu-versao-botao" onClick={verificar} disabled={ocupado}>
+          <i className={`fa-solid fa-rotate${ocupado ? ' fa-spin' : ''}`} aria-hidden="true" /> Verificar atualizações
+        </button>
+      </div>
+      {mostrar && (
+        <p className={`menu-versao-situacao situacao-${atualizacao?.situacao || 'nada'}`} role="status">
+          {textoDaAtualizacao(atualizacao)}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -128,7 +188,7 @@ export default function MenuLateral() {
           ))}
         </nav>
         <SemXml />
-        {resumo?.versao && <div className="menu-versao">Versão {resumo.versao}</div>}
+        {resumo?.versao && <Versao versao={resumo.versao} />}
       </aside>
     </>
   )

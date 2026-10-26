@@ -20,7 +20,7 @@ const { lerZip } = require('./apoio/zip')
 const cert1 = gerarPfx({ cnpj: CNPJ_MOCK_OK })
 const cert2 = gerarPfx({ cnpj: CNPJ_MOCK_656 })
 
-async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPainel } = {}) {
+async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPainel, atualizacao } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-web-'))
   if (!pastaPainel) {
     pastaPainel = path.join(base, 'painel')
@@ -46,7 +46,7 @@ async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPaine
   ctx.clientes.cadastrar({ cnpj: CNPJ_MOCK_OK, razao: 'Comercial Exemplo Ltda', uf: 'CE', apelido: 'Exemplo', pfx: cert1.pfx, senha: cert1.senha })
   ctx.clientes.cadastrar({ cnpj: CNPJ_MOCK_656, razao: 'Loja Bloqueada Ltda', uf: 'CE', pfx: cert2.pfx, senha: cert2.senha })
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config: ctx.config, logger: silencioso, automacao: ctx.automacao, atrasoInicialMs: false })
-  const servidor = criarApp({ ctx, agendador, pastaPainel, ...(ehLocal ? { ehLocal } : {}) }).listen(0, '127.0.0.1')
+  const servidor = criarApp({ ctx, agendador, pastaPainel, atualizacao, ...(ehLocal ? { ehLocal } : {}) }).listen(0, '127.0.0.1')
   await new Promise((r) => servidor.once('listening', r))
   const url = `http://127.0.0.1:${servidor.address().port}`
   t.after(async () => {
@@ -606,6 +606,24 @@ test('escritório: cadastro e troca de certificado recusados fora do próprio PC
     assert.equal(r.status, 403, caminho)
   }
   assert.equal((await pedir('/api/escritorio')).corpo, null)
+})
+
+// ---------- atualização do app ----------
+
+test('atualização pelo painel: estado e verificar; fora do app instalado fica indisponível', async (t) => {
+  const { pedir } = await montar(t)
+  assert.deepEqual((await pedir('/api/atualizacao')).corpo, { situacao: 'indisponivel' })
+  assert.deepEqual((await pedir('/api/atualizacao/verificar', { method: 'POST', body: {} })).corpo, { situacao: 'indisponivel' })
+  assert.equal((await pedir('/api/atualizacao/verificar', { method: 'POST', body: {}, headers: { 'X-Painel': '0' } })).status, 403)
+})
+
+test('atualização pelo painel: repassa o estado e o verificar do app', async (t) => {
+  let verificou = 0
+  const atualizacao = { estado: () => ({ situacao: 'baixando', versao: '9.9.9', progresso: 10 }), verificar: async () => (verificou++, { situacao: 'atualizado' }) }
+  const { pedir } = await montar(t, {}, { atualizacao })
+  assert.deepEqual((await pedir('/api/atualizacao')).corpo, { situacao: 'baixando', versao: '9.9.9', progresso: 10 })
+  assert.deepEqual((await pedir('/api/atualizacao/verificar', { method: 'POST', body: {} })).corpo, { situacao: 'atualizado' })
+  assert.equal(verificou, 1)
 })
 
 // ---------- backup ----------

@@ -41,7 +41,7 @@ function iguaisSemVazarTempo(a, b) {
  * @param {Function} [deps.ehLocal] (req) => o pedido veio do próprio computador (troca nos testes)
  * @param {Function} [deps.estoque] () => motor do SPED ({ porta, token } ou { erro }), para onde vai /estoque
  */
-function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS.has(req.socket.remoteAddress), pastaPainel = path.join(__dirname, 'dist') }) {
+function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => ENDERECOS_LOCAIS.has(req.socket.remoteAddress), pastaPainel = path.join(__dirname, 'dist') }) {
   const { db, config, logger } = ctx
   const app = express()
   app.disable('x-powered-by')
@@ -639,6 +639,16 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     res.json(recibo(r))
   })
 
+  // ---------- atualização do app ----------
+
+  app.get('/api/atualizacao', (req, res) => {
+    res.json(atualizacao ? atualizacao.estado() : { situacao: 'indisponivel' })
+  })
+
+  app.post('/api/atualizacao/verificar', async (req, res) => {
+    res.json(atualizacao ? await atualizacao.verificar() : { situacao: 'indisponivel' })
+  })
+
   // ---------- backup ----------
 
   app.get('/api/backup', (req, res) => {
@@ -683,9 +693,9 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
 }
 
 /** Sobe o painel em PAINEL_HOST:PAINEL_PORTA. */
-function iniciarPainel({ ctx, agendador, estoque }) {
+function iniciarPainel({ ctx, agendador, estoque, atualizacao }) {
   const { config, logger } = ctx
-  const app = criarApp({ ctx, agendador, estoque })
+  const app = criarApp({ ctx, agendador, estoque, atualizacao })
   return new Promise((resolve, reject) => {
     const servidor = app.listen(config.painelPorta, config.painelHost)
     servidor.once('error', (e) => {

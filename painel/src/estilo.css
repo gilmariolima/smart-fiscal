@@ -217,6 +217,40 @@ h2 {
   color: #98a2b3;
 }
 
+.menu-versao-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.menu-versao-botao {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.menu-versao-situacao {
+  margin: 6px 0 0;
+  line-height: 1.4;
+  color: var(--texto-suave, #667085);
+}
+
+.menu-versao-situacao.situacao-atualizado {
+  color: #067647;
+}
+
+.menu-versao-situacao.situacao-pronta {
+  color: var(--azul-escuro);
+  font-weight: 600;
+}
+
+.menu-versao-situacao.situacao-erro {
+  color: var(--erro);
+}
+
 /* Notas sem XML por situação */
 .sem-xml {
   margin: 14px 2px 12px;
