@@ -13,7 +13,6 @@ const express = require('express')
 const { COLUNAS_PUBLICAS } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
 const { detalharNfe } = require('../services/detalheNota')
-const { ErroCupom } = require('../services/cupons')
 
 const POR_PAGINA = 50
 const HOSTS_LOCAIS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
@@ -132,9 +131,7 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
         SUM(CASE WHEN competencia = @competencia AND tipo = 'entrada' THEN 1 ELSE 0 END) entradas_no_mes,
         SUM(CASE WHEN competencia = @competencia AND tipo = 'saida' THEN 1 ELSE 0 END) saidas_no_mes
       FROM notas GROUP BY cliente_id`),
-    // Meses com NF-e ou com CF-e (cliente só de cupom também exporta)
-    competencias: db.prepare(`SELECT competencia FROM notas WHERE competencia IS NOT NULL
-      UNION SELECT competencia FROM cupons WHERE competencia IS NOT NULL ORDER BY competencia DESC`),
+    competencias: db.prepare('SELECT DISTINCT competencia FROM notas WHERE competencia IS NOT NULL ORDER BY competencia DESC'),
     mesesDoCliente: db.prepare(`SELECT competencia,
         SUM(tipo = 'entrada') entradas, SUM(tipo = 'saida') saidas
       FROM notas WHERE cliente_id = ? AND competencia IS NOT NULL GROUP BY competencia ORDER BY competencia DESC`),
@@ -364,39 +361,6 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
     fs.createReadStream(arquivo).pipe(res)
   })
 
-  // ---------- CF-e (cupons do SAT/MFE) ----------
-
-  // Um arquivo por pedido (XML ou ZIP), cru: o painel manda um de cada vez e soma os resultados.
-  const corpoCupom = express.raw({ type: () => true, limit: '300mb' })
-  app.post('/api/cupons/importar', corpoCupom, (req, res) => {
-    if (!Buffer.isBuffer(req.body) || !req.body.length) throw new ErroHttp(400, 'Arquivo vazio.')
-    const nome = String(req.query.nome || 'arquivo').slice(0, 200)
-    res.json(ctx.cupons.importar([{ nome, conteudo: req.body }]))
-  })
-
-  const cuponsOu400 = (fn) => {
-    try {
-      return fn()
-    } catch (e) {
-      if (e instanceof ErroCupom) throw new ErroHttp(404, e.message)
-      throw e
-    }
-  }
-  app.get('/api/cupons/competencias', (req, res) => res.json(cuponsOu400(() => ctx.cupons.competencias(String(req.query.cnpj || '')))))
-  app.get('/api/cupons', (req, res) => {
-    const competencia = String(req.query.competencia || '')
-    if (!/^\d{4}-\d{2}$/.test(competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
-    res.json(cuponsOu400(() => ctx.cupons.mes(String(req.query.cnpj || ''), competencia)))
-  })
-  app.get('/api/cupons/:id/xml', (req, res) => {
-    const x = ctx.cupons.xml(Number(req.params.id), req.query.cancelamento === '1')
-    const arquivo = x && dentroDe(config.pastaXmls, x.relativo)
-    if (!arquivo || !fs.existsSync(arquivo)) throw new ErroHttp(404, 'XML do cupom não encontrado.')
-    res.set('Content-Type', 'application/xml; charset=utf-8')
-    res.attachment(x.nome)
-    fs.createReadStream(arquivo).pipe(res)
-  })
-
   // XML da nota + eventos da chave que têm arquivo (cancelamento, carta de correção), num ZIP.
   app.get('/api/notas/:id/xml-eventos', (req, res) => {
     const nota = notaOu404(req.params.id)
@@ -568,7 +532,6 @@ function criarApp({ ctx, agendador, estoque, ehLocal = (req) => ENDERECOS_LOCAIS
       canceladas: r.canceladas,
       semXml: r.semXml,
       porTipo: r.porTipo,
-      cupons: r.cupons,
       totalNotas: r.totalNotas,
       avisos: r.avisos,
       url: `/api/exportacoes/${encodeURIComponent(r.nome)}`,

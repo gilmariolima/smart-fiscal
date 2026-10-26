@@ -11,7 +11,6 @@ const GRUPOS = [
     itens: [
       { para: '/notas', rotulo: 'Notas', icone: 'fa-folder-open' },
       { para: '/pendentes', rotulo: 'XMLs não baixados', icone: 'fa-file-circle-exclamation' },
-      { para: '/cupons', rotulo: 'Cupons (CF-e)', icone: 'fa-receipt' },
       { para: '/exportar', rotulo: 'Exportar', icone: 'fa-file-export' },
       { para: '/execucoes', rotulo: 'Execuções', icone: 'fa-clock-rotate-left' },
     ],

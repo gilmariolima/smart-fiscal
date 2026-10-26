@@ -13,7 +13,6 @@ import Meses from './telas/Meses.jsx'
 import Nota from './telas/Nota.jsx'
 import NotasRaiz from './telas/NotasRaiz.jsx'
 import Pendentes from './telas/Pendentes.jsx'
-import Cupons from './telas/Cupons.jsx'
 import Camadas from './sped/Camadas.jsx'
 import Contador from './sped/Contador.jsx'
 import Converter from './sped/Converter.jsx'
@@ -62,7 +61,6 @@ const rotas = createHashRouter([
       { path: 'notas/:cnpj/nota/:id', element: <Nota /> },
       { path: 'notas/:cnpj/:ano/:mes', element: <Mes /> },
       { path: 'pendentes', element: <Pendentes /> },
-      { path: 'cupons', element: <Cupons /> },
       { path: 'clientes', element: <Clientes /> },
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },
       { path: 'clientes/:cnpj/certificado', element: <Cadastro key="certificado" modo="certificado" /> },

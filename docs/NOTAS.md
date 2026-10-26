@@ -207,9 +207,6 @@ entradas\canceladas\<chave>-nfe.xml   entradas completas que foram canceladas
 saidas\xml\<chave>-nfe.xml            saídas completas e não canceladas
 saidas\canceladas\<chave>-nfe.xml     saídas completas que foram canceladas
 resumo.csv                            todas as notas da competência, inclusive as sem XML completo
-cupons\xml\<chave>-cfe.xml           CF-e (SAT/MFE) do cliente, não cancelados
-cupons\cancelados\<chave>-cfe.xml    CF-e cancelados, com o <chave>-cfe-canc.xml do cancelamento
-cupons.csv                            todos os CF-e da competência (só quando há cupons)
 ```
 
 Exportar o CNPJ do escritório é recusado (ele não tem notas próprias).
@@ -219,19 +216,6 @@ O `resumo.csv` abre direto no Excel: separador `;`, acentos corretos, valores co
 A competência é o **mês de emissão** da nota.
 
 > **Confirmar com o escritório:** Domínio e Fortes importam o XML de NF-e de entrada, mas a forma exata da importação (pasta, nome dos arquivos, se o ZIP serve direto) precisa ser testada nos dois sistemas antes de adotar o pacote como padrão. Ajustes ficam todos em `src/services/exportacao.js`.
-
-## Cupons fiscais (CF-e do SAT/MFE)
-
-O CF-e é o cupom que o cliente emite na venda ao consumidor (no Ceará, pelo MFE). Diferente da NF-e, não há serviço nacional da SEFAZ para baixar os cupons: o XML fica no computador do cliente (e no Portal CF-e da SEFAZ, cupom a cupom). Por isso o Smart Fiscal **importa** os XMLs:
-
-1. Em **Notas fiscais → Cupons (CF-e)**, solte os XMLs (soltos, uma pasta inteira ou um ZIP) que o cliente mandou ou que você baixou no portal.
-2. Cada cupom vai para o cliente cadastrado com o **CNPJ do emitente**. Cupom de quem não é cliente não entra e aparece no resultado (cadastre o cliente e importe de novo). Importar o mesmo arquivo de novo não duplica nada.
-3. O cancelamento (`CFeCanc`) fica junto do cupom cancelado, mesmo que chegue antes da venda.
-4. Escolha o cliente e o mês para conferir: cupons válidos, total vendido, cancelados, total por dia e **números faltando** na sequência de cada equipamento (venda e cancelamento usam a mesma numeração). Também avisa cupom de teste (homologação) e cancelamento sem a venda importada.
-
-Os XMLs ficam em `xmls\<CNPJ>_<apelido>\cfe\<AAAA-MM>\` e os cupons entram no pacote do mês em **Exportar** (pasta `cupons` e `cupons.csv`, colunas `chave; numero; equipamento; caixa; data_emissao; hora; valor_total; destinatario_doc; destinatario_nome; cancelado`).
-
-Busca automática dos cupons na SEFAZ-CE: não há serviço oficial documentado para baixar os CF-e em lote; o Portal CF-e consulta e baixa cupom a cupom. Se a SEFAZ-CE oferecer esse serviço, a busca automática entra aqui, como a das NF-e.
 
 ## Comandos
 

@@ -82,36 +82,3 @@ CREATE TABLE IF NOT EXISTS sistema (
   chave TEXT PRIMARY KEY,
   valor TEXT NOT NULL
 );
-
--- CF-e (cupom fiscal do SAT/MFE) emitidos pelos clientes, importados dos XMLs.
-CREATE TABLE IF NOT EXISTS cupons (
-  id INTEGER PRIMARY KEY,
-  cliente_id INTEGER NOT NULL REFERENCES clientes(id),
-  chave TEXT NOT NULL UNIQUE,         -- 44 dígitos, sem o "CFe"
-  numero TEXT,                        -- nCFe
-  equipamento TEXT,                   -- nserieSAT (número de série do SAT/MFE)
-  caixa TEXT,                         -- numeroCaixa
-  data_emissao TEXT,                  -- AAAA-MM-DDTHH:MM:SS (hora local do equipamento)
-  competencia TEXT,                   -- AAAA-MM
-  valor_total REAL,                   -- vCFe
-  destinatario_doc TEXT,              -- CPF ou CNPJ do consumidor, quando informado
-  destinatario_nome TEXT,
-  ambiente TEXT,                      -- tpAmb: 1 produção, 2 homologação/testes
-  caminho_xml TEXT,
-  importado_em TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_cupons_cliente_comp ON cupons(cliente_id, competencia);
-
--- Cancelamento (CFeCanc): também consome um número do equipamento.
-CREATE TABLE IF NOT EXISTS cupons_cancelamentos (
-  chave_venda TEXT PRIMARY KEY,       -- chCanc: o cupom cancelado
-  chave TEXT NOT NULL,
-  cliente_id INTEGER NOT NULL REFERENCES clientes(id),
-  numero TEXT,
-  equipamento TEXT,
-  data_cancelamento TEXT,
-  competencia TEXT,
-  caminho_xml TEXT,
-  importado_em TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_cupons_canc_cliente_comp ON cupons_cancelamentos(cliente_id, competencia);
