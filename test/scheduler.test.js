@@ -161,13 +161,21 @@ test('iniciarServidor agenda o backup (1 min depois e a cada hora) e cancela ao 
   assert.equal(chamadas.at(-1), 'aguardou')
 })
 
-test('iniciarServidor sem backup configurado não agenda nada', async () => {
+test('iniciarServidor sem pasta de backup ainda agenda os horários (a pasta pode ser escolhida depois na tela Backup)', async () => {
   const agendados = []
-  const relogio = { depois: () => agendados.push(1), aCada: () => agendados.push(1) }
-  const ctx = { config: { ...config, tpAmb: '2', sefazMock: true }, logger: silencioso, ciclo: cicloFalso(), backup: { ativo: false } }
+  const relogio = { depois: (fn) => (agendados.push(fn), () => {}), aCada: (fn) => (agendados.push(fn), () => {}) }
+  const chamadas = []
+  const backup = { ativo: false, fazerBackup: async () => (chamadas.push(1), { ok: false, desligado: true }), aguardar: async () => {} }
+  const ctx = { config: { ...config, tpAmb: '2', sefazMock: true }, logger: silencioso, ciclo: cicloFalso(), backup }
   const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron: cronFalso(), comPainel: false, relogio })
+  assert.equal(agendados.length, 2)
+  assert.deepEqual(await agendados[0](), { ok: false, desligado: true })
   await s.parar()
-  assert.equal(agendados.length, 0)
+
+  const semServico = []
+  const s2 = await iniciarServidor({ ...ctx, backup: undefined }, { atrasoInicialMs: false, cron: cronFalso(), comPainel: false, relogio: { depois: () => semServico.push(1), aCada: () => semServico.push(1) } })
+  await s2.parar()
+  assert.equal(semServico.length, 0)
 })
 
 test('processo real: servidor roda o primeiro ciclo e continua no ar', async (t) => {

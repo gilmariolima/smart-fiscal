@@ -44,7 +44,7 @@ Funciona sozinho em segundo plano (agendado) e também por comandos manuais.
 | `PASTA_CERTS` | `./certs` | Onde ficam as cópias dos certificados. |
 | `PASTA_DADOS` | `./data` | Onde fica o banco `nfe.db` (opcional). |
 | `PASTA_LOGS` | `./logs` | Onde fica o `app.log` (opcional). |
-| `PASTA_BACKUP` | (vazia) | Pasta do [backup automático](#backup-automático), de preferência em outro disco, pendrive ou pasta sincronizada (OneDrive/Google Drive). Vazia = backup desligado. |
+| `PASTA_BACKUP` | (vazia) | Pasta do [backup automático](#backup-automático), de preferência em outro disco, na rede ou numa pasta sincronizada (OneDrive/Google Drive). A pasta escolhida na tela **Backup** vale mais que esta. |
 
 Observações:
 - O que vem depois de `#` numa linha é comentário. Se a senha do painel tiver `#`, coloque entre aspas: `PAINEL_SENHA="minha#senha"`.
@@ -285,28 +285,43 @@ C:\smartdoc\
 
 ### Backup automático
 
-Com `PASTA_BACKUP` definida no `.env` (por exemplo `PASTA_BACKUP=D:\Backup\SmartDoc`), o servidor faz **um backup por dia**: 1 minuto depois de ligar e, a cada hora, confere se o do dia já existe. Funciona com a busca automática desligada e com o PC desligado à noite (roda quando ele ligar).
+A pasta do backup se escolhe na tela **Cadastros → Backup**:
+- O app cria a pasta e testa gravar nela antes de aceitar.
+- Ele recusa endereço incompleto e pasta dentro da pasta de dados do Smart Fiscal.
+- Se a pasta ficar no mesmo disco do Smart Fiscal, ele avisa.
+
+O `PASTA_BACKUP` do `.env` continua valendo enquanto nenhuma pasta for escolhida na tela. A escolha da tela vale mais, e **Desligar backup** desliga mesmo com o `.env` preenchido.
+
+Com a pasta escolhida, o app faz **um backup por dia**. Ele confere 1 minuto depois de ligar e depois a cada hora se o do dia já existe. Funciona com a busca automática desligada e com o PC desligado à noite (roda quando ele ligar).
 
 ```
-D:\Backup\SmartDoc\
+D:\Backup Smart Fiscal\
 ├─ xmls\                  espelho dos XMLs: copia só os novos e nunca apaga (guarda tudo)
 └─ diarios\AAAA-MM-DD\     uma cópia por dia, as 30 mais recentes
      nfe.db                banco (cópia consistente, mesmo com o sistema rodando)
      certs\                certificados
      .env                  configuração com a MASTER_KEY
+     estoque\              dados do SPED: empresas, correções, contador e arquivos gerados (sem os logs)
 ```
 
-- Cada backup aparece em **Execuções** (tipo Backup), com quantos XMLs novos foram copiados ou o erro.
-- O **Início** mostra uma faixa amarela só quando há problema: backup desligado, último backup com erro (ex.: pendrive desconectado) ou 3 dias ou mais sem backup.
-- Para fazer na hora: `npm run cli -- backup`.
-- **Proteja a pasta de backup:** ela tem os certificados e a chave que abre as senhas deles. Em nuvem, use só a conta do escritório.
+- A tela **Backup** mostra:
+  - a situação (em dia, desligado ou com problema);
+  - quando foi o último backup e o que ele copiou;
+  - o botão **Fazer backup agora**.
+- Cada backup também aparece em **Execuções** (tipo Backup), com quantos XMLs novos foram copiados ou o erro.
+- O **Início** mostra uma faixa amarela, com o atalho para a tela Backup, só quando há problema: backup desligado, último backup com erro (ex.: disco desconectado) ou 3 dias ou mais sem backup.
+- Pela linha de comando: `npm run cli -- backup`.
+- **Proteja a pasta de backup:** ela tem os certificados e a chave que abre as senhas deles. Em nuvem, use só a conta do escritório, sem compartilhar a pasta.
 
 **Restaurar** (num PC novo ou depois de perder os dados):
-1. Instale o SmartDoc normalmente (veja [Instalação no Windows](#instalação-no-windows)) e **não** inicie o serviço.
-2. Copie de `diarios\<dia mais recente>\`: o `.env` para a pasta do SmartDoc, o `nfe.db` para `data\` e a pasta `certs\` para a pasta do SmartDoc.
-3. Copie a pasta `xmls\` do backup para a pasta do SmartDoc.
-4. Se a pasta do SmartDoc mudou de lugar, confira os caminhos `PASTA_*` no `.env`.
-5. Inicie o serviço e confira no painel os clientes e as notas.
+1. Instale o Smart Fiscal e feche-o de vez (botão direito no ícone perto do relógio → **Sair**).
+2. Copie de `diarios\<dia mais recente>\` para `%LOCALAPPDATA%\Smart Fiscal\dados\`:
+   - o `.env` e a pasta `certs\` para `notas\`;
+   - o `nfe.db` para `notas\data\`;
+   - o conteúdo de `estoque\` para `estoque\`.
+3. Copie a pasta `xmls\` do backup para `notas\`.
+4. Se mudou algum caminho `PASTA_*`, confira o `.env`.
+5. Abra o Smart Fiscal e confira os clientes, as notas e as empresas do SPED.
 
 ## Demonstração sem certificado
 

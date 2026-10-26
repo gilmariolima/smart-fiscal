@@ -385,6 +385,7 @@ async function iniciar() {
     fs.mkdirSync(partes.estoque, { recursive: true })
     const env = prepararEnv(partes.notas, path.join(RAIZ, '.env.example'))
     process.env.SMARTDOC_DADOS = partes.notas
+    process.env.ESTOQUE_DADOS = partes.estoque
     process.env.SMART_FISCAL_VERSAO = app.getVersion()
 
     await ligarMotorEstoque(partes.estoque)

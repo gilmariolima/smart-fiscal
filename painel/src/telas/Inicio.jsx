@@ -150,9 +150,12 @@ export default function Inicio() {
       </div>
 
       {resumo.backup?.alerta && (
-        <p className="faixa faixa-ambar" role="status">
-          {resumo.backup.alerta}
-        </p>
+        <div className="faixa faixa-ambar faixa-ciencia" role="status">
+          <span>{resumo.backup.alerta}</span>
+          <Link className="botao botao-claro" to="/backup">
+            Abrir Backup
+          </Link>
+        </div>
       )}
 
       {pendentes > 0 && (

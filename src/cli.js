@@ -213,10 +213,10 @@ function criarPrograma(io) {
 
   programa
     .command('backup')
-    .description('Copia agora o banco, os certificados, o .env e os XMLs novos para a PASTA_BACKUP')
+    .description('Copia agora o banco, os certificados, o .env, os dados do SPED e os XMLs novos para a pasta do backup')
     .action(async () => {
       const r = await contexto().backup.fazerBackup({ forcar: true })
-      if (r.desligado) return log('Backup desligado: defina PASTA_BACKUP no .env (ex.: PASTA_BACKUP=D:\\Backup\\SmartFiscal).')
+      if (r.desligado) return log('Backup desligado: escolha a pasta na tela Backup do painel ou defina PASTA_BACKUP no .env (ex.: PASTA_BACKUP=D:\\Backup\\SmartFiscal).')
       if (!r.ok) throw new Error(r.erro)
       log(`Backup feito: ${r.xmlsNovos} XML(s) novo(s) e a cópia de ${r.dia}.`)
     })

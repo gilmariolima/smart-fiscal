@@ -1,9 +1,11 @@
 'use strict'
 
-// Backup para outra pasta (PASTA_BACKUP):
+// Backup para outra pasta, escolhida na tela Backup (fica na tabela `sistema`) ou no PASTA_BACKUP do .env:
 //   xmls/                espelho dos XMLs: copia só os novos ou alterados e nunca apaga
-//   diarios/AAAA-MM-DD/  nfe.db (VACUUM INTO, consistente com o sistema rodando), certs/ e .env
+//   diarios/AAAA-MM-DD/  nfe.db (VACUUM INTO, consistente com o sistema rodando), certs/, .env
+//                        e estoque/ (dados do SPED, sem os logs)
 // Uma cópia diária por dia; guarda as MANTER_DIARIOS mais recentes.
+// A escolha da tela vale mais que o .env; escolher "nenhuma" desliga o backup mesmo com o .env preenchido.
 
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
@@ -13,19 +15,66 @@ const MANTER_DIARIOS = 30
 const DIAS_SEM_BACKUP_ALERTA = 3
 const DIA_MS = 86400e3
 const NOME_DIARIO = /^\d{4}-\d{2}-\d{2}$/
+const CHAVE_PASTA = 'pasta_backup'
+// Do SPED ficam fora os logs e o token da execução.
+const FORA_DO_ESTOQUE = /(^|[\\/])(painel\.log|painel\.token|[^\\/]*\.log(\.\d+)?)$/
+
+/** Caminho completo no Windows (C:\..., \\servidor\...) ou no Linux/macOS (/...). */
+const caminhoCompleto = (p) => path.win32.isAbsolute(p) || path.posix.isAbsolute(p)
 
 // Data no horário de Brasília (-03:00), como as competências.
 const diaDe = (t) => new Date(t.getTime() - 3 * 3600e3).toISOString().slice(0, 10)
 
 function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
-  const pastaBackup = config.pastaBackup || null
   const sql = {
+    lerPasta: db.prepare('SELECT valor FROM sistema WHERE chave = ?'),
+    gravarPasta: db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor'),
     iniciar: db.prepare("INSERT INTO execucoes (tipo, inicio) VALUES ('backup', ?)"),
     fechar: db.prepare('UPDATE execucoes SET fim = @fim, docs_recebidos = @docs, x_motivo = @x_motivo, erro = @erro WHERE id = @id'),
-    ultima: db.prepare("SELECT fim, erro FROM execucoes WHERE tipo = 'backup' AND fim IS NOT NULL ORDER BY id DESC LIMIT 1"),
+    ultima: db.prepare("SELECT fim, erro, x_motivo FROM execucoes WHERE tipo = 'backup' AND fim IS NOT NULL ORDER BY id DESC LIMIT 1"),
     ultimaOk: db.prepare("SELECT fim FROM execucoes WHERE tipo = 'backup' AND fim IS NOT NULL AND erro IS NULL ORDER BY id DESC LIMIT 1"),
   }
   let emAndamento = null
+
+  /** Pasta em uso e de onde veio: 'painel' (tela Backup), 'env' (PASTA_BACKUP) ou null (desligado). */
+  function escolha() {
+    const salva = sql.lerPasta.get(CHAVE_PASTA)
+    if (salva) return { pasta: salva.valor || null, origem: salva.valor ? 'painel' : null }
+    return { pasta: config.pastaBackup || null, origem: config.pastaBackup ? 'env' : null }
+  }
+  const pastaAtual = () => escolha().pasta
+
+  /**
+   * Escolhe a pasta do backup ('' desliga). Cria a pasta e testa gravar nela antes de aceitar.
+   * @returns {{ pasta, avisos: string[] }}
+   */
+  function definirPasta(valor) {
+    const pasta = String(valor ?? '').trim().replace(/^"(.*)"$/, '$1').trim()
+    if (!pasta) {
+      sql.gravarPasta.run(CHAVE_PASTA, '')
+      logger.info('Backup automático desligado pela tela Backup')
+      return { pasta: null, avisos: [] }
+    }
+    if (!caminhoCompleto(pasta)) throw new Error('Informe o endereço completo da pasta, como D:\\Backup ou \\\\servidor\\backup.')
+    const dentro = (base) => base && !path.relative(base, pasta).startsWith('..') && !path.isAbsolute(path.relative(base, pasta))
+    if (dentro(config.raiz) || dentro(config.pastaEstoque)) throw new Error('A pasta do backup não pode ficar dentro da pasta de dados do Smart Fiscal.')
+    try {
+      fs.mkdirSync(pasta, { recursive: true })
+      const teste = path.join(pasta, `.teste-smart-fiscal-${process.pid}`)
+      fs.writeFileSync(teste, 'ok')
+      fs.rmSync(teste, { force: true })
+    } catch (e) {
+      throw new Error(`Não consegui gravar na pasta ${pasta} (${e.code || e.message}). Confira o endereço e a permissão.`)
+    }
+    const avisos = []
+    const disco = (p) => path.win32.parse(p).root.toUpperCase()
+    if (config.raiz && /^[A-Z]:\\$/.test(disco(pasta)) && disco(pasta) === disco(config.raiz)) {
+      avisos.push(`A pasta fica no mesmo disco ${disco(pasta)} do Smart Fiscal: se o disco der defeito, o backup vai junto. Prefira outro disco, a rede ou uma pasta do OneDrive/Drive.`)
+    }
+    sql.gravarPasta.run(CHAVE_PASTA, pasta)
+    logger.info('Pasta do backup escolhida', { pasta })
+    return { pasta, avisos }
+  }
 
   // Copia o que não existe no espelho ou mudou de tamanho (o resumo da nota vira o XML completo).
   async function espelharXmls(destino) {
@@ -58,6 +107,9 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
     if (fs.existsSync(config.pastaCerts)) await fsp.cp(config.pastaCerts, path.join(temporaria, 'certs'), { recursive: true })
     const env = config.raiz && path.join(config.raiz, '.env')
     if (env && fs.existsSync(env)) await fsp.copyFile(env, path.join(temporaria, '.env'))
+    if (config.pastaEstoque && fs.existsSync(config.pastaEstoque)) {
+      await fsp.cp(config.pastaEstoque, path.join(temporaria, 'estoque'), { recursive: true, filter: (origem) => !FORA_DO_ESTOQUE.test(origem) })
+    }
     await fsp.rm(final, { recursive: true, force: true })
     await fsp.rename(temporaria, final)
   }
@@ -70,6 +122,7 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
   }
 
   async function executar({ forcar }) {
+    const pastaBackup = pastaAtual()
     if (!pastaBackup) return { ok: false, desligado: true }
     const t = agora()
     const dia = diaDe(t)
@@ -108,7 +161,9 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
 
   /** Situação para o painel: `alerta` só quando há algo a resolver. */
   function estado() {
-    if (!pastaBackup) return { configurado: false, ultimoEm: null, alerta: 'Backup automático desligado: defina PASTA_BACKUP no .env.' }
+    const { pasta: pastaBackup, origem } = escolha()
+    const base = { origem, emAndamento: !!emAndamento, incluiSped: !!config.pastaEstoque }
+    if (!pastaBackup) return { ...base, configurado: false, ultimoEm: null, alerta: 'Backup automático desligado: escolha a pasta na tela Backup.' }
     const ultima = sql.ultima.get()
     const ultimoEm = sql.ultimaOk.get()?.fim || null
     let alerta = null
@@ -118,13 +173,21 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
       const dias = Math.floor((agora().getTime() - new Date(ultimoEm).getTime()) / DIA_MS)
       if (dias >= DIAS_SEM_BACKUP_ALERTA) alerta = `Último backup há ${dias} dias.`
     }
-    return { configurado: true, pasta: pastaBackup, ultimoEm, alerta }
+    return { ...base, configurado: true, pasta: pastaBackup, ultimoEm, ultimoResumo: ultima?.erro ? null : ultima?.x_motivo || null, alerta }
   }
 
   /** Espera o backup em andamento (ao desligar o servidor). */
   const aguardar = () => emAndamento || Promise.resolve()
 
-  return { fazerBackup, aguardar, estado, ativo: !!pastaBackup }
+  return {
+    fazerBackup,
+    aguardar,
+    estado,
+    definirPasta,
+    get ativo() {
+      return !!pastaAtual()
+    },
+  }
 }
 
 module.exports = { criarServicoBackup, MANTER_DIARIOS }

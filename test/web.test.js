@@ -123,7 +123,7 @@ test('resumo, clientes e execuções depois de um ciclo; nenhuma senha na API', 
   assert.equal(resumo.corpo.agendador.ativo, false)
   assert.equal(resumo.corpo.limites.tentativasDownload, 5)
   assert.equal(resumo.corpo.backup.configurado, false, 'sem PASTA_BACKUP')
-  assert.match(resumo.corpo.backup.alerta, /PASTA_BACKUP/)
+  assert.match(resumo.corpo.backup.alerta, /tela Backup/)
 
   const clientes = (await pedir('/api/clientes')).corpo.clientes
   const ok = clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
@@ -606,6 +606,39 @@ test('escritório: cadastro e troca de certificado recusados fora do próprio PC
     assert.equal(r.status, 403, caminho)
   }
   assert.equal((await pedir('/api/escritorio')).corpo, null)
+})
+
+// ---------- backup ----------
+
+test('backup pelo painel: escolhe a pasta, faz na hora, desliga; só do próprio PC', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-web-backup-'))
+  t.after(() => fs.rmSync(pasta, { recursive: true, force: true }))
+  const inicio = (await pedir('/api/backup')).corpo
+  assert.deepEqual([inicio.configurado, inicio.origem], [false, null])
+  assert.equal((await pedir('/api/backup/agora', { method: 'POST', body: {} })).status, 409)
+  assert.equal((await pedir('/api/backup/pasta', { method: 'POST', body: { pasta: 'relativa' } })).status, 400)
+
+  const salvar = await pedir('/api/backup/pasta', { method: 'POST', body: { pasta } })
+  assert.equal(salvar.status, 200)
+  assert.match(salvar.corpo.mensagem, /primeiro backup já começou/)
+  await ctx.backup.aguardar()
+  const feito = (await pedir('/api/backup')).corpo
+  assert.deepEqual([feito.configurado, feito.origem, feito.pasta, feito.alerta], [true, 'painel', pasta, null])
+  assert.ok(fs.existsSync(path.join(pasta, 'diarios')))
+  assert.equal((await pedir('/api/resumo')).corpo.backup.configurado, true)
+
+  assert.equal((await pedir('/api/backup/agora', { method: 'POST', body: {} })).status, 202)
+  await ctx.backup.aguardar()
+  const desligar = await pedir('/api/backup/pasta', { method: 'POST', body: { pasta: '' } })
+  assert.match(desligar.corpo.mensagem, /desligado/)
+  assert.equal((await pedir('/api/backup')).corpo.configurado, false)
+})
+
+test('backup: trocar a pasta fora do próprio PC é recusado', async (t) => {
+  const { pedir } = await montar(t, {}, { ehLocal: () => false })
+  assert.equal((await pedir('/api/backup/pasta', { method: 'POST', body: { pasta: os.tmpdir() } })).status, 403)
+  assert.equal((await pedir('/api/backup')).corpo.configurado, false)
 })
 
 // ---------- chaves de automação e ciência à mão ----------
