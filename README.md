@@ -29,6 +29,8 @@ Ficam em `%LOCALAPPDATA%\Smart Fiscal\dados`, fora da pasta do programa. Atualiz
 | `estoque\` | empresas, correções de itens, contador do SPED, SPEDs gerados (`saida\<CNPJ>_<empresa>\<AAAA-MM>\`, ou a pasta escolhida em Arquivos gerados) e o `painel.log` do SPED |
 | `atualizacao.log` | o que a atualização automática fez |
 
+Os XMLs, as exportações e os SPEDs gerados podem ir para uma pasta mais fácil de achar (outro disco, rede, Documentos) em **Cadastros → Pastas**: ao trocar, os XMLs e ZIPs já existentes vão junto. Banco, certificados e `.env` ficam sempre aqui.
+
 **Ligue o backup** em **Cadastros → Backup**, numa pasta fora deste disco (outro disco, rede ou OneDrive/Drive): ele copia todo dia o banco, os certificados, o `.env` com a `MASTER_KEY`, os XMLs e os dados do SPED. Sem a `MASTER_KEY`, os certificados cadastrados não abrem.
 
 ### Vindo do SmartDoc e do Estoque SPED

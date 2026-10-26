@@ -19,6 +19,16 @@ const HOSTS_LOCAIS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
 const ENDERECOS_LOCAIS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const ROTA_CERTIFICADO = /^\/(clientes(\/\d{14}\/certificado)?|escritorio(\/certificado)?)$/
 const LIMITE_PFX = '300kb' // o .pfx chega em base64 dentro do JSON
+/** Abre a pasta no Explorador do Windows (fora do Windows, no gerenciador de arquivos). */
+function abrirNoExplorador(pasta) {
+  const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [pasta]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [pasta]]
+  try {
+    require('node:child_process').spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).on('error', () => {}).unref()
+  } catch {
+    // sem gerenciador de arquivos (servidor sem tela): não há o que abrir
+  }
+}
+
 const PADRAO_ZIP = /^\d{14}(_[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*)?_\d{4}-\d{2}\.zip$/
 
 class ErroHttp extends Error {
@@ -666,6 +676,35 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     if (!ctx.backup.ativo) throw new ErroHttp(409, 'Escolha a pasta do backup primeiro.')
     ctx.backup.fazerBackup({ forcar: true })
     res.status(202).json({ ok: true, mensagem: 'Backup iniciado.', estado: ctx.backup.estado() })
+  })
+
+  // ---------- pastas dos XMLs e das exportações ----------
+
+  app.get('/api/pastas', (req, res) => {
+    res.json(ctx.pastas.estado())
+  })
+
+  app.post('/api/pastas', async (req, res) => {
+    exigirLocal(req)
+    const tipo = String(req.body?.tipo || '')
+    if (tipo === 'xmls' && capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para mudar a pasta dos XMLs.')
+    let r
+    try {
+      r = await ctx.pastas.mudar(tipo, req.body?.pasta)
+    } catch (e) {
+      throw new ErroHttp(400, e.message)
+    }
+    const mensagem = !r.mudou ? 'A pasta continua a mesma.' : r.movidos ? `Pasta trocada: ${r.movidos.toLocaleString('pt-BR')} arquivo(s) levado(s) para ${r.pasta}.` : `Pasta trocada para ${r.pasta}.`
+    res.json({ ok: true, mensagem, estado: ctx.pastas.estado() })
+  })
+
+  app.post('/api/pastas/abrir', (req, res) => {
+    exigirLocal(req)
+    const pasta = ctx.pastas.estado().pastas.find((p) => p.tipo === req.body?.tipo)?.pasta
+    if (!pasta) throw new ErroHttp(404, 'Pasta desconhecida.')
+    fs.mkdirSync(pasta, { recursive: true })
+    abrirNoExplorador(pasta)
+    res.json({ ok: true })
   })
 
   app.get('/api/execucoes', (req, res) => {

@@ -8,6 +8,7 @@ import Clientes from './telas/Clientes.jsx'
 import Exportar from './telas/Exportar.jsx'
 import Execucoes from './telas/Execucoes.jsx'
 import Backup from './telas/Backup.jsx'
+import Pastas from './telas/Pastas.jsx'
 import Inicio from './telas/Inicio.jsx'
 import Mes from './telas/Mes.jsx'
 import Meses from './telas/Meses.jsx'
@@ -69,6 +70,7 @@ const rotas = createHashRouter([
       { path: 'exportar', element: <Exportar /> },
       { path: 'execucoes', element: <Execucoes /> },
       { path: 'backup', element: <Backup /> },
+      { path: 'pastas', element: <Pastas /> },
       { path: 'sped', element: <Converter /> },
       { path: 'sped/gerados', element: <Gerados /> },
       { path: 'sped/contador', element: <Contador /> },
