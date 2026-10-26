@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import Pagina from '../layout/Pagina.jsx'
 import { baixar, milhar, sped } from './api.js'
 import Modal from './Modal.jsx'
@@ -7,59 +8,16 @@ import { useSped } from './SpedProvider.jsx'
 // Só o nome do arquivo: na lista ele vem com a pasta da empresa e do mês (CNPJ_Empresa/AAAA-MM/...).
 const nomeDe = (arquivo) => arquivo.split('/').pop()
 
-function Pasta({ aoMudar }) {
-  const { aviso } = useSped()
+// Só aparece quando a pasta não está acessível; trocar a pasta é na tela Pastas.
+function PastaForaDoAr() {
   const [pasta, setPasta] = useState(null)
-  const [texto, setTexto] = useState('')
-  const [trocando, setTrocando] = useState(false)
-  const carregar = useCallback(() => sped('/api/pasta').then((p) => {
-    if (p.erro) return
-    setPasta(p)
-    setTexto(p.pasta_saida)
-  }), [])
-  useEffect(() => { carregar() }, [carregar])
-
-  async function salvar(valor) {
-    const r = await sped('/api/pasta', { method: 'POST', json: { pasta_saida: valor } })
-    if (r.erro) return aviso(r.erro, 'erro')
-    aviso(r.eh_padrao ? 'Voltou para a pasta padrão' : 'Pasta dos arquivos gerados salva')
-    setPasta(r)
-    setTexto(r.pasta_saida)
-    setTrocando(false)
-    aoMudar()
-  }
-
-  if (!pasta) return null
-  const nota = !pasta.acessivel
-    ? 'A pasta não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED não pode ser gerado até ela voltar.'
-    : trocando && !pasta.eh_padrao ? 'Os próximos arquivos vão para a pasta nova. Os gerados antes continuam na pasta anterior.' : ''
+  useEffect(() => { sped('/api/pasta').then((p) => !p.erro && setPasta(p)) }, [])
+  if (!pasta || pasta.acessivel) return null
   return (
-    <form className="cartao pasta-saida" autoComplete="off" onSubmit={(e) => { e.preventDefault(); salvar(texto) }}>
-      {trocando ? (
-        <>
-          <label htmlFor="pastaSaida" className="rot">Nova pasta para os arquivos gerados</label>
-          <div className="pasta-linha">
-            <div className="campo-busca pasta-campo">
-              <i className="fa-solid fa-folder" />
-              <input id="pastaSaida" className="entrada" spellCheck={false} placeholder="C:\Fiscal\SPED ou \\servidor\fiscal\SPED"
-                value={texto} onChange={(e) => setTexto(e.target.value)} autoFocus />
-            </div>
-            <button type="submit" className="botao botao-azul">Salvar</button>
-            {!pasta.eh_padrao && <button type="button" className="botao botao-claro" onClick={() => salvar('')}>Usar a pasta padrão</button>}
-            <button type="button" className="botao botao-claro" onClick={() => { setTexto(pasta.pasta_saida); setTrocando(false) }}>Cancelar</button>
-          </div>
-        </>
-      ) : (
-        <div className="pasta-linha">
-          <p className="pasta-atual">
-            <i className="fa-solid fa-folder" /> Cada empresa tem a sua pasta, separada por mês do inventário, em{' '}
-            <span className="mono" title={pasta.pasta_saida}>{pasta.pasta_saida}</span>
-          </p>
-          <button type="button" className="botao botao-claro" onClick={() => setTrocando(true)}>Trocar pasta</button>
-        </div>
-      )}
-      {nota && <p className={`pasta-nota${pasta.acessivel ? '' : ' pasta-erro'}`}>{nota}</p>}
-    </form>
+    <p className="faixa faixa-ambar">
+      A pasta {pasta.pasta_saida} não está acessível agora (rede desligada ou pasta apagada): os arquivos não aparecem e o SPED
+      não pode ser gerado até ela voltar. Para usar outra, vá em <Link to="/pastas">Pastas</Link>.
+    </p>
   )
 }
 
@@ -148,7 +106,7 @@ export default function Gerados() {
       erro={erro}
       acoes={<button type="button" className="botao botao-claro" onClick={abrirPasta}><i className="fa-solid fa-folder-open" />Abrir pasta</button>}
     >
-      <Pasta aoMudar={carregar} />
+      <PastaForaDoAr />
       <div className="tabela-moldura">
         <table className="tabela">
           <thead>
