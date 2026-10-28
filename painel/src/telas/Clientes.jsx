@@ -61,9 +61,25 @@ function ResumoCaptura({ titulo, c, dica, depois }) {
 // Erro só da NFS-e: uma linha no balão, sem esconder o resultado da NF-e.
 const erroNfse = (c) => (c.nfse?.ultimoErro ? `NFS-e: ${explicarSefaz({ erro: c.nfse.ultimoErro })?.titulo || c.nfse.ultimoErro}` : null)
 
+// A consulta mais recente, da NF-e ou da NFS-e
+const ultimaConsulta = (c) => [c.ultimaConsulta, c.nfse?.ultimaConsulta].filter(Boolean).sort().pop() || null
+
+// Toda situação mostra embaixo quando foi a última consulta
 function UltimaCaptura({ c, capturandoAgora, fila }) {
   if (capturandoAgora === c.cnpj) return <Etiqueta cor="ambar">Capturando…</Etiqueta>
   if (fila.includes(c.cnpj)) return <Etiqueta cor="cinza">Na fila</Etiqueta>
+  const etiqueta = situacaoDaCaptura(c)
+  if (!etiqueta) return <span className="apagado">Nunca capturado</span>
+  const em = ultimaConsulta(c)
+  return (
+    <>
+      {etiqueta}
+      {em && <span className="secundario">Consulta {quando(em)}</span>}
+    </>
+  )
+}
+
+function situacaoDaCaptura(c) {
   const explicacao = c.ultimoErro ? explicarSefaz({ erro: c.ultimoErro }) : null
   if (c.bloqueadoAte)
     return (
@@ -80,17 +96,12 @@ function UltimaCaptura({ c, capturandoAgora, fila }) {
       </Etiqueta>
     )
   // Toda captura que esvazia a fila da SEFAZ termina com 1 h de espera: é o normal, não um problema.
-  if (c.proximaConsulta) {
+  if (c.proximaConsulta || (c.ultimaConsulta && c.ultimoRecebido)) {
     const r = resumoDasCapturas(c.ultimoRecebido, c.nfse?.ultimoRecebido)
     return (
-      <>
-        <Etiqueta cor={r.cor} titulo={<ResumoCaptura titulo={r.titulo} c={c} dica={r.linha} depois={erroNfse(c)} />}>
-          {r.titulo}
-        </Etiqueta>
-        <span className="secundario">
-          Consulta {quando(c.ultimaConsulta)} · próxima às {hora(c.proximaConsulta)}
-        </span>
-      </>
+      <Etiqueta cor={r.cor} titulo={<ResumoCaptura titulo={r.titulo} c={c} dica={r.linha} depois={erroNfse(c)} />}>
+        {r.titulo}
+      </Etiqueta>
     )
   }
   if (c.ultimoErro && explicacao)
@@ -105,24 +116,8 @@ function UltimaCaptura({ c, capturandoAgora, fila }) {
         <Etiqueta cor="vermelha">Erro</Etiqueta> {c.ultimoErro}
       </span>
     )
-  if (c.ultimaConsulta && c.ultimoRecebido) {
-    const r = resumoDasCapturas(c.ultimoRecebido, c.nfse?.ultimoRecebido)
-    return (
-      <>
-        <Etiqueta cor={r.cor} titulo={<ResumoCaptura titulo={r.titulo} c={c} dica={r.linha} depois={erroNfse(c)} />}>
-          {r.titulo}
-        </Etiqueta>
-        <span className="secundario">Consulta {quando(c.ultimaConsulta)}</span>
-      </>
-    )
-  }
-  if (c.ultimaConsulta)
-    return (
-      <span className="sem-quebra">
-        <Etiqueta cor="verde">Sucesso</Etiqueta> {quando(c.ultimaConsulta)}
-      </span>
-    )
-  return <span className="apagado">Nunca capturado</span>
+  if (ultimaConsulta(c)) return <Etiqueta cor="verde">Sucesso</Etiqueta>
+  return null
 }
 
 function Pendencias({ notas: n }) {

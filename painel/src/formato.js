@@ -8,7 +8,7 @@ export const cnpj = (c) =>
 export const dataHora = (iso) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 
-// "hoje às 13:00", "amanhã às 08:00" ou "12/10 às 13:00"
+// "hoje às 13:00", "amanhã às 08:00" ou "dia 12/10 às 13:00"
 export function quando(iso) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -19,7 +19,7 @@ export function quando(iso) {
   if (diferenca === 0) return `hoje às ${hora}`
   if (diferenca === 1) return `amanhã às ${hora}`
   if (diferenca === -1) return `ontem às ${hora}`
-  return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} às ${hora}`
+  return `dia ${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} às ${hora}`
 }
 
 export function nomeDoAmbiente(ambiente) {
