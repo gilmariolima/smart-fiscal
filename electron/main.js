@@ -25,6 +25,7 @@ let servidor = null
 let motorEstoque = null
 let janela = null
 let bandeja = null
+let relogioBandeja = null
 let urlPainel = null
 let saindo = false
 let encerrado = false
@@ -207,6 +208,7 @@ async function buscarAgora() {
   notificar('Buscando notas', 'O Smart Fiscal começou a buscar as notas de todos os clientes.')
   atualizarBandeja()
   const r = await servidor.agendador.executarAgora('bandeja')
+  if (!servidor) return // o app fechou durante a busca
   const u = servidor.agendador.estado().ultimaExecucao
   if (!r.ok) notificar('A busca não foi feita', r.erro || 'Veja os detalhes no painel.')
   else if (u?.clientesComErro) notificar('Busca concluída com erros', `${u.clientesComErro} de ${u.clientes} cliente(s) com erro. Veja no painel.`)
@@ -239,7 +241,7 @@ function criarBandeja() {
 
   // Mantém o texto da bandeja em dia e avisa quando uma busca automática termina com erro.
   let ultimaVista = servidor.agendador.estado().ultimaExecucao?.fim || null
-  setInterval(() => {
+  relogioBandeja = setInterval(() => {
     const u = servidor?.agendador.estado().ultimaExecucao
     if (u && u.fim !== ultimaVista) {
       ultimaVista = u.fim
@@ -475,9 +477,13 @@ async function iniciar() {
 }
 
 async function encerrar() {
+  // O relógio da bandeja lê o agendador, que lê o banco: parado antes de fechar o banco
+  // (senão "The database connection is not open" ao sair para instalar uma versão nova)
+  clearInterval(relogioBandeja)
   try {
     if (servidor) await servidor.parar()
   } finally {
+    servidor = null
     if (ctx) ctx.fechar()
     ctx = null
     await motorEstoque?.parar?.().catch(() => {})
@@ -520,6 +526,7 @@ if (!app.requestSingleInstanceLock()) {
     encerrar().catch(() => {}).finally(() => {
       encerrado = true
       bandeja?.destroy()
+      bandeja = null
       // Versão nova baixada: o instalador assume e o app sai pelo app.quit dele.
       // Se a saída travar, o app.exit garante (o instalador já está rodando à parte).
       if (atualizacao?.instalarAoSair()) {
