@@ -1943,6 +1943,7 @@ tr.editavel:hover .botao-icone {
 }
 
 .filtros-notas {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1970,11 +1971,13 @@ tr.editavel:hover .botao-icone {
   box-shadow: var(--sombra);
 }
 
+/* Busca colada à direita, alinhada com os botões Exportar e Baixar. */
 .busca-notas {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
+  margin-left: auto;
 }
 
 .caixa-todas {
