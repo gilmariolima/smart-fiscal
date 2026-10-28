@@ -389,7 +389,9 @@ function procurarAtualizacao() {
 // ---------- ciclo de vida ----------
 
 async function iniciar() {
-  app.setAppUserModelId(APP_ID)
+  // Rodando do código, identidade própria: com a mesma do instalado, o Windows cria um atalho
+  // "Electron" com ela e passa a mostrar o ícone do Electron na barra de tarefas do app instalado
+  app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
   Menu.setApplicationMenu(null)
   prefs = lerPrefs()
 
@@ -529,6 +531,17 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   process.on('unhandledRejection', (e) => ctx?.logger.error('Promessa rejeitada sem tratamento', { erro: e?.message || String(e) }))
+
+  // Erro sem tratamento: anota em erros.log. Saindo (inclusive para instalar uma versão nova),
+  // só anota: a janela de erro do Electron assustava e não havia o que fazer com ela.
+  process.on('uncaughtException', (e) => {
+    try {
+      fs.appendFileSync(path.join(pasta || app.getPath('userData'), 'erros.log'), `${new Date().toISOString()}${saindo ? ' (saindo)' : ''} ${e?.stack || e}\n`)
+    } catch {
+      // sem log, segue
+    }
+    if (!saindo) dialog.showErrorBox(NOME, `Erro inesperado: ${e?.message || e}`)
+  })
 
   app.whenReady().then(iniciar)
 }
