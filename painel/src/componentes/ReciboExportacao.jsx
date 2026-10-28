@@ -11,8 +11,8 @@ export default function ReciboExportacao({ r, aoFechar }) {
       </div>
       <p>
         {plural(r.xmls, 'XML', 'XMLs')} ({inteiro(r.porTipo?.entrada?.xmls)} de entrada, {inteiro(r.porTipo?.saida?.xmls)} de saída),{' '}
-        {plural(r.canceladas, 'cancelada', 'canceladas')}, {inteiro(r.semXml)} sem XML completo · {plural(r.totalNotas, 'nota', 'notas')} no
-        resumo.csv.
+        {plural(r.canceladas, 'cancelada', 'canceladas')}, {inteiro(r.semXml)} sem XML completo · {plural(r.totalNotas, 'nota', 'notas')} na
+        planilha notas.xlsx.
       </p>
       {!!r.avisos?.length && (
         <ul className="recibo-avisos">

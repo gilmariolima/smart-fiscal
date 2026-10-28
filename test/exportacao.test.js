@@ -5,7 +5,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { criarServicoExportacao, montarCsv } = require('../src/services/exportacao')
+const { criarServicoExportacao } = require('../src/services/exportacao')
 const { criarServicoCiclo } = require('../src/services/ciclo')
 const { montarAmbiente, inserirNotas, AGORA } = require('./apoio/ambiente')
 const { lerZip } = require('./apoio/zip')
@@ -26,7 +26,7 @@ async function preparado(t) {
 
 const competencia = '2026-10'
 
-test('ZIP com entradas/xml, entradas/canceladas e resumo.csv; marca exportada_em', async (t) => {
+test('ZIP com NF-e/Entradas, NF-e/Entradas/Canceladas e notas.xlsx; marca exportada_em', async (t) => {
   const { amb, notas, servico } = await preparado(t)
   const [a, b, c] = notas
   amb.db.prepare('UPDATE notas SET cancelada = 1 WHERE id = ?').run(c.id) // nota completa que foi cancelada
@@ -39,8 +39,8 @@ test('ZIP com entradas/xml, entradas/canceladas e resumo.csv; marca exportada_em
   assert.deepEqual(r.porTipo, { entrada: { xmls: 1, canceladas: 1, semXml: 0 }, saida: { xmls: 0, canceladas: 0, semXml: 0 } })
 
   const zip = lerZip(fs.readFileSync(r.arquivo))
-  assert.deepEqual([...zip.keys()].sort(), [`entradas/canceladas/${c.chave}-nfe.xml`, `entradas/xml/${a.chave}-nfe.xml`, 'resumo.csv'])
-  assert.deepEqual(zip.get(`entradas/xml/${a.chave}-nfe.xml`), fs.readFileSync(path.join(amb.pastaXmls, a.caminho_xml)))
+  assert.deepEqual([...zip.keys()].sort(), [`NF-e/Entradas/${a.chave}-nfe.xml`, `NF-e/Entradas/Canceladas/${c.chave}-nfe.xml`, 'notas.xlsx'])
+  assert.deepEqual(zip.get(`NF-e/Entradas/${a.chave}-nfe.xml`), fs.readFileSync(path.join(amb.pastaXmls, a.caminho_xml)))
 
   const marcadas = amb.db.prepare('SELECT id, exportada_em FROM notas ORDER BY id').all()
   assert.equal(marcadas[0].exportada_em, AGORA.toISOString())
@@ -55,40 +55,27 @@ test('ZIP com entradas/xml, entradas/canceladas e resumo.csv; marca exportada_em
   assert.deepEqual(fs.readdirSync(amb.deps.config.pastaExports), [r.nome], 'sem temporários sobrando')
 })
 
-test('resumo.csv no formato do Excel brasileiro, com as notas sem XML', async (t) => {
+test('notas.xlsx com a aba NF-e listando as notas do mês, inclusive as sem XML', async (t) => {
   const { notas, servico } = await preparado(t)
   const r = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia })
-  const csv = lerZip(fs.readFileSync(r.arquivo)).get('resumo.csv').toString('utf8')
-  assert.ok(csv.startsWith('﻿'), 'UTF-8 com BOM')
-  const linhas = csv.slice(1).split('\r\n')
-  assert.equal(linhas[0], 'chave;tipo;numero;serie;data_emissao;emitente_cnpj;emitente_nome;destinatario_cnpj;destinatario_nome;valor_total;status;cancelada')
-  assert.equal(linhas.at(-1), '', 'termina com quebra de linha')
-  assert.equal(linhas.length, 5)
-
-  const porChave = Object.fromEntries(linhas.slice(1, -1).map((l) => [l.split(';')[0], l]))
+  const zip = lerZip(lerZip(fs.readFileSync(r.arquivo)).get('notas.xlsx'))
+  const aba = zip.get('xl/worksheets/sheet1.xml').toString()
   const [a, b] = notas
-  const dia = a.data_emissao.slice(0, 10).split('-').reverse().join('/')
-  assert.equal(porChave[`="${a.chave}"`], `="${a.chave}";entrada;${a.numero};1;${dia};="12345678000195";Fornecedor Alfa Ltda;="11222333000181";CLIENTE SIMULADO;1500,00;completa;não`)
-  assert.match(porChave[`="${b.chave}"`], /;820,50;resumo;sim$/)
+  assert.match(zip.get('xl/workbook.xml').toString(), /name="NF-e".*name="NFS-e".*name="Retenções"/)
+  assert.ok(aba.includes(`<t>${a.chave}</t>`))
+  assert.ok(aba.includes(`<t>${b.chave}</t>`), 'nota só com resumo também aparece')
+  assert.ok(aba.includes('<t>Fornecedor Alfa Ltda</t>'))
+  assert.ok(aba.includes('<v>1500</v>'))
+  assert.ok(aba.includes('<t>Só resumo</t>'))
 })
 
-test('CSV protege contra fórmula e escapa separador e aspas', () => {
-  const csv = montarCsv([
-    { chave: '1'.repeat(44), numero: '1', serie: '1', data_emissao: '2026-10-01T10:00:00-03:00', emitente_cnpj: '1")+HYPERLINK("x', emitente_nome: '=HYPERLINK("http://x")', tipo: 'saida', destinatario_cnpj: '98.765.432/0001-10', destinatario_nome: '+cmd', valor_total: 10, status: 'completa', cancelada: 0 },
-    { chave: '2'.repeat(44), numero: null, serie: null, data_emissao: null, emitente_cnpj: null, emitente_nome: 'Alfa; Beta "Filial"', tipo: 'entrada', valor_total: null, status: 'resumo', cancelada: 1 },
-  ])
-  const [, l1, l2] = csv.slice(1).split('\r\n')
-  assert.equal(l1, `="${'1'.repeat(44)}";saida;1;1;01/10/2026;="1";"'=HYPERLINK(""http://x"")";="98765432000110";'+cmd;10,00;completa;não`)
-  assert.equal(l2, `="${'2'.repeat(44)}";entrada;;;;;"Alfa; Beta ""Filial""";;;;resumo;sim`)
-})
-
-test('competência sem notas gera ZIP só com o cabeçalho do CSV', async (t) => {
+test('competência sem notas gera ZIP só com a planilha (com os cabeçalhos)', async (t) => {
   const { servico } = await preparado(t)
   const r = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia: '2025-01' })
   assert.equal(r.totalNotas, 0)
   const zip = lerZip(fs.readFileSync(r.arquivo))
-  assert.deepEqual([...zip.keys()], ['resumo.csv'])
-  assert.equal(zip.get('resumo.csv').toString('utf8').split('\r\n').length, 2)
+  assert.deepEqual([...zip.keys()], ['notas.xlsx'])
+  assert.ok(lerZip(zip.get('notas.xlsx')).get('xl/worksheets/sheet1.xml').toString().includes('<t>Chave</t>'))
 })
 
 test('XML ausente no disco vira aviso e a nota fica fora do ZIP', async (t) => {
@@ -127,11 +114,11 @@ test('exportar de novo substitui o ZIP e só pega notas do cliente e da competê
 // Insere uma nota completa com XML no disco (tipo e destinatário à escolha).
 function notaComXml(amb, clienteId, i, extra = {}) {
   const [chave] = inserirNotas(amb.db, clienteId, 1, { inicio: i, status: 'completa' })
-  const rel = `teste/${chave}-nfe.xml`
+  const rel = `teste/${chave}-${extra.modelo === 'nfse' ? 'nfse' : 'nfe'}.xml`
   fs.mkdirSync(path.join(amb.pastaXmls, 'teste'), { recursive: true })
   fs.writeFileSync(path.join(amb.pastaXmls, rel), `<xml ${chave}/>`)
-  const campos = { caminho_xml: rel, tipo: 'entrada', destinatario_cnpj: null, destinatario_nome: null, cancelada: 0, ...extra }
-  amb.db.prepare('UPDATE notas SET caminho_xml=@caminho_xml, tipo=@tipo, destinatario_cnpj=@destinatario_cnpj, destinatario_nome=@destinatario_nome, cancelada=@cancelada WHERE chave=@chave')
+  const campos = { caminho_xml: rel, tipo: 'entrada', modelo: 'nfe', destinatario_cnpj: null, destinatario_nome: null, cancelada: 0, ...extra }
+  amb.db.prepare('UPDATE notas SET caminho_xml=@caminho_xml, tipo=@tipo, modelo=@modelo, destinatario_cnpj=@destinatario_cnpj, destinatario_nome=@destinatario_nome, cancelada=@cancelada WHERE chave=@chave')
     .run({ ...campos, chave })
   return chave
 }
@@ -161,22 +148,21 @@ test('ZIP separa entradas e saídas e o CSV traz tipo e destinatário', async (t
 
   const zip = lerZip(fs.readFileSync(r.arquivo))
   assert.deepEqual([...zip.keys()].sort(), [
-    `entradas/canceladas/${e2}-nfe.xml`, `entradas/xml/${e1}-nfe.xml`,
-    `saidas/canceladas/${s2}-nfe.xml`, `saidas/xml/${s1}-nfe.xml`, 'resumo.csv',
+    `NF-e/Entradas/Canceladas/${e2}-nfe.xml`, `NF-e/Entradas/${e1}-nfe.xml`,
+    `NF-e/Saidas/Canceladas/${s2}-nfe.xml`, `NF-e/Saidas/${s1}-nfe.xml`, 'notas.xlsx',
   ].sort())
 
-  const linhas = zip.get('resumo.csv').toString('utf8').slice(1).split('\r\n')
-  const l = linhas.find((x) => x.startsWith(`="${s1}"`))
-  assert.match(l, /;saida;/)
-  assert.match(l, /;="98765432000110";Comprador SA;/)
-  assert.match(linhas.find((x) => x.startsWith(`="${e1}"`)), /;entrada;/)
+  const aba = lerZip(zip.get('notas.xlsx')).get('xl/worksheets/sheet1.xml').toString()
+  const linhaDe = (chave) => [...aba.matchAll(/<row r="\d+">(.*?)<\/row>/g)].map((m) => m[1]).find((r) => r.includes(chave))
+  assert.match(linhaDe(s1), /<t>Saída<\/t>.*<t>98\.765\.432\/0001-10<\/t><\/is><\/c><c [^>]+><is><t>Comprador SA<\/t>/)
+  assert.match(linhaDe(e1), /<t>Entrada<\/t>/)
 })
 
-test('cliente só com saídas: ZIP só com saidas/', async (t) => {
+test('cliente só com saídas: ZIP só com NF-e/Saidas', async (t) => {
   const amb = ambienteVazio(t)
   const s1 = notaComXml(amb, amb.ids[0], 1, { tipo: 'saida' })
   const r = await criarServicoExportacao(amb.deps).exportar({ cnpj: CNPJ_MOCK_OK, competencia })
-  assert.deepEqual([...lerZip(fs.readFileSync(r.arquivo)).keys()].sort(), ['resumo.csv', `saidas/xml/${s1}-nfe.xml`])
+  assert.deepEqual([...lerZip(fs.readFileSync(r.arquivo)).keys()].sort(), [`NF-e/Saidas/${s1}-nfe.xml`, 'notas.xlsx'])
   assert.deepEqual(r.porTipo.entrada, { xmls: 0, canceladas: 0, semXml: 0 })
 })
 
@@ -185,4 +171,32 @@ test('recusa exportar pelo CNPJ do escritório', async (t) => {
   amb.db.prepare("INSERT INTO clientes (cnpj, razao_social, apelido, uf, papel, cert_arquivo, cert_senha_enc) VALUES ('55666777000100', 'Escritório', 'escritorio', 'CE', 'escritorio', 'x.pfx', 'a:b:c')").run()
   await assert.rejects(criarServicoExportacao(amb.deps).exportar({ cnpj: '55666777000100', competencia }),
     /CNPJ 55666777000100 é do escritório: exporte pelo CNPJ do cliente\./)
+})
+
+test('NFS-e no ZIP: NFS-e/Saidas, NFS-e/Entradas/Canceladas e aba NFS-e na planilha', async (t) => {
+  const amb = ambienteVazio(t)
+  const e1 = notaComXml(amb, amb.ids[0], 1)
+  const s1 = notaComXml(amb, amb.ids[0], 2, { modelo: 'nfse', tipo: 'saida' })
+  const e2 = notaComXml(amb, amb.ids[0], 3, { modelo: 'nfse', cancelada: 1 })
+  const r = await criarServicoExportacao(amb.deps).exportar({ cnpj: CNPJ_MOCK_OK, competencia })
+  const zip = lerZip(fs.readFileSync(r.arquivo))
+  assert.deepEqual([...zip.keys()].sort(), [`NF-e/Entradas/${e1}-nfe.xml`, `NFS-e/Entradas/Canceladas/${e2}-nfse.xml`, `NFS-e/Saidas/${s1}-nfse.xml`, 'notas.xlsx'].sort())
+  const planilha = lerZip(zip.get('notas.xlsx'))
+  assert.ok(planilha.get('xl/worksheets/sheet2.xml').toString().includes(`<t>${s1}</t>`), 'saída de NFS-e na aba NFS-e')
+  assert.ok(!planilha.get('xl/worksheets/sheet1.xml').toString().includes(`<t>${s1}</t>`), 'e não na aba NF-e')
+})
+
+test('NFS-e no ZIP leva o PDF (DANFSe) ao lado do XML; XML ilegível vira aviso', async (t) => {
+  const amb = ambienteVazio(t)
+  const boa = notaComXml(amb, amb.ids[0], 1, { modelo: 'nfse', cancelada: 1 })
+  const rel = amb.db.prepare('SELECT caminho_xml FROM notas WHERE chave = ?').get(boa).caminho_xml
+  fs.writeFileSync(path.join(amb.pastaXmls, rel), fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml')))
+  const ruim = notaComXml(amb, amb.ids[0], 2, { modelo: 'nfse' })
+  const r = await criarServicoExportacao(amb.deps).exportar({ cnpj: CNPJ_MOCK_OK, competencia })
+  const zip = lerZip(fs.readFileSync(r.arquivo))
+  assert.ok(zip.has(`NFS-e/Entradas/Canceladas/${boa}-nfse.xml`))
+  assert.ok(zip.get(`NFS-e/Entradas/Canceladas/${boa}-nfse.pdf`).subarray(0, 5).toString() === '%PDF-')
+  assert.ok(zip.has(`NFS-e/Entradas/${ruim}-nfse.xml`))
+  assert.ok(!zip.has(`NFS-e/Entradas/${ruim}-nfse.pdf`))
+  assert.ok(r.avisos.some((a) => a.includes(ruim) && /PDF/.test(a)))
 })

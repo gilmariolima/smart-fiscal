@@ -53,7 +53,7 @@ export default function Meses() {
 
   return (
     <Pagina
-      titulo="NF-es"
+      titulo="Notas"
       subtitulo="Escolha o mês."
       trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome, para: `/notas/${cnpj}` }, { rotulo: ano }]}
       erro={erro}

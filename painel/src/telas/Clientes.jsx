@@ -2,19 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import BotaoIcone from '../componentes/BotaoIcone.jsx'
 import Etiqueta from '../componentes/Etiqueta.jsx'
+import Segmentado from '../componentes/Segmentado.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useAoTerminarCaptura, useResumo } from '../layout/ResumoProvider.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
-import { explicarSefaz } from '../mensagensSefaz.js'
+import { explicarSefaz, resumoDasCapturas } from '../mensagensSefaz.js'
 import { nomeDe } from '../useCliente.js'
 import { useSelecao } from '../useSelecao.js'
 import { cnpj as formatarCnpj, data, hora, inteiro, mesAno, plural, quando } from '../formato.js'
 
 const INTERVALO_CAPTURANDO = 5000
 
-// Bloqueado pelo 656 ou desativado não entra na captura.
-const marcavel = (c) => c.ativo && !c.bloqueadoAte
+// Escolha ao lado do botão: as duas (padrão) ou só uma.
+const MODELOS_CAPTURA = {
+  nfe: { rotulo: 'NF-e', modelos: ['nfe'], aviso: 'de NF-e' },
+  nfse: { rotulo: 'NFS-e', modelos: ['nfse'], aviso: 'de NFS-e' },
+  ambos: { rotulo: 'Ambos', modelos: ['nfe', 'nfse'], aviso: 'de NF-e e NFS-e' },
+}
+
+// Desativado não entra na captura; bloqueado pelo 656 só fica de fora quando a captura inclui NF-e.
+const marcavel = (c, oQue = '') => c.ativo && (oQue === 'nfse' || !c.bloqueadoAte)
 
 function Certificado({ c }) {
   if (c.certDias === null || c.certDias === undefined) return '—'
@@ -50,6 +58,9 @@ function ResumoCaptura({ titulo, c, dica, depois }) {
   )
 }
 
+// Erro só da NFS-e: uma linha no balão, sem esconder o resultado da NF-e.
+const erroNfse = (c) => (c.nfse?.ultimoErro ? `NFS-e: ${explicarSefaz({ erro: c.nfse.ultimoErro })?.titulo || c.nfse.ultimoErro}` : null)
+
 function UltimaCaptura({ c, capturandoAgora, fila }) {
   if (capturandoAgora === c.cnpj) return <Etiqueta cor="ambar">Capturando…</Etiqueta>
   if (fila.includes(c.cnpj)) return <Etiqueta cor="cinza">Na fila</Etiqueta>
@@ -59,37 +70,29 @@ function UltimaCaptura({ c, capturandoAgora, fila }) {
       <Etiqueta
         cor="vermelha"
         titulo={
-          <ResumoCaptura
-            titulo={explicacao?.titulo || 'Bloqueio temporário da SEFAZ (656)'}
-            c={c}
-            dica={explicacao?.dica || 'A SEFAZ pediu 1 hora sem consultas deste CNPJ. Nenhuma nota se perde.'}
-            depois={`Liberado ${quando(c.bloqueadoAte)}. Até lá, este cliente fica fora das capturas.`}
-          />
+          <>
+            <strong>{explicacao?.titulo || 'Bloqueio temporário da SEFAZ (656)'}</strong>
+            <span>Liberado {quando(c.bloqueadoAte)}. Nenhuma nota se perde.</span>
+          </>
         }
       >
         Bloqueado até {hora(c.bloqueadoAte)} (656)
       </Etiqueta>
     )
-  // Toda captura que esvazia a fila da SEFAZ termina com 1 h de espera; o resultado dela fica na linha de baixo.
-  if (c.proximaConsulta)
+  // Toda captura que esvazia a fila da SEFAZ termina com 1 h de espera: é o normal, não um problema.
+  if (c.proximaConsulta) {
+    const r = resumoDasCapturas(c.ultimoRecebido, c.nfse?.ultimoRecebido)
     return (
       <>
-        <Etiqueta
-          cor="ambar"
-          titulo={
-            <ResumoCaptura
-              titulo="Sem documentos novos"
-              c={c}
-              dica="Normal. A SEFAZ pede 1 hora até a próxima consulta deste CNPJ."
-              depois={`Próxima consulta liberada ${quando(c.proximaConsulta)}.`}
-            />
-          }
-        >
-          Aguardando SEFAZ até {hora(c.proximaConsulta)}
+        <Etiqueta cor={r.cor} titulo={<ResumoCaptura titulo={r.titulo} c={c} dica={r.linha} depois={erroNfse(c)} />}>
+          {r.titulo}
         </Etiqueta>
-        {c.ultimaConsulta && !c.ultimoErro && <span className="secundario">Sucesso {quando(c.ultimaConsulta)}</span>}
+        <span className="secundario">
+          Consulta {quando(c.ultimaConsulta)} · próxima às {hora(c.proximaConsulta)}
+        </span>
       </>
     )
+  }
   if (c.ultimoErro && explicacao)
     return (
       <Etiqueta cor={explicacao.cor} titulo={<ResumoCaptura titulo={explicacao.titulo} c={c} dica={explicacao.dica} />}>
@@ -102,6 +105,17 @@ function UltimaCaptura({ c, capturandoAgora, fila }) {
         <Etiqueta cor="vermelha">Erro</Etiqueta> {c.ultimoErro}
       </span>
     )
+  if (c.ultimaConsulta && c.ultimoRecebido) {
+    const r = resumoDasCapturas(c.ultimoRecebido, c.nfse?.ultimoRecebido)
+    return (
+      <>
+        <Etiqueta cor={r.cor} titulo={<ResumoCaptura titulo={r.titulo} c={c} dica={r.linha} depois={erroNfse(c)} />}>
+          {r.titulo}
+        </Etiqueta>
+        <span className="secundario">Consulta {quando(c.ultimaConsulta)}</span>
+      </>
+    )
+  }
   if (c.ultimaConsulta)
     return (
       <span className="sem-quebra">
@@ -197,6 +211,8 @@ export default function Clientes() {
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
   const [ocupado, setOcupado] = useState(null)
+  const [oQue, setOQue] = useState('ambos')
+  const [busca, setBusca] = useState('')
 
   useAoTerminarCaptura(() => {
     recarregar()
@@ -229,7 +245,14 @@ export default function Clientes() {
 
   // Ativos na ordem do servidor; desativados no fim.
   const ordenados = [...lista.filter((c) => c.ativo), ...lista.filter((c) => !c.ativo)]
-  const marcados = lista.filter((c) => marcavel(c) && selecao.ids.has(c.cnpj)).map((c) => c.cnpj)
+  // Busca por nome, razão social ou CNPJ (com ou sem pontuação).
+  const termo = busca.trim().toLowerCase()
+  const digitos = termo.replace(/D/g, '')
+  const visiveis = ordenados.filter(
+    (c) => !termo || nomeDe(c).toLowerCase().includes(termo) || (c.razaoSocial || '').toLowerCase().includes(termo) || (digitos && c.cnpj.includes(digitos)),
+  )
+  const podeMarcar = (c) => marcavel(c, oQue)
+  const marcados = lista.filter((c) => podeMarcar(c) && selecao.ids.has(c.cnpj)).map((c) => c.cnpj)
 
   async function executar(nome, fn) {
     setOcupado(nome)
@@ -244,11 +267,26 @@ export default function Clientes() {
     }
   }
 
+  // Hora em que o cliente volta a ser consultado nos modelos escolhidos (null = já pode).
+  // Cada serviço pede 1 hora entre consultas do mesmo CNPJ; a captura pula quem ainda está esperando.
+  const liberadoEm = (c) => {
+    const esperas = MODELOS_CAPTURA[oQue].modelos.map((m) => (m === 'nfse' ? c.nfse?.proximaConsulta : c.proximaConsulta || c.bloqueadoAte))
+    return esperas.every(Boolean) ? esperas.sort().at(0) : null
+  }
+
   const capturar = () =>
     executar('capturar', async () => {
+      const marcadosLista = lista.filter((c) => marcados.includes(c.cnpj))
+      const esperando = marcadosLista.filter(liberadoEm)
+      if (esperando.length === marcadosLista.length) {
+        const primeiro = esperando.map(liberadoEm).sort()[0]
+        setAviso(`Nada para consultar agora: ${esperando.length === 1 ? 'o cliente marcado foi consultado' : 'os clientes marcados foram consultados'} há menos de 1 hora. Libera às ${hora(primeiro)}.`)
+        return
+      }
       try {
-        await api.post('/api/captura', { cnpjs: marcados })
-        setAviso(`Captura de ${plural(marcados.length, 'cliente', 'clientes')} iniciada. Acompanhe na coluna Última captura.`)
+        await api.post('/api/captura', { cnpjs: marcados, modelos: MODELOS_CAPTURA[oQue].modelos })
+        const pulados = esperando.length ? ` ${plural(esperando.length, 'cliente consultado', 'clientes consultados')} há menos de 1 hora fica${esperando.length === 1 ? '' : 'm'} para depois.` : ''
+        setAviso(`Captura ${MODELOS_CAPTURA[oQue].aviso} de ${plural(marcados.length - esperando.length, 'cliente', 'clientes')} iniciada.${pulados} Acompanhe na coluna Última captura.`)
       } finally {
         recarregarResumo()
         recarregar()
@@ -286,6 +324,7 @@ export default function Clientes() {
         )}
       </p>
     )
+  else if (!visiveis.length) conteudo = <p className="vazio">Nenhum cliente encontrado para essa busca.</p>
   else
     conteudo = (
       <div className="tabela-moldura">
@@ -306,8 +345,8 @@ export default function Clientes() {
             </tr>
           </thead>
           <tbody>
-            {ordenados.map((c) => {
-              const marcado = marcavel(c) && selecao.ids.has(c.cnpj)
+            {visiveis.map((c) => {
+              const marcado = podeMarcar(c) && selecao.ids.has(c.cnpj)
               return (
                 <tr key={c.cnpj} className={!c.ativo ? 'inativo' : marcado ? 'selecionada' : undefined}>
                   <td className="marcar">
@@ -315,9 +354,9 @@ export default function Clientes() {
                       <input
                         type="checkbox"
                         aria-label={`Capturar ${nomeDe(c)}`}
-                        title={c.bloqueadoAte ? `Bloqueado pela SEFAZ até ${hora(c.bloqueadoAte)} (656)` : undefined}
+                        title={c.bloqueadoAte && !podeMarcar(c) ? `NF-e bloqueada pela SEFAZ até ${hora(c.bloqueadoAte)} (656). Dá para capturar só NFS-e.` : undefined}
                         checked={marcado}
-                        disabled={!!c.bloqueadoAte}
+                        disabled={!podeMarcar(c)}
                         onChange={() => selecao.alternar(c.cnpj)}
                       />
                     )}
@@ -346,7 +385,7 @@ export default function Clientes() {
       </div>
     )
 
-  const algumMarcavel = lista.some(marcavel)
+  const algumMarcavel = lista.some(podeMarcar)
 
   return (
     <Pagina
@@ -369,7 +408,7 @@ export default function Clientes() {
             <button
               type="button"
               className="botao botao-claro"
-              onClick={() => selecao.marcar(lista.filter(marcavel).map((c) => c.cnpj))}
+              onClick={() => selecao.marcar(visiveis.filter(podeMarcar).map((c) => c.cnpj))}
               disabled={!algumMarcavel}
             >
               Marcar todos
@@ -378,9 +417,28 @@ export default function Clientes() {
               Desmarcar todos
             </button>
           </div>
+          <Segmentado
+            rotulo="O que capturar"
+            valor={oQue}
+            onChange={setOQue}
+            opcoes={Object.entries(MODELOS_CAPTURA).map(([valor, m]) => ({ valor, rotulo: m.rotulo }))}
+          />
           <button type="button" className="botao botao-verde" onClick={capturar} disabled={!marcados.length || capturando || !!ocupado}>
             {capturando || ocupado === 'capturar' ? 'Capturando…' : `⟳ Capturar selecionados (${inteiro(marcados.length)})`}
           </button>
+        </div>
+      )}
+      {!!lista.length && (
+        <div className="busca">
+          <label htmlFor="busca-clientes">Buscar cliente</label>
+          <input
+            id="busca-clientes"
+            type="search"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Nome ou CNPJ"
+            autoComplete="off"
+          />
         </div>
       )}
       {conteudo}

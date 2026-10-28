@@ -15,7 +15,11 @@ CREATE TABLE IF NOT EXISTS clientes (
   ultima_consulta TEXT,
   ultimo_erro TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now')),
-  papel TEXT NOT NULL DEFAULT 'cliente'  -- cliente | escritorio (no máximo um)
+  papel TEXT NOT NULL DEFAULT 'cliente', -- cliente | escritorio (no máximo um)
+  nfse_ult_nsu TEXT NOT NULL DEFAULT '0', -- NSU do ADN (NFS-e), separado do da NF-e
+  nfse_proxima_consulta TEXT,
+  nfse_ultima_consulta TEXT,
+  nfse_ultimo_erro TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_um_escritorio ON clientes(papel) WHERE papel = 'escritorio';
 
@@ -24,6 +28,7 @@ CREATE TABLE IF NOT EXISTS notas (
   cliente_id INTEGER NOT NULL REFERENCES clientes(id),
   chave TEXT NOT NULL,
   tipo TEXT NOT NULL DEFAULT 'entrada', -- entrada | saida
+  modelo TEXT NOT NULL DEFAULT 'nfe',   -- nfe | nfse
   nsu TEXT,
   emitente_cnpj TEXT,
   emitente_nome TEXT,
@@ -74,6 +79,8 @@ CREATE TABLE IF NOT EXISTS execucoes (
   c_stat TEXT,
   x_motivo TEXT,
   docs_recebidos INTEGER DEFAULT 0,
+  notas_recebidas INTEGER,           -- captura: resNFe + procNFe do lote (NULL nas execuções antigas)
+  eventos_recebidos INTEGER,         -- captura: ciência, cancelamento, CC-e etc. de notas já emitidas
   erro TEXT
 );
 

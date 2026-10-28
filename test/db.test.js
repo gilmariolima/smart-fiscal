@@ -93,6 +93,26 @@ test('migrations rodam duas vezes no mesmo arquivo sem erro', () => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+test('banco antigo ganha modelo e colunas da NFS-e', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-db-'))
+  const arq = path.join(dir, 'nfe.db')
+  const antigo = new Database(arq)
+  antigo.exec(DDL_V0)
+  const id = novoCliente(antigo)
+  antigo.prepare("INSERT INTO notas (cliente_id, chave, status) VALUES (?, ?, 'completa')").run(id, '4'.repeat(44))
+  antigo.close()
+
+  abrirBanco(arq).close()
+  const db = abrirBanco(arq)
+  assert.equal(db.prepare('SELECT modelo FROM notas').get().modelo, 'nfe')
+  const c = db.prepare('SELECT nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro FROM clientes').get()
+  assert.deepEqual(c, { nfse_ult_nsu: '0', nfse_proxima_consulta: null, nfse_ultima_consulta: null, nfse_ultimo_erro: null })
+  const indices = db.prepare("SELECT name FROM pragma_index_list('notas')").all().map((i) => i.name)
+  assert.ok(indices.includes('idx_notas_cliente_modelo_comp'))
+  db.close()
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test('chave da nota é única por cliente', () => {
   const db = abrirBanco(':memory:')
   const id = novoCliente(db)

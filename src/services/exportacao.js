@@ -2,12 +2,14 @@
 
 // Pacote por cliente + competência para importar no Domínio e no Fortes:
 //   exports/<CNPJ>_<apelido>_<AAAA-MM>.zip
-//   ├─ entradas/xml/<chave>-nfe.xml         notas recebidas, completas e não canceladas
-//   ├─ entradas/canceladas/<chave>-nfe.xml  notas recebidas, completas e canceladas
-//   ├─ saidas/xml/<chave>-nfe.xml           notas emitidas pelo cliente (autXML), não canceladas
-//   ├─ saidas/canceladas/<chave>-nfe.xml    notas emitidas pelo cliente, canceladas
-//   └─ resumo.csv                           todas as notas da competência, inclusive as sem XML completo
-//                                           (pastas só existem quando têm notas)
+//   ├─ NF-e/Entradas/<chave>-nfe.xml               notas recebidas, completas e não canceladas
+//   ├─ NF-e/Entradas/Canceladas/<chave>-nfe.xml    notas recebidas, completas e canceladas
+//   ├─ NF-e/Saidas/...                             notas emitidas pelo cliente (autXML), idem
+//   ├─ NFS-e/Entradas/<chave>-nfse.xml             serviços tomados (e Canceladas/)
+//   ├─ NFS-e/Saidas/<chave>-nfse.xml               serviços prestados (e Canceladas/)
+//   └─ notas.xlsx                                  abas NF-e, NFS-e e Retenções com todas as notas da competência,
+//                                                  inclusive as sem XML completo
+//                                                  (pastas só existem quando têm notas)
 //
 // O layout de importação do Domínio e do Fortes ainda precisa ser confirmado com o escritório:
 // toda a montagem do pacote fica neste arquivo, para ajustar sem mexer no resto.
@@ -15,54 +17,10 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const archiver = require('archiver')
-const { criarArmazenamento, pastaDoCliente, nomes } = require('./armazenamento')
+const { criarArmazenamento, pastaDoCliente, pastaNoZip, nomeNoZip } = require('./armazenamento')
 const { somenteDigitos } = require('./clientes')
-
-const COLUNAS_CSV = ['chave', 'tipo', 'numero', 'serie', 'data_emissao', 'emitente_cnpj', 'emitente_nome', 'destinatario_cnpj', 'destinatario_nome', 'valor_total', 'status', 'cancelada']
-
-// ---------- CSV (Excel brasileiro: ';', vírgula decimal, UTF-8 com BOM) ----------
-
-function celula(valor) {
-  let s = valor === null || valor === undefined ? '' : String(valor)
-  // Texto vindo de terceiros (nome do emitente) não pode virar fórmula no Excel.
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
-  return /[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
-
-// Números longos (chave, CNPJ) como texto: sem isso o Excel mostra 2,33E+43 e perde zeros à esquerda.
-// Só dígitos entram na fórmula ="...": o valor vem do XML de terceiros.
-const comoTexto = (s) => {
-  const d = String(s ?? '').replace(/\D/g, '')
-  return d ? `="${d}"` : ''
-}
-
-function dataBr(iso) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '')
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
-}
-
-const valorBr = (v) => (v === null || v === undefined ? '' : Number(v).toFixed(2).replace('.', ','))
-
-function linhaCsv(n) {
-  return [
-    comoTexto(n.chave),
-    celula(n.tipo),
-    celula(n.numero),
-    celula(n.serie),
-    dataBr(n.data_emissao),
-    comoTexto(n.emitente_cnpj),
-    celula(n.emitente_nome),
-    comoTexto(n.destinatario_cnpj),
-    celula(n.destinatario_nome),
-    valorBr(n.valor_total),
-    celula(n.status),
-    n.cancelada ? 'sim' : 'não',
-  ].join(';')
-}
-
-function montarCsv(notas) {
-  return '﻿' + [COLUNAS_CSV.join(';'), ...notas.map(linhaCsv)].join('\r\n') + '\r\n'
-}
+const { montarPlanilhaDoMes } = require('./planilhaMes')
+const { gerarDanfse, situacaoDanfse } = require('./danfse/gerar')
 
 // ---------- ZIP ----------
 
@@ -104,6 +62,7 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
     notas: db.prepare(`SELECT * FROM notas WHERE cliente_id = ? AND competencia = ?
       ORDER BY data_emissao, emitente_cnpj, CAST(numero AS INTEGER)`),
     marcar: db.prepare('UPDATE notas SET exportada_em = ? WHERE id = ?'),
+    tiposEvento: db.prepare('SELECT tp_evento FROM eventos WHERE chave = ?'),
     iniciarExecucao: db.prepare(`INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'exportacao', ?)`),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, docs_recebidos = @docs, erro = @erro, x_motivo = @x_motivo WHERE id = @id`),
   }
@@ -135,12 +94,22 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
           avisos.push(`XML da nota ${n.chave} não encontrado em ${caminho}.`)
           continue
         }
-        const pasta = `${tipo === 'saida' ? 'saidas' : 'entradas'}/${n.cancelada ? 'canceladas' : 'xml'}`
         porTipo[tipo][n.cancelada ? 'canceladas' : 'xmls']++
-        arquivos.push({ nome: `${pasta}/${nomes.nfe(n.chave)}`, conteudo: fs.readFileSync(caminho), data: agora() })
+        const xml = fs.readFileSync(caminho)
+        arquivos.push({ nome: `${pastaNoZip(n)}/${nomeNoZip(n)}`, conteudo: xml, data: agora() })
+        // NFS-e: o DANFSe (PDF) vai junto, gerado do XML (a API oficial de geração foi desligada em 2026).
+        if (n.modelo === 'nfse') {
+          try {
+            const pdf = await gerarDanfse(xml.toString('utf8'), { situacao: situacaoDanfse(n, sql.tiposEvento.all(n.chave).map((e) => e.tp_evento)) })
+            arquivos.push({ nome: `${pastaNoZip(n)}/${nomeNoZip(n).replace(/.xml$/, '.pdf')}`, conteudo: pdf, data: agora() })
+          } catch (e) {
+            avisos.push(`PDF da NFS-e ${n.chave} não gerado: ${e.message}`)
+          }
+        }
         incluidas.push(n)
       }
-      arquivos.push({ nome: 'resumo.csv', conteudo: Buffer.from(montarCsv(notas), 'utf8'), data: agora() })
+      const lerXml = (n) => (n.caminho_xml && fs.existsSync(armazenamento.absoluto(n.caminho_xml)) ? fs.readFileSync(armazenamento.absoluto(n.caminho_xml), 'utf8') : null)
+      arquivos.push({ nome: 'notas.xlsx', conteudo: await montarPlanilhaDoMes({ notas, lerXml }), data: agora() })
 
       fs.mkdirSync(config.pastaExports, { recursive: true })
       const nome = `${pastaDoCliente(cliente)}_${competencia}.zip`
@@ -159,14 +128,14 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
         bytes,
         xmls: soma('xmls'),
         canceladas: soma('canceladas'),
-        // Mesma regra do `status`: nota cancelada não precisa de XML (mas aparece no CSV).
+        // Mesma regra do `status`: nota cancelada não precisa de XML (mas aparece na planilha).
         semXml: soma('semXml'),
         totalNotas: notas.length,
         avisos,
         porTipo,
       }
       for (const a of avisos) logger.warn(a, { cnpj: cliente.cnpj })
-      sql.fecharExecucao.run({ id: execId, fim: iso(), docs: incluidas.length, erro: null, x_motivo: `${nome} (${notas.length} notas no CSV)` })
+      sql.fecharExecucao.run({ id: execId, fim: iso(), docs: incluidas.length, erro: null, x_motivo: `${nome} (${notas.length} notas na planilha)` })
       logger.info('Exportação gerada', { cnpj: cliente.cnpj, competencia, arquivo: nome, xmls: resultado.xmls, canceladas: resultado.canceladas, semXml: resultado.semXml })
       return resultado
     } catch (e) {
@@ -179,4 +148,4 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
   return { exportar }
 }
 
-module.exports = { criarServicoExportacao, montarCsv, COLUNAS_CSV }
+module.exports = { criarServicoExportacao }

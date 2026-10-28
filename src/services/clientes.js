@@ -10,7 +10,8 @@ const DIAS_ALERTA_CERT = 30
 
 // Colunas seguras para exibir: nunca inclui cert_senha_enc.
 const COLUNAS_PUBLICAS = `id, cnpj, razao_social, apelido, uf, cert_arquivo, cert_validade, ativo, papel, ult_nsu, max_nsu,
-  proxima_consulta, bloqueado_ate, ultima_consulta, ultimo_erro, criado_em`
+  proxima_consulta, bloqueado_ate, ultima_consulta, ultimo_erro, criado_em,
+  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro`
 
 function somenteDigitos(v) {
   return String(v || '').replace(/\D/g, '')

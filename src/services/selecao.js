@@ -5,7 +5,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { criarArmazenamento, pastaDoCliente, nomes } = require('./armazenamento')
+const { criarArmazenamento, pastaDoCliente, pastaNoZip, nomeNoZip } = require('./armazenamento')
 
 const LIMITE_NOTAS = 2000
 
@@ -44,12 +44,12 @@ function criarServicoSelecao({ db, config, agora = () => new Date() }) {
         avisos.push(`Nota ${n.chave}: XML não encontrado no disco.`)
         continue
       }
-      const pasta = n.cancelada ? 'canceladas' : n.tipo === 'saida' ? 'saidas' : 'entradas'
-      arquivos.push({ nome: `${pasta}/${nomes.nfe(n.chave)}`, caminho: origem })
+      const pasta = pastaNoZip(n)
+      arquivos.push({ nome: `${pasta}/${nomeNoZip(n)}`, caminho: origem })
       if (!n.cancelada) continue
       for (const e of evento.all(n.chave)) {
         const arquivoEvento = armazenamento.absoluto(e.caminho_xml)
-        if (fs.existsSync(arquivoEvento)) arquivos.push({ nome: `canceladas/${path.basename(e.caminho_xml)}`, caminho: arquivoEvento })
+        if (fs.existsSync(arquivoEvento)) arquivos.push({ nome: `${pasta}/${path.basename(e.caminho_xml)}`, caminho: arquivoEvento })
       }
     }
     if (!arquivos.length) throw erro(409, 'Nenhuma das notas marcadas tem XML completo.')

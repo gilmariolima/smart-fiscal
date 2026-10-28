@@ -82,7 +82,7 @@ export default function NotasRaiz() {
     )
 
   return (
-    <Pagina titulo="NF-es" subtitulo="Escolha o cliente." erro={erro}>
+    <Pagina titulo="Notas" subtitulo="Escolha o cliente." erro={erro}>
       {conteudo}
     </Pagina>
   )

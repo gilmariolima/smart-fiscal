@@ -4,6 +4,7 @@
 // Campo ausente vira null; XML que não é NF-e devolve null. Nada aqui lança exceção.
 const { xmlParaJson } = require('../sefaz/xml')
 const { texto, pegar } = require('./extracao')
+const { dadosNfse } = require('./extracaoNfse')
 
 const MODALIDADES_FRETE = {
   0: 'Por conta do emitente',
@@ -129,4 +130,26 @@ function detalharNfe(xml) {
   }
 }
 
-module.exports = { detalharNfe }
+/** Blocos da tela "Ver nota" para uma NFS-e Nacional. XML que não é NFS-e devolve null. */
+function detalharNfse(xml) {
+  let d
+  try {
+    d = dadosNfse(xml)
+  } catch {
+    return null
+  }
+  if (!d.chave) return null
+  return {
+    numero: d.numero,
+    competencia: d.competencia,
+    dataEmissao: d.dataEmissao,
+    municipio: d.municipio,
+    prestador: { cnpj: d.prestadorCnpj, nome: d.prestadorNome },
+    tomador: { cnpj: d.tomadorCnpj, nome: d.tomadorNome },
+    intermediario: d.intermediarioCnpj,
+    valor: d.valor,
+    descricaoServico: d.descricaoServico,
+  }
+}
+
+module.exports = { detalharNfe, detalharNfse }

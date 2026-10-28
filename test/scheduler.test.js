@@ -225,7 +225,8 @@ test('processo real: servidor roda o primeiro ciclo e continua no ar', async (t)
   assert.equal(filho.exitCode, null, 'continua rodando depois do ciclo')
 
   const db = abrirBanco(path.join(base, 'data', 'nfe.db'))
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE status = 'completa'").get().n, 2)
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfe' AND status = 'completa'").get().n, 2)
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfse'").get().n, 3, 'o ciclo do servidor também traz as NFS-e')
   db.close()
 })
 

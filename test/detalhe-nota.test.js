@@ -103,3 +103,16 @@ test('XML que não é NF-e devolve null', () => {
   assert.equal(detalharNfe(''), null)
   assert.equal(detalharNfe('lixo <<<'), null)
 })
+
+test('detalharNfse com o XML de Fortaleza', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const { detalharNfse } = require('../src/services/detalheNota')
+  const d = detalharNfse(fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml'), 'utf8'))
+  assert.deepEqual(d.prestador, { cnpj: '99888777000166', nome: 'TESTE XNOME' })
+  assert.equal(d.tomador.cnpj, '11222333000181')
+  assert.equal(d.valor, 150)
+  assert.equal(d.numero, '17763')
+  assert.equal(d.competencia, '2026-01')
+  assert.equal(detalharNfse('<lixo'), null)
+})

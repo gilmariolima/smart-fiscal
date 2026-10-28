@@ -17,10 +17,11 @@ const { gerarPfx } = require('./apoio/certificado')
 const { silencioso, inserirNotas } = require('./apoio/ambiente')
 const { lerZip } = require('./apoio/zip')
 
+const { criarAdnMock } = require('../src/sefaz/adn-mock')
 const cert1 = gerarPfx({ cnpj: CNPJ_MOCK_OK })
 const cert2 = gerarPfx({ cnpj: CNPJ_MOCK_656 })
 
-async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPainel, atualizacao } = {}) {
+async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPainel, atualizacao, adn = criarAdnMock({ documentos: {} }) } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-web-'))
   if (!pastaPainel) {
     pastaPainel = path.join(base, 'painel')
@@ -42,7 +43,7 @@ async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPaine
     if (!atrasoSefazMs) return real
     return { ...real, consultaUltNSU: async (n) => (await new Promise((r) => setTimeout(r, atrasoSefazMs)), real.consultaUltNSU(n)) }
   }
-  const ctx = criarContexto({ config: carregarConfig(env), logger: silencioso, db: abrirBanco(':memory:'), fabricaSefaz })
+  const ctx = criarContexto({ config: carregarConfig(env), logger: silencioso, db: abrirBanco(':memory:'), fabricaSefaz, fabricaAdn: (c) => adn.cliente(c.cnpj) })
   ctx.clientes.cadastrar({ cnpj: CNPJ_MOCK_OK, razao: 'Comercial Exemplo Ltda', uf: 'CE', apelido: 'Exemplo', pfx: cert1.pfx, senha: cert1.senha })
   ctx.clientes.cadastrar({ cnpj: CNPJ_MOCK_656, razao: 'Loja Bloqueada Ltda', uf: 'CE', pfx: cert2.pfx, senha: cert2.senha })
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config: ctx.config, logger: silencioso, automacao: ctx.automacao, atrasoInicialMs: false })
@@ -63,7 +64,7 @@ async function montar(t, envExtra = {}, { atrasoSefazMs = 0, ehLocal, pastaPaine
     const tipo = r.headers.get('content-type') || ''
     return { status: r.status, headers: r.headers, corpo: tipo.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) }
   }
-  return { ctx, agendador, url, pedir, mock, senhas: [cert1.senha, cert2.senha] }
+  return { ctx, agendador, url, pedir, mock, adn, senhas: [cert1.senha, cert2.senha] }
 }
 
 // Pedido com Host forjado (fetch não deixa trocar o Host).
@@ -355,7 +356,7 @@ test('exportar pelo painel e baixar o ZIP; nome de arquivo forjado é recusado',
   const zip = await pedir(r.corpo.url)
   assert.equal(zip.status, 200)
   assert.equal(zip.headers.get('content-type'), 'application/zip')
-  assert.ok(lerZip(zip.corpo).has('resumo.csv'))
+  assert.ok(lerZip(zip.corpo).has('notas.xlsx'))
 
   assert.equal((await pedir('/api/exportacoes/..%2F..%2Fdata%2Fnfe.db')).status, 404)
   assert.equal((await pedir(`/api/exportacoes/${CNPJ_MOCK_OK}_x_2020-01.zip`)).status, 404)
@@ -834,12 +835,12 @@ test('ZIP das selecionadas: pastas por tipo, canceladas com o evento e avisos', 
   const zip = lerZip(r.corpo)
   assert.deepEqual([...zip.keys()].sort(), [
     'avisos.txt',
-    `canceladas/${c3}-evento-110111-1.xml`,
-    `canceladas/${c3}-nfe.xml`,
-    `entradas/${c1}-nfe.xml`,
-    `saidas/${c2}-nfe.xml`,
+    `NF-e/Entradas/Canceladas/${c3}-evento-110111-1.xml`,
+    `NF-e/Entradas/Canceladas/${c3}-nfe.xml`,
+    `NF-e/Entradas/${c1}-nfe.xml`,
+    `NF-e/Saidas/${c2}-nfe.xml`,
   ].sort())
-  assert.equal(zip.get(`entradas/${c1}-nfe.xml`).toString(), '<nfe>1</nfe>')
+  assert.equal(zip.get(`NF-e/Entradas/${c1}-nfe.xml`).toString(), '<nfe>1</nfe>')
   const avisos = zip.get('avisos.txt').toString()
   assert.ok(avisos.includes(`Nota ${c4}: sem XML completo.`))
   assert.ok(avisos.includes(`Nota ${c5}: XML não encontrado no disco.`))
@@ -858,7 +859,7 @@ test('ZIP: sem avisos não leva avisos.txt; cliente sem apelido usa a razão soc
   const r = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [n] } })
   assert.equal(r.status, 200)
   assert.match(r.headers.get('content-disposition'), /99888777000100_Loja_Bloqueada_Ltda_selecionadas_/)
-  assert.deepEqual([...lerZip(r.corpo).keys()], [`entradas/${c}-nfe.xml`])
+  assert.deepEqual([...lerZip(r.corpo).keys()], [`NF-e/Entradas/${c}-nfe.xml`])
 })
 
 test('ZIP: ids vazios, > 2.000 ou não inteiros → 400; id inexistente → 404; dois clientes → 400; nenhuma com XML → 409', async (t) => {
@@ -917,4 +918,99 @@ test('XML + eventos: nota sem XML → 404; id inválido → 404', async (t) => {
   assert.equal(r.status, 404)
   assert.match(r.corpo.erro, /ainda não tem o XML completo/)
   assert.equal((await pedir('/api/notas/abc/xml-eventos')).status, 404)
+})
+
+test('clientes: resultado da última captura de NFS-e e erro dela', async (t) => {
+  const adn = criarAdnMock()
+  adn.falhar(CNPJ_MOCK_656, 'HTTP 403')
+  const { ctx, pedir } = await montar(t, {}, { adn })
+  await ctx.ciclo.executarCiclo()
+  const clientes = (await pedir('/api/clientes')).corpo.clientes
+  const ok = clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
+  assert.deepEqual(ok.nfse.ultimoRecebido, { notas: 3, eventos: 1, docs: 4 })
+  assert.equal(ok.nfse.ultimoErro, null)
+  assert.ok(ok.nfse.proximaConsulta)
+  assert.ok(ok.nfse.ultimaConsulta)
+  const erro = clientes.find((c) => c.cnpj === CNPJ_MOCK_656)
+  assert.equal(erro.nfse.ultimoErro, 'HTTP 403')
+  assert.equal(erro.nfse.ultimoRecebido, null)
+  assert.ok(ok.ultimoRecebido === null || ok.ultimoRecebido.cStat !== 'DOCUMENTOS_LOCALIZADOS', 'NF-e não mistura com NFS-e')
+})
+
+test('notas: filtro por modelo e contagens cruzadas com o tipo', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  await ctx.ciclo.executarCiclo()
+  const todas = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}`)).corpo
+  const nfe = todas.contagemModelo.nfe
+  assert.ok(nfe > 0)
+  assert.equal(todas.contagemModelo.nfse, 3)
+  const so = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse`)).corpo
+  assert.equal(so.total, 3)
+  assert.ok(so.notas.every((n) => n.modelo === 'nfse'))
+  assert.deepEqual(so.contagemTipo, { entradas: 2, saidas: 1 }, 'contagem por tipo segue o modelo escolhido')
+  const saidas = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&tipo=saida`)).corpo
+  assert.equal(saidas.contagemModelo.nfse, 1, 'contagem por modelo segue o tipo escolhido')
+  assert.equal((await pedir('/api/notas?modelo=x')).status, 400)
+})
+
+test('detalhe da NFS-e: prestador, tomador, município e valor', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  await ctx.ciclo.executarCiclo()
+  const id = ctx.db.prepare("SELECT id FROM notas WHERE modelo = 'nfse' AND tipo = 'saida'").get().id
+  const r = (await pedir(`/api/notas/${id}/detalhe`)).corpo
+  assert.equal(r.nfe, null)
+  assert.equal(r.erroXml, null)
+  assert.equal(r.nota.modelo, 'nfse')
+  assert.deepEqual(r.nfse.prestador, { cnpj: CNPJ_MOCK_OK, nome: `PRESTADOR ${CNPJ_MOCK_OK}` })
+  assert.equal(r.nfse.tomador.cnpj, '99888777000166')
+  assert.equal(r.nfse.valor, 1000)
+  assert.equal(r.nfse.competencia, '2026-10')
+  assert.equal(r.nfse.municipio, 'FORTALEZA')
+  assert.equal(r.nfse.descricaoServico, 'Serviço de teste')
+})
+
+test('captura com modelos: só NFS-e repassa ao ciclo; valor inválido → 400', async (t) => {
+  const { ctx, pedir, mock } = await montar(t, {}, { adn: criarAdnMock() })
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [CNPJ_MOCK_OK], modelos: ['xml'] } })).status, 400)
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [CNPJ_MOCK_OK], modelos: [] } })).status, 400)
+  const r = await pedir('/api/captura', { method: 'POST', body: { cnpjs: [CNPJ_MOCK_OK], modelos: ['nfse'] } })
+  assert.equal(r.status, 202)
+  for (let i = 0; i < 50 && ctx.db.prepare("SELECT COUNT(*) n FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL").get().n === 0; i++) await new Promise((ok) => setTimeout(ok, 20))
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM execucoes WHERE tipo = 'captura_nfse'").get().n, 1)
+  assert.equal(mock.chamadas.length, 0, 'nada de NF-e')
+})
+
+test('notas: somenteContagem devolve só as contagens', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  await ctx.ciclo.executarCiclo()
+  const r = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse&somenteContagem=1`)).corpo
+  assert.deepEqual(r, { contagemTipo: { entradas: 2, saidas: 1 }, contagemModelo: r.contagemModelo })
+  assert.equal(r.contagemModelo.nfse, 3)
+})
+
+test('planilha do mês: baixa o notas.xlsx sem marcar nada como exportado', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  await ctx.ciclo.executarCiclo()
+  const competencia = ctx.db.prepare("SELECT competencia FROM notas WHERE modelo = 'nfse' LIMIT 1").get().competencia
+  const r = await pedir(`/api/planilha?cnpj=${CNPJ_MOCK_OK}&competencia=${competencia}`)
+  assert.equal(r.status, 200)
+  assert.equal(r.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  assert.match(r.headers.get('content-disposition'), new RegExp(`attachment; filename="?${CNPJ_MOCK_OK}_Exemplo_${competencia}\.xlsx"?`))
+  assert.ok(lerZip(r.corpo).has('xl/worksheets/sheet3.xml'))
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) n FROM notas WHERE exportada_em IS NOT NULL').get().n, 0)
+  assert.equal((await pedir(`/api/planilha?cnpj=${CNPJ_MOCK_OK}&competencia=10-2026`)).status, 400)
+  assert.equal((await pedir('/api/planilha?cnpj=00000000000000&competencia=2026-10')).status, 404)
+})
+
+test('PDF da NFS-e: gera o DANFSe na hora; NF-e não tem', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  await ctx.ciclo.executarCiclo()
+  const nfse = ctx.db.prepare("SELECT id, chave FROM notas WHERE modelo = 'nfse' LIMIT 1").get()
+  const r = await pedir(`/api/notas/${nfse.id}/pdf`)
+  assert.equal(r.status, 200)
+  assert.equal(r.headers.get('content-type'), 'application/pdf')
+  assert.match(r.headers.get('content-disposition'), new RegExp(`${nfse.chave}-nfse\.pdf`))
+  assert.equal(r.corpo.subarray(0, 5).toString(), '%PDF-')
+  const nfe = ctx.db.prepare("SELECT id FROM notas WHERE modelo = 'nfe' LIMIT 1").get()
+  assert.equal((await pedir(`/api/notas/${nfe.id}/pdf`)).status, 404)
 })

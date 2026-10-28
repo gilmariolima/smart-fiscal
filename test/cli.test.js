@@ -13,6 +13,7 @@ const { carregarConfig } = require('../src/config')
 const { abrirBanco } = require('../src/db')
 const { criarSefazMock, CNPJ_MOCK_OK } = require('../src/sefaz/mock-client')
 const { gerarPfx } = require('./apoio/certificado')
+const { criarAdnMock } = require('../src/sefaz/adn-mock')
 const { silencioso } = require('./apoio/ambiente')
 
 const RAIZ = path.resolve(__dirname, '..')
@@ -39,7 +40,7 @@ function pastasTemporarias() {
 // Programa em processo, com banco em memória e respostas de terminal simuladas.
 function montarPrograma({ respostas = [], interativo = true } = {}) {
   const p = pastasTemporarias()
-  const ctx = criarContexto({ config: carregarConfig(p.env), logger: silencioso, db: abrirBanco(':memory:'), fabricaSefaz: ((m) => (c) => m.cliente(c.cnpj))(criarSefazMock({ cienciaDoDono: true })) })
+  const ctx = criarContexto({ config: carregarConfig(p.env), logger: silencioso, db: abrirBanco(':memory:'), fabricaSefaz: ((m) => (c) => m.cliente(c.cnpj))(criarSefazMock({ cienciaDoDono: true })), fabricaAdn: (c) => criarAdnMock({ documentos: {} }).cliente(c.cnpj) })
   const saida = []
   const perguntas = []
   const responder = async (msg) => {
@@ -177,11 +178,13 @@ test('processo real: cadastro com senha pelo pipe, captura duas vezes sem duplic
   assert.match(c2.stdout, /cStat 137/)
 
   const db = abrirBanco(path.join(p.env.PASTA_DADOS, 'nfe.db'))
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM notas').get().n, 3)
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE status = 'completa'").get().n, 2)
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfe'").get().n, 3)
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfe' AND status = 'completa'").get().n, 2)
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfse'").get().n, 3, 'NFS-e da demonstração, sem duplicar')
   db.close()
-  const xmls = fs.readdirSync(p.env.PASTA_XMLS, { recursive: true }).filter((f) => f.endsWith('.xml'))
-  assert.equal(xmls.length, 5)
+  const xmls = fs.readdirSync(p.env.PASTA_XMLS, { recursive: true }).filter((f) => f.endsWith('.xml')).map((f) => f.replace(/\\/g, '/'))
+  assert.equal(xmls.filter((f) => f.includes('/NF-e/')).length, 5)
+  assert.equal(xmls.filter((f) => f.includes('/NFS-e/')).length, 4, '3 NFS-e e 1 cancelamento')
   const log = fs.readFileSync(path.join(p.env.PASTA_LOGS, 'app.log'), 'utf8')
   assert.ok(!log.includes(cert.senha), 'senha não aparece no log')
 
@@ -189,7 +192,7 @@ test('processo real: cadastro com senha pelo pipe, captura duas vezes sem duplic
   const exp = cli(p.env, ['exportar', '--cnpj', CNPJ_MOCK_OK, '--competencia', competencia])
   assert.equal(exp.status, 0, exp.stderr)
   assert.match(exp.stdout, /0 nota\(s\) ainda sem XML/)
-  assert.match(exp.stdout, /Entradas: 2 XML\(s\) em entradas\/xml\/, 0 em entradas\/canceladas\/ \| Saídas: 0 XML\(s\) em saidas\/xml\/, 0 em saidas\/canceladas\//)
+  assert.match(exp.stdout, /Entradas: 3 XML\(s\) e 1 cancelada\(s\) \| Saídas: 1 XML\(s\) e 0 cancelada\(s\), nas pastas NF-e\/ e NFS-e\/ do ZIP/)
   assert.ok(fs.existsSync(path.join(p.env.PASTA_EXPORTS, `${CNPJ_MOCK_OK}_Comercial_Exemplo_Ltda_${competencia}.zip`)))
 
   const erro = cli(p.env, ['cliente:ativar', '--cnpj', '1'])

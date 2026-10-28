@@ -12,7 +12,10 @@ const archiver = require('archiver')
 const express = require('express')
 const { COLUNAS_PUBLICAS } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
-const { detalharNfe } = require('../services/detalheNota')
+const { detalharNfe, detalharNfse } = require('../services/detalheNota')
+const { montarPlanilhaDoMes } = require('../services/planilhaMes')
+const { gerarDanfse, situacaoDanfse } = require('../services/danfse/gerar')
+const { pastaDoCliente, nomeNoZip } = require('../services/armazenamento')
 
 const POR_PAGINA = 50
 const HOSTS_LOCAIS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
@@ -148,12 +151,17 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     saidasDoMes: db.prepare("SELECT COUNT(*) n FROM notas WHERE tipo = 'saida' AND competencia = ?"),
     nota: db.prepare('SELECT * FROM notas WHERE id = ?'),
     eventosComArquivo: db.prepare('SELECT caminho_xml FROM eventos WHERE chave = ? AND caminho_xml IS NOT NULL ORDER BY tp_evento, n_seq'),
-    notaComCliente: db.prepare(`SELECT n.id, n.tipo, n.chave, n.numero, n.serie, n.data_emissao, n.emitente_cnpj, n.emitente_nome, n.emitente_ie,
+    notaComCliente: db.prepare(`SELECT n.id, n.tipo, n.modelo, n.chave, n.numero, n.serie, n.data_emissao, n.emitente_cnpj, n.emitente_nome, n.emitente_ie,
         n.destinatario_cnpj, n.destinatario_nome, n.valor_total, n.status, n.cancelada, n.situacao_sefaz, n.competencia, n.ciencia_em,
         n.caminho_xml IS NOT NULL tem_xml, c.cnpj cliente_cnpj, COALESCE(c.apelido, c.razao_social) cliente_nome
       FROM notas n JOIN clientes c ON c.id = n.cliente_id WHERE n.id = ?`),
     eventosDaNota: db.prepare('SELECT tp_evento, n_seq, descricao, data_evento, protocolo FROM eventos WHERE chave = ? ORDER BY data_evento, id'),
     ultimaCaptura: db.prepare("SELECT fim FROM execucoes WHERE tipo = 'captura' AND fim IS NOT NULL ORDER BY fim DESC, id DESC LIMIT 1"),
+    // O que a última captura de cada cliente trouxe (para a coluna Última captura).
+    ultimaCapturaPorCliente: db.prepare(`SELECT cliente_id, c_stat, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
+      WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
+    ultimaCapturaNfsePorCliente: db.prepare(`SELECT cliente_id, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
+      WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
     clientePorCnpj: db.prepare('SELECT id, cnpj, papel FROM clientes WHERE cnpj = ?'),
     ativosNaOrdem: db.prepare("SELECT cnpj FROM clientes WHERE ativo = 1 AND papel = 'cliente' ORDER BY id"),
     execucoes: db.prepare(`SELECT e.*, c.cnpj, COALESCE(c.apelido, c.razao_social) cliente_nome FROM execucoes e
@@ -192,9 +200,12 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
 
   app.get('/api/clientes', (req, res) => {
     const contagens = new Map(sql.contagemPorCliente.all({ maxTentativas: config.maxTentativasDownload, competencia: competenciaAtual() }).map((c) => [c.cliente_id, c]))
+    const capturas = new Map(sql.ultimaCapturaPorCliente.all().map((e) => [e.cliente_id, e]))
+    const capturasNfse = new Map(sql.ultimaCapturaNfsePorCliente.all().map((e) => [e.cliente_id, e]))
     const clientes =
       sql.clientes.all().map((c) => {
         const n = contagens.get(c.id) || {}
+        const u = capturas.get(c.id)
         return {
           cnpj: c.cnpj,
           razaoSocial: c.razao_social,
@@ -207,6 +218,16 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
           ultimoErro: c.ultimo_erro,
           proximaConsulta: futuro(c.proxima_consulta),
           bloqueadoAte: futuro(c.bloqueado_ate),
+          // notas/eventos ficam null nas capturas gravadas antes dessas colunas existirem.
+          ultimoRecebido: u ? { cStat: u.c_stat, docs: u.docs_recebidos || 0, notas: u.notas_recebidas, eventos: u.eventos_recebidos } : null,
+          nfse: {
+            ultimoRecebido: capturasNfse.has(c.id)
+              ? { notas: capturasNfse.get(c.id).notas_recebidas || 0, eventos: capturasNfse.get(c.id).eventos_recebidos || 0, docs: capturasNfse.get(c.id).docs_recebidos || 0 }
+              : null,
+            ultimaConsulta: c.nfse_ultima_consulta,
+            proximaConsulta: futuro(c.nfse_proxima_consulta),
+            ultimoErro: c.nfse_ultimo_erro,
+          },
           certValidade: c.cert_validade,
           certDias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null,
           notas: {
@@ -289,6 +310,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       p.cnpj = String(q.cnpj).replace(/\D/g, '')
     }
     if (q.tipo && q.tipo !== 'entrada' && q.tipo !== 'saida') throw new ErroHttp(400, 'Tipo inválido.')
+    if (q.modelo && q.modelo !== 'nfe' && q.modelo !== 'nfse') throw new ErroHttp(400, 'Modelo inválido.')
     if (q.competencia) {
       if (!/^\d{4}-\d{2}$/.test(q.competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
       where.push('n.competencia = @competencia')
@@ -316,16 +338,26 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       where.push(`n.valor_total ${op} @${campo}`)
       p[campo] = v
     }
-    const contagem = db.prepare(`SELECT n.tipo, COUNT(*) qtd FROM notas n JOIN clientes c ON c.id = n.cliente_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''} GROUP BY n.tipo`).all(p)
+    // Cada contagem respeita o outro filtro: Entradas/Saídas seguem o modelo escolhido, e NF-e/NFS-e seguem o tipo.
+    const clausulaTipo = q.tipo ? 'n.tipo = @tipo' : null
+    const clausulaModelo = q.modelo ? 'n.modelo = @modelo' : null
+    if (q.tipo) p.tipo = q.tipo
+    if (q.modelo) p.modelo = q.modelo
+    const contar = (coluna, extra) => {
+      const w = [...where, extra].filter(Boolean)
+      return db.prepare(`SELECT n.${coluna} valor, COUNT(*) qtd FROM notas n JOIN clientes c ON c.id = n.cliente_id ${w.length ? `WHERE ${w.join(' AND ')}` : ''} GROUP BY n.${coluna}`).all(p)
+    }
     const contagemTipo = { entradas: 0, saidas: 0 }
-    for (const l of contagem) {
-      if (l.tipo === 'entrada') contagemTipo.entradas = l.qtd
-      else if (l.tipo === 'saida') contagemTipo.saidas = l.qtd
+    for (const l of contar('tipo', clausulaModelo)) {
+      if (l.valor === 'entrada') contagemTipo.entradas = l.qtd
+      else if (l.valor === 'saida') contagemTipo.saidas = l.qtd
     }
-    if (q.tipo) {
-      where.push('n.tipo = @tipo')
-      p.tipo = q.tipo
-    }
+    const contagemModelo = { nfe: 0, nfse: 0 }
+    for (const l of contar('modelo', clausulaTipo)) if (l.valor in contagemModelo) contagemModelo[l.valor] = l.qtd
+    // Pastas do mês (NF-e/NFS-e → Entradas/Saídas) só precisam dos números.
+    if (q.somenteContagem === '1') return res.json({ contagemTipo, contagemModelo })
+    if (clausulaTipo) where.push(clausulaTipo)
+    if (clausulaModelo) where.push(clausulaModelo)
     const filtro = where.length ? `WHERE ${where.join(' AND ')}` : ''
     let ordem = ORDENS['emissao-desc']
     if (q.ordem !== undefined && q.ordem !== '') {
@@ -341,12 +373,12 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const base = `FROM notas n JOIN clientes c ON c.id = n.cliente_id ${filtro}`
     const total = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(n.valor_total), 0) valor ${base}`).get(p)
     const notas = db
-      .prepare(`SELECT n.id, n.tipo, n.destinatario_cnpj, n.destinatario_nome, n.chave, n.numero, n.serie, n.data_emissao, n.emitente_cnpj, n.emitente_nome, n.valor_total, n.status,
+      .prepare(`SELECT n.id, n.tipo, n.modelo, n.destinatario_cnpj, n.destinatario_nome, n.chave, n.numero, n.serie, n.data_emissao, n.emitente_cnpj, n.emitente_nome, n.valor_total, n.status,
           n.cancelada, n.competencia, n.ciencia_em, n.ciencia_erro, n.tentativas_download, n.exportada_em,
           n.caminho_xml IS NOT NULL tem_xml, c.cnpj cliente_cnpj, COALESCE(c.apelido, c.razao_social) cliente_nome
         ${base} ORDER BY ${ordem} LIMIT ${POR_PAGINA} OFFSET @offset`)
       .all({ ...p, offset: (pagina - 1) * POR_PAGINA })
-    res.json({ total: total.n, valorTotal: total.valor, pagina, porPagina: POR_PAGINA, limiteTentativas: config.maxTentativasDownload, contagemTipo, notas })
+    res.json({ total: total.n, valorTotal: total.valor, pagina, porPagina: POR_PAGINA, limiteTentativas: config.maxTentativasDownload, contagemTipo, contagemModelo, notas })
   })
 
   function notaOu404(id) {
@@ -367,8 +399,38 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const arquivo = nota.caminho_xml && dentroDe(config.pastaXmls, nota.caminho_xml)
     if (!arquivo || !fs.existsSync(arquivo)) throw new ErroHttp(404, 'Esta nota ainda não tem o XML completo.')
     res.set('Content-Type', 'application/xml; charset=utf-8')
-    res.attachment(`${nota.chave}-nfe.xml`)
+    res.attachment(nomeNoZip(nota))
     fs.createReadStream(arquivo).pipe(res)
+  })
+
+  // DANFSe (PDF) da NFS-e, gerado do XML na hora (NT 008/2026). NF-e não tem: o DANFE é a tela "Ver nota".
+  app.get('/api/notas/:id/pdf', async (req, res) => {
+    const nota = notaOu404(req.params.id)
+    if (nota.modelo !== 'nfse') throw new ErroHttp(404, 'O PDF (DANFSe) é só para NFS-e.')
+    const arquivo = nota.caminho_xml && dentroDe(config.pastaXmls, nota.caminho_xml)
+    if (!arquivo || !fs.existsSync(arquivo)) throw new ErroHttp(404, 'O XML desta nota não foi encontrado na pasta de XMLs.')
+    const tipos = db.prepare('SELECT tp_evento FROM eventos WHERE chave = ?').all(nota.chave).map((e) => e.tp_evento)
+    const pdf = await gerarDanfse(fs.readFileSync(arquivo, 'utf8'), { situacao: situacaoDanfse(nota, tipos) })
+    res.set('Content-Type', 'application/pdf')
+    res.attachment(nomeNoZip(nota).replace(/\.xml$/, '.pdf'))
+    res.send(pdf)
+  })
+
+  // Planilha do mês (abas NF-e, NFS-e e Retenções) para baixar na hora; não marca nada como exportado.
+  app.get('/api/planilha', async (req, res) => {
+    const competencia = String(req.query.competencia || '')
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
+    const cliente = db.prepare("SELECT * FROM clientes WHERE cnpj = ? AND papel = 'cliente'").get(String(req.query.cnpj || '').replace(/\D/g, ''))
+    if (!cliente) throw new ErroHttp(404, 'Cliente não cadastrado.')
+    const notas = db.prepare('SELECT * FROM notas WHERE cliente_id = ? AND competencia = ? ORDER BY modelo, tipo, data_emissao').all(cliente.id, competencia)
+    const lerXml = (n) => {
+      const arquivo = n.caminho_xml && dentroDe(config.pastaXmls, n.caminho_xml)
+      return arquivo && fs.existsSync(arquivo) ? fs.readFileSync(arquivo, 'utf8') : null
+    }
+    const xlsx = await montarPlanilhaDoMes({ notas, lerXml })
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.attachment(`${pastaDoCliente(cliente)}_${competencia}.xlsx`)
+    res.send(xlsx)
   })
 
   // XML da nota + eventos da chave que têm arquivo (cancelamento, carta de correção), num ZIP.
@@ -397,16 +459,19 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
   app.get('/api/notas/:id/detalhe', (req, res) => {
     const nota = notaOu404(req.params.id)
     let nfe = null
+    let nfse = null
     let erroXml = null
     if (nota.caminho_xml) {
       const arquivo = dentroDe(config.pastaXmls, nota.caminho_xml)
       if (!arquivo || !fs.existsSync(arquivo)) erroXml = 'O arquivo XML desta nota não foi encontrado na pasta de XMLs.'
       else {
-        nfe = detalharNfe(fs.readFileSync(arquivo, 'utf8'))
-        if (!nfe) erroXml = 'Não foi possível ler o XML desta nota.'
+        const xml = fs.readFileSync(arquivo, 'utf8')
+        if (nota.modelo === 'nfse') nfse = detalharNfse(xml)
+        else nfe = detalharNfe(xml)
+        if (!nfe && !nfse) erroXml = 'Não foi possível ler o XML desta nota.'
       }
     }
-    res.json({ nota: sql.notaComCliente.get(nota.id), nfe, erroXml, eventos: sql.eventosDaNota.all(nota.chave) })
+    res.json({ nota: sql.notaComCliente.get(nota.id), nfe, nfse, erroXml, eventos: sql.eventosDaNota.all(nota.chave) })
   })
 
   app.post('/api/notas/:id/reprocessar', (req, res) => {
@@ -428,7 +493,16 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
 
   const MAX_CNPJS_CAPTURA = 500
 
-  function capturaDeLista(cnpjsBrutos, res) {
+  // NF-e e/ou NFS-e; sem o campo, as duas.
+  function modelosDaCaptura(modelos) {
+    if (modelos === undefined) return ['nfe', 'nfse']
+    if (!Array.isArray(modelos) || !modelos.length || modelos.some((m) => m !== 'nfe' && m !== 'nfse')) {
+      throw new ErroHttp(400, 'Escolha NF-e, NFS-e ou as duas.')
+    }
+    return [...new Set(modelos)]
+  }
+
+  function capturaDeLista(cnpjsBrutos, res, modelos) {
     if (!Array.isArray(cnpjsBrutos) || cnpjsBrutos.length < 1 || cnpjsBrutos.length > MAX_CNPJS_CAPTURA) {
       throw new ErroHttp(400, `Informe de 1 a ${MAX_CNPJS_CAPTURA} CNPJs para capturar.`)
     }
@@ -442,14 +516,14 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const escritorio = ctx.clientes.obterEscritorio()
     const marcados = new Set(cnpjs)
     andamento.fila = [
-      ...(escritorio?.ativo ? [escritorio.cnpj] : []),
+      ...(escritorio?.ativo && modelos.includes('nfe') ? [escritorio.cnpj] : []),
       ...sql.ativosNaOrdem.all().map((c) => c.cnpj).filter((c) => marcados.has(c)),
     ]
     const aoIniciarCliente = (cnpj) => {
       andamento.fila = andamento.fila.filter((c) => c !== cnpj)
       andamento.atual = cnpj
     }
-    capturaManual = Promise.resolve(ctx.ciclo.executarCiclo({ cnpjs, aoIniciarCliente }))
+    capturaManual = Promise.resolve(ctx.ciclo.executarCiclo({ cnpjs, aoIniciarCliente, modelos }))
       .then((r) => {
         if (r?.ok === false) logger.error('Captura pelo painel não rodou', { erro: r.erro })
         else logger.info('Captura pelo painel terminada', { clientes: r?.clientes?.length ?? 0, comErro: r?.clientes?.filter((c) => c.erro).length ?? 0 })
@@ -465,7 +539,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
   }
 
   app.post('/api/captura', (req, res) => {
-    if (req.body && 'cnpjs' in req.body) return capturaDeLista(req.body.cnpjs, res)
+    if (req.body && 'cnpjs' in req.body) return capturaDeLista(req.body.cnpjs, res, modelosDaCaptura(req.body.modelos))
     const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined
     if (cnpj && !sql.clientePorCnpj.get(cnpj)) throw new ErroHttp(404, 'Cliente não cadastrado.')
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')

@@ -43,7 +43,7 @@ export default function Exportar() {
   return (
     <Pagina
       titulo="Exportar"
-      subtitulo="Gera o pacote do mês (Domínio e Fortes) com os XMLs e o resumo.csv."
+      subtitulo="Gera o pacote do mês (Domínio e Fortes) com os XMLs e a planilha notas.xlsx."
       erro={erro || erroClientes || erroCompetencias}
       aoFecharErro={erro ? () => setErro(null) : undefined}
     >

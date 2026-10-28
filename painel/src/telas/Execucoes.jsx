@@ -4,9 +4,9 @@ import Pagina from '../layout/Pagina.jsx'
 import { useAoTerminarCaptura, useResumo } from '../layout/ResumoProvider.jsx'
 import { useApi } from '../useApi.js'
 import { cnpj, dataHora, inteiro } from '../formato.js'
-import { explicarSefaz } from '../mensagensSefaz.js'
+import { explicarSefaz, resumoDaCaptura } from '../mensagensSefaz.js'
 
-const TIPOS = { captura: 'Consulta', ciencia: 'Ciência', download: 'Download', exportacao: 'Exportação', backup: 'Backup' }
+const TIPOS = { captura: 'Consulta NF-e', captura_nfse: 'Consulta NFS-e', ciencia: 'Ciência', download: 'Download', exportacao: 'Exportação', backup: 'Backup' }
 const SEM_SEFAZ = new Set(['exportacao', 'backup'])
 
 function Linha({ e }) {
@@ -28,6 +28,16 @@ function Linha({ e }) {
 }
 
 function Resultado({ e }) {
+  // O ADN (NFS-e) responde com texto: equivale ao 137 (nada novo) e ao 138 (documentos).
+  const cStat = e.tipo === 'captura_nfse' ? { NENHUM_DOCUMENTO_LOCALIZADO: '137', DOCUMENTOS_LOCALIZADOS: '138' }[e.c_stat] : e.c_stat
+  if (['captura', 'captura_nfse'].includes(e.tipo) && !e.erro && ['137', '138'].includes(cStat)) {
+    const r = resumoDaCaptura({ cStat, docs: e.docs_recebidos, notas: e.notas_recebidas, eventos: e.eventos_recebidos })
+    return (
+      <Etiqueta cor={r.cor} titulo={r.detalhe || undefined}>
+        {r.titulo}
+      </Etiqueta>
+    )
+  }
   const explicacao = SEM_SEFAZ.has(e.tipo) ? null : explicarSefaz({ cStat: e.c_stat, xMotivo: e.x_motivo, erro: e.erro })
   if (explicacao) {
     return (

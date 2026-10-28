@@ -80,6 +80,16 @@ function migrar(db, caminho) {
   }
 }
 
+const COLUNAS_NOVAS = [
+  ['execucoes', 'notas_recebidas', 'INTEGER'],
+  ['execucoes', 'eventos_recebidos', 'INTEGER'],
+  ['notas', 'modelo', "TEXT NOT NULL DEFAULT 'nfe'"],
+  ['clientes', 'nfse_ult_nsu', "TEXT NOT NULL DEFAULT '0'"],
+  ['clientes', 'nfse_proxima_consulta', 'TEXT'],
+  ['clientes', 'nfse_ultima_consulta', 'TEXT'],
+  ['clientes', 'nfse_ultimo_erro', 'TEXT'],
+]
+
 /** Abre (ou cria) o banco, aplica as migrations e devolve a conexão. Use ':memory:' em testes. */
 function abrirBanco(caminho) {
   if (caminho !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(caminho)), { recursive: true })
@@ -93,6 +103,12 @@ function abrirBanco(caminho) {
       if (colunas.length > 0 && !colunas.includes('tipo')) migrar(db, caminho)
     }
     db.exec(fs.readFileSync(MIGRATIONS, 'utf8'))
+    // Colunas novas em bancos criados antes delas (o CREATE TABLE IF NOT EXISTS não as acrescenta).
+    for (const [tabela, coluna, definicao] of COLUNAS_NOVAS) {
+      const existe = db.prepare(`SELECT 1 FROM pragma_table_info('${tabela}') WHERE name = ?`).get(coluna)
+      if (!existe) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${definicao}`)
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_notas_cliente_modelo_comp ON notas(cliente_id, modelo, competencia)')
     db.pragma('user_version = 1')
   } catch (e) {
     db.close()

@@ -314,6 +314,44 @@ function Resumo({ nota }) {
   )
 }
 
+// NFS-e: não tem DANFE; os dados principais em quadros, no mesmo visual.
+function NotaServico({ nfse, nota }) {
+  return (
+    <section className="danfe-bloco">
+      <h2>Nota fiscal de serviço</h2>
+      <div className="quadros">
+        <Quadro rotulo="Prestador" classe="largo">
+          {nfse.prestador.nome}
+        </Quadro>
+        <Quadro rotulo="CNPJ / CPF do prestador" classe="mono">
+          {documento(nfse.prestador.cnpj)}
+        </Quadro>
+        <Quadro rotulo="Tomador" classe="largo">
+          {nfse.tomador.nome}
+        </Quadro>
+        <Quadro rotulo="CNPJ / CPF do tomador" classe="mono">
+          {documento(nfse.tomador.cnpj)}
+        </Quadro>
+        <Quadro rotulo="Município de emissão">{nfse.municipio}</Quadro>
+        <Quadro rotulo="Competência">{nfse.competencia ? nfse.competencia.split('-').reverse().join('/') : ''}</Quadro>
+        <Quadro rotulo="Data de emissão">{data(nfse.dataEmissao)}</Quadro>
+        <Quadro rotulo="Valor do serviço" classe="destaque">
+          {dinheiro(nfse.valor)}
+        </Quadro>
+        <Quadro rotulo="Situação">
+          <Situacao nota={nota} />
+        </Quadro>
+        <Quadro rotulo="Serviço" classe="largo">
+          {nfse.descricaoServico}
+        </Quadro>
+        <Quadro rotulo="Chave de acesso" classe="largo mono">
+          {chaveEmGrupos(nota.chave)}
+        </Quadro>
+      </div>
+    </section>
+  )
+}
+
 function Eventos({ eventos }) {
   if (!eventos.length) return null
   return (
@@ -350,10 +388,12 @@ export default function Nota() {
   const { dados, erro, carregando } = useApi(`/api/notas/${encodeURIComponent(id)}/detalhe`)
   const nota = dados?.nota
   // Número e emitente do XML quando houver; senão, os do resumo.
-  const numero = dados?.nfe?.ide.numero || nota?.numero || ''
-  const emitente = dados?.nfe?.emitente?.nome || nota?.emitente_nome || ''
+  const numero = dados?.nfe?.ide.numero || dados?.nfse?.numero || nota?.numero || ''
+  const emitente = dados?.nfe?.emitente?.nome || dados?.nfse?.prestador?.nome || nota?.emitente_nome || ''
+  const ehServico = nota?.modelo === 'nfse'
   const [ano, mes] = (nota?.competencia || '').split('-')
-  const pastaDoMes = ano ? `/notas/${cnpj}/${ano}/${mes}` : `/notas/${cnpj}`
+  // Pasta da nota: <mês><NF-e|NFS-e><Entradas|Saídas>, como no disco.
+  const pastaDoMes = ano ? `/notas/${cnpj}/${ano}/${mes}/${nota.modelo === 'nfse' ? 'nfs-e' : 'nf-e'}/${nota.tipo === 'saida' ? 'saidas' : 'entradas'}` : `/notas/${cnpj}`
 
   // "Imprimir DANFE" do menu da nota: abre a impressão assim que a nota carrega, uma vez só.
   const imprimir = params.get('imprimir') === '1'
@@ -384,8 +424,13 @@ export default function Nota() {
         Voltar
       </button>
       {nota?.tem_xml ? (
-        <a className="botao botao-claro" href={`/api/notas/${nota.id}/xml`} download={`${nota.chave}-nfe.xml`}>
+        <a className="botao botao-claro" href={`/api/notas/${nota.id}/xml`} download={`${nota.chave}-${ehServico ? 'nfse' : 'nfe'}.xml`}>
           Baixar XML
+        </a>
+      ) : null}
+      {nota?.tem_xml && ehServico ? (
+        <a className="botao botao-azul" href={`/api/notas/${nota.id}/pdf`} download={`${nota.chave}-nfse.pdf`}>
+          Baixar PDF (DANFSe)
         </a>
       ) : null}
       {dados?.nfe && (
@@ -399,6 +444,7 @@ export default function Nota() {
   let conteudo = null
   if (!dados) conteudo = carregando && <p className="vazio">Carregando…</p>
   else if (dados.nfe) conteudo = <Danfe nfe={dados.nfe} nota={nota} />
+  else if (dados.nfse) conteudo = <NotaServico nfse={dados.nfse} nota={nota} />
   else
     conteudo = (
       <>
@@ -414,7 +460,7 @@ export default function Nota() {
 
   return (
     <Pagina
-      titulo={`NF-e ${numero}`.trim()}
+      titulo={`${ehServico ? 'NFS-e' : 'NF-e'} ${numero}`.trim()}
       subtitulo={nota ? `${nota.tipo === 'saida' ? 'Saída' : 'Entrada'} · ${emitente}` : ''}
       trilha={trilha}
       acoes={acoes}

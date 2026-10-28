@@ -199,15 +199,15 @@ function criarPrograma(io) {
 
   programa
     .command('exportar')
-    .description('Gera o ZIP (XMLs + resumo.csv) do cliente na competência, para o Domínio/Fortes')
+    .description('Gera o ZIP (XMLs + notas.xlsx) do cliente na competência, para o Domínio/Fortes')
     .requiredOption('--cnpj <cnpj>', 'CNPJ do cliente')
     .requiredOption('--competencia <AAAA-MM>', 'mês de emissão das notas (ex.: 2026-10)')
     .action(async (o) => {
       const r = await contexto().exportacao.exportar({ cnpj: o.cnpj, competencia: o.competencia })
       log(`Arquivo: ${r.arquivo}`)
       const { entrada: e, saida: s } = r.porTipo
-      log(`Entradas: ${e.xmls} XML(s) em entradas/xml/, ${e.canceladas} em entradas/canceladas/ | Saídas: ${s.xmls} XML(s) em saidas/xml/, ${s.canceladas} em saidas/canceladas/.`)
-      log(`${r.semXml} nota(s) ainda sem XML completo (listadas no resumo.csv).`)
+      log(`Entradas: ${e.xmls} XML(s) e ${e.canceladas} cancelada(s) | Saídas: ${s.xmls} XML(s) e ${s.canceladas} cancelada(s), nas pastas NF-e/ e NFS-e/ do ZIP.`)
+      log(`${r.semXml} nota(s) ainda sem XML completo (listadas na planilha notas.xlsx).`)
       for (const a of r.avisos) log(`Atenção: ${a}`)
     })
 

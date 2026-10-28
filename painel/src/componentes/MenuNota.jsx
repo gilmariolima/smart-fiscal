@@ -54,13 +54,19 @@ export default function MenuNota({ nota: n, cnpj, limite, onReprocessar, ocupado
           <Link to={ver}>Ver nota</Link>
           {!!n.tem_xml && (
             <>
-              <a href={`/api/notas/${n.id}/xml`} download={`${n.chave}-nfe.xml`}>
+              <a href={`/api/notas/${n.id}/xml`} download={`${n.chave}-${n.modelo === 'nfse' ? 'nfse' : 'nfe'}.xml`}>
                 Baixar XML
               </a>
-              <a href={`/api/notas/${n.id}/xml-eventos`} download={`${n.chave}-nfe-eventos.zip`}>
+              <a href={`/api/notas/${n.id}/xml-eventos`} download={`${n.chave}-${n.modelo === 'nfse' ? 'nfse' : 'nfe'}-eventos.zip`}>
                 Baixar XML + eventos
               </a>
-              <Link to={`${ver}?imprimir=1`}>Imprimir DANFE</Link>
+              {n.modelo === 'nfse' ? (
+                <a href={`/api/notas/${n.id}/pdf`} download={`${n.chave}-nfse.pdf`}>
+                  Baixar PDF (DANFSe)
+                </a>
+              ) : (
+                <Link to={`${ver}?imprimir=1`}>Imprimir DANFE</Link>
+              )}
             </>
           )}
           {podeReprocessar(n, limite) && (

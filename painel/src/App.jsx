@@ -11,6 +11,7 @@ import Backup from './telas/Backup.jsx'
 import Pastas from './telas/Pastas.jsx'
 import Inicio from './telas/Inicio.jsx'
 import Mes from './telas/Mes.jsx'
+import PastasDoMes from './telas/PastasDoMes.jsx'
 import Meses from './telas/Meses.jsx'
 import Nota from './telas/Nota.jsx'
 import NotasRaiz from './telas/NotasRaiz.jsx'
@@ -61,7 +62,10 @@ const rotas = createHashRouter([
       { path: 'notas/:cnpj', element: <Anos /> },
       { path: 'notas/:cnpj/:ano', element: <Meses /> },
       { path: 'notas/:cnpj/nota/:id', element: <Nota /> },
-      { path: 'notas/:cnpj/:ano/:mes', element: <Mes /> },
+      { path: 'notas/:cnpj/:ano/:mes', element: <PastasDoMes /> },
+      { path: 'notas/:cnpj/:ano/:mes/todas', element: <Mes /> },
+      { path: 'notas/:cnpj/:ano/:mes/:modelo', element: <PastasDoMes /> },
+      { path: 'notas/:cnpj/:ano/:mes/:modelo/:direcao', element: <Mes /> },
       { path: 'pendentes', element: <Pendentes /> },
       { path: 'clientes', element: <Clientes /> },
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },

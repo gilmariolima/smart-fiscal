@@ -98,7 +98,7 @@ Também dá para cadastrar no painel: menu **Clientes**, linha **Escritório** l
 
 **Como funciona:**
 - A captura do escritório roda **primeiro** em cada ciclo (8h, 13h e **Capturar agora**). É só captura: não envia ciência nem baixa por chave.
-- Cada nota recebida vai para: o emitente é cliente → **saída** desse cliente; o destinatário é cliente → **entrada** dele (completa um resumo sem gastar ciência nem download); nenhum dos dois → o XML fica em `fora-da-carteira\<AAAA-MM>\` dentro da pasta do escritório (`xmls\<CNPJ>_escritorio\`), para não se perder.
+- Cada nota recebida vai para: o emitente é cliente → **saída** desse cliente; o destinatário é cliente → **entrada** dele (completa um resumo sem gastar ciência nem download); nenhum dos dois → o XML fica em `fora-da-carteira\<AAAA>\<MM>\` dentro da pasta do escritório (`xmls\<CNPJ>_escritorio\`), para não se perder.
 - Uma nota de um cliente para outro cliente aparece como saída de um e entrada do outro.
 - No painel, a tela do mês (**Notas** → cliente → ano → mês) tem o filtro **Todas / Entradas / Saídas** (com a contagem de cada uma, por exemplo "Entradas (12)") e as colunas **Tipo**, **CNPJ Emitente**, **Nome Emitente** e **CNPJ Destinatário**.
 
@@ -191,6 +191,18 @@ O painel só lê dados, com estas exceções: ligar e desligar a busca automáti
 
 **Acessar de outro computador da rede** (opcional): no `.env`, `PAINEL_HOST=0.0.0.0` e uma `PAINEL_SENHA`. O navegador vai pedir usuário e senha (o usuário pode ser qualquer um; vale a senha). Libere a porta no Firewall do Windows só para a rede interna.
 
+## Notas de serviço (NFS-e)
+
+O sistema também busca as **NFS-e** de cada cliente no **ADN** (Ambiente de Dados Nacional da NFS-e), com o **certificado A1 do próprio cliente**. A mesma consulta traz as notas em que o cliente é **prestador** (saída), **tomador** (entrada) ou intermediário (gravada como entrada).
+
+- Roda junto com a NF-e no **Capturar selecionados** e nos horários automáticos: primeiro a NF-e, depois a NFS-e. Um erro numa não impede a outra. O escritório não busca NFS-e.
+- Fila própria por cliente (NSU da NFS-e, separado do da NF-e). Quando a fila acaba, espera 1 hora antes de consultar o mesmo CNPJ de novo, como na NF-e.
+- O cancelamento (101101) e o cancelamento por substituição (105102) marcam a nota como cancelada, mesmo quando o evento chega antes da nota.
+- **Fortaleza:** as NFS-e emitidas no ISS Fortaleza também chegam pelo ADN (testado em 27/10/2026, inclusive notas de 2023). Só vêm as notas que o município compartilha com o ADN.
+- No painel: a tela do mês tem o filtro **NF-e / NFS-e** e a coluna **Modelo**; a nota mostra prestador, tomador, município, competência e valor do serviço; **Execuções** mostra **Consulta NFS-e**.
+
+**Pastas novas:** na primeira abertura desta versão, os XMLs que já existiam passam de `<cliente>\<AAAA-MM>\` para `<cliente>\<AAAA>\<MM>\<NF-e|NFS-e>\<Entradas|Saidas>\`, uma vez só. Se um arquivo estiver aberto e travado, ele fica para a próxima abertura (aparece no log). O espelho do backup passa a ter as pastas antigas e as novas; as antigas podem ser apagadas à mão do backup.
+
 ## Exportação para Domínio e Fortes
 
 Pelo painel (tela **Exportar**, ou o botão **Exportar mês (Domínio/Fortes)** na pasta do mês) ou pela linha de comando:
@@ -202,18 +214,25 @@ npm run cli -- exportar --cnpj 11222333000181 --competencia 2026-10
 Gera `exports\<CNPJ>_<apelido>_<AAAA-MM>.zip` com:
 
 ```
-entradas\xml\<chave>-nfe.xml          entradas completas e não canceladas
-entradas\canceladas\<chave>-nfe.xml   entradas completas que foram canceladas
-saidas\xml\<chave>-nfe.xml            saídas completas e não canceladas
-saidas\canceladas\<chave>-nfe.xml     saídas completas que foram canceladas
-resumo.csv                            todas as notas da competência, inclusive as sem XML completo
+NF-e\Entradas\<chave>-nfe.xml               entradas completas e não canceladas
+NF-e\Entradas\Canceladas\<chave>-nfe.xml    entradas completas que foram canceladas
+NF-e\Saidas\...                             o mesmo para as saídas
+NFS-e\Entradas\<chave>-nfse.xml             serviços tomados (e Canceladas\)
+NFS-e\Saidas\<chave>-nfse.xml               serviços prestados (e Canceladas\)
+NFS-e...<chave>-nfse.pdf                 DANFSe (PDF) de cada NFS-e, ao lado do XML
+notas.xlsx                                 planilha com as abas NF-e, NFS-e e Retenções (todas as notas da competência, inclusive as sem XML completo)
 ```
 
 Exportar o CNPJ do escritório é recusado (ele não tem notas próprias).
 
-O `resumo.csv` abre direto no Excel: separador `;`, acentos corretos, valores com vírgula (`1.500,00`), datas `dd/mm/aaaa`. Colunas: `chave; tipo; numero; serie; data_emissao; emitente_cnpj; emitente_nome; destinatario_cnpj; destinatario_nome; valor_total; status; cancelada` (`tipo` = entrada ou saida). As notas que ainda não têm XML aparecem com o estado (`resumo`, `ciencia_enviada`...), para o contador saber o que falta.
+A planilha `notas.xlsx` abre direto no Excel, com cabeçalho congelado e filtro em cada aba:
+- **NF-e:** tipo, número, série, emissão, emitente, destinatário, valor, situação (XML completo, só resumo...), cancelada e chave.
+- **NFS-e:** tipo, número, competência, emissão, prestador, tomador, valor do serviço, cancelada e chave.
+- **Retenções:** para cada NFS-e com XML, ISS (e se foi retido), IRRF, CSLL, INSS, PIS, COFINS, total retido (o `vTotalRet` oficial da nota) e valor líquido.
 
-A competência é o **mês de emissão** da nota.
+A mesma planilha pode ser baixada sem exportar, pelo botão **Baixar Excel do mês** na pasta do mês. O PDF de uma NFS-e também sai pelo menu **Ações → Baixar PDF (DANFSe)** e pela tela da nota. O DANFSe segue o leiaute da Nota Técnica 008/2026 v1.02 (a API oficial de geração foi desligada em 03/08/2026); a marca d'água "CANCELADA" ou "SUBSTITUÍDA" sai quando é o caso.
+
+A competência é o **mês de emissão** da NF-e e o **mês de competência** (`dCompet`) da NFS-e.
 
 > **Confirmar com o escritório:** Domínio e Fortes importam o XML de NF-e de entrada, mas a forma exata da importação (pasta, nome dos arquivos, se o ZIP serve direto) precisa ser testada nos dois sistemas antes de adotar o pacote como padrão. Ajustes ficam todos em `src/services/exportacao.js`.
 
@@ -258,7 +277,7 @@ O sistema segue as regras do web service de distribuição para não ser bloquea
 - O app **não dá ciência**. O XML completo só fica disponível **depois que o dono da empresa der a ciência** no sistema dele; aí chega numa das capturas seguintes.
 - Notas que ficaram com "erro na ciência" em versões antigas: **Reprocessar** faz a nota voltar a aguardar a ciência do cliente.
 - **Cancelamento** (evento 110111) marca a nota como cancelada; o XML do evento fica guardado junto.
-- Fora do escopo: NFS-e, CT-e e eventos conclusivos automáticos.
+- Fora do escopo: CT-e e eventos conclusivos automáticos (a NFS-e tem seção própria).
 
 ## Pastas e arquivos
 
@@ -267,11 +286,14 @@ C:\smartdoc\
 ├─ .env                 configuração (inclui a MASTER_KEY)
 ├─ certs\               cópias dos certificados (<cnpj>.pfx)
 ├─ data\nfe.db          banco de dados
-├─ xmls\<CNPJ>_<apelido>\<AAAA-MM>\     (entradas e saídas do cliente)
-│    <chave>-nfe.xml                    XML completo
-│    <chave>-resumo.xml                 resumo recebido
-│    <chave>-evento-<tipo>-<seq>.xml    eventos (ex.: cancelamento)
-├─ xmls\<CNPJ>_escritorio\fora-da-carteira\<AAAA-MM>\   notas do autXML de quem não é cliente
+├─ xmls\<CNPJ>_<apelido>\<AAAA>\<MM>\
+│    NF-e\Entradas\<chave>-nfe.xml                          notas completas
+│    NF-e\Entradas\Resumos\<chave>-resumo.xml               NF-e que ainda não têm o XML completo
+│    NF-e\Entradas\Eventos\<chave>-evento-<tipo>-<seq>.xml  eventos (cancelamento, ciência, CC-e...)
+│    NF-e\Saidas\...                                        o mesmo para as notas emitidas pelo cliente
+│    NFS-e\Entradas\<chave>-nfse.xml                        serviços tomados (e Eventos\)
+│    NFS-e\Saidas\<chave>-nfse.xml                          serviços prestados (e Eventos\)
+├─ xmls\<CNPJ>_escritorio\fora-da-carteira\<AAAA>\<MM>\NF-e\Entradas\   notas do autXML de quem não é cliente
 ├─ exports\             pacotes ZIP gerados
 ├─ logs\app.log         registro de tudo o que o sistema faz
 └─ src\                 código

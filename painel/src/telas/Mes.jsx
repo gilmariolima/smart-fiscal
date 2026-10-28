@@ -7,6 +7,7 @@ import Segmentado from '../componentes/Segmentado.jsx'
 import SituacaoNota from '../componentes/SituacaoNota.jsx'
 import Tabela from '../componentes/Tabela.jsx'
 import Pagina from '../layout/Pagina.jsx'
+import { DIRECOES, MODELOS } from './PastasDoMes.jsx'
 import { useAoTerminarCaptura } from '../layout/ResumoProvider.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
@@ -29,14 +30,19 @@ const SITUACOES = [
 ]
 
 export default function Mes() {
-  const { cnpj, ano, mes } = useParams()
+  const { cnpj, ano, mes, modelo: slugModelo, direcao: slugDirecao } = useParams()
+  // Dentro de NF-e|NFS-e → Entradas|Saídas o modelo e o tipo vêm do caminho; na lista "todas", dos filtros.
+  const pastaModelo = MODELOS[slugModelo]
+  const pastaDirecao = DIRECOES[slugDirecao]
+  const naPasta = !!(pastaModelo && pastaDirecao)
   const [params, setParams] = useSearchParams()
   const nome = useNomeDoCliente(cnpj)
   const mes2 = String(mes).padStart(2, '0')
   const competencia = `${ano}-${mes2}`
   const nomeDoMes = NOMES_DOS_MESES[Number(mes) - 1] || mes
 
-  const tipo = ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
+  const tipo = naPasta ? pastaDirecao.valor : ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
+  const modelo = naPasta ? pastaModelo.valor : ['nfe', 'nfse'].includes(params.get('modelo')) ? params.get('modelo') : ''
   const status = params.get('status') || ''
   const busca = (params.get('busca') || '').trim()
   const todas = params.get('todas') === '1'
@@ -46,6 +52,7 @@ export default function Mes() {
   const filtro = new URLSearchParams({ cnpj })
   if (!todas) filtro.set('competencia', competencia)
   if (tipo) filtro.set('tipo', tipo)
+  if (modelo) filtro.set('modelo', modelo)
   if (status) filtro.set('status', status)
   if (busca) filtro.set('busca', busca)
   const chaveDoFiltro = filtro.toString()
@@ -146,8 +153,17 @@ export default function Mes() {
     })
 
   const limite = exibido?.limiteTentativas
+  // Na NFS-e quem emite é o prestador e quem recebe é o tomador.
+  const quemEmite = modelo === 'nfse' ? 'Prestador' : 'Emitente'
+  const quemRecebe = modelo === 'nfse' ? 'Tomador' : 'Destinatário'
   const colunas = [
-    { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</span> },
+    // Dentro de uma pasta (NF-e · Entradas...) tipo e modelo já estão no título: as colunas só alargariam a tabela.
+    ...(naPasta
+      ? []
+      : [
+          { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</span> },
+          { chave: 'modelo', titulo: 'Modelo', classe: 'sem-quebra', render: (n) => (n.modelo === 'nfse' ? 'NFS-e' : 'NF-e') },
+        ]),
     { chave: 'numero', titulo: 'Número', ordem: 'numero', classe: 'mono', render: (n) => <Link to={`/notas/${cnpj}/nota/${n.id}`}>{n.numero || '—'}</Link> },
     { chave: 'emissao', titulo: 'Emissão', ordem: 'emissao', classe: 'sem-quebra', render: (n) => data(n.data_emissao) },
     ...(todas
@@ -163,15 +179,25 @@ export default function Mes() {
           },
         ]
       : []),
-    { chave: 'emitente_cnpj', titulo: 'CNPJ Emitente', ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
-    { chave: 'emitente_nome', titulo: 'Nome Emitente', ordem: 'emitente_nome', classe: 'nome', render: (n) => n.emitente_nome || '—' },
-    {
-      chave: 'destinatario_cnpj',
-      titulo: 'CNPJ Destinatário',
-      ordem: 'destinatario_cnpj',
-      classe: 'mono sem-quebra',
-      render: (n) => documento(n.destinatario_cnpj) || '—',
-    },
+    // Na pasta só aparece a outra parte: o cliente é o destinatário em Entradas e o emitente em Saídas.
+    ...(naPasta && tipo === 'saida'
+      ? []
+      : [
+          { chave: 'emitente_cnpj', titulo: `CNPJ ${quemEmite}`, ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
+          { chave: 'emitente_nome', titulo: `Nome ${quemEmite}`, ordem: 'emitente_nome', classe: 'nome', render: (n) => n.emitente_nome || '—' },
+        ]),
+    ...(naPasta && tipo === 'entrada'
+      ? []
+      : [
+          {
+            chave: 'destinatario_cnpj',
+            titulo: `CNPJ ${quemRecebe}`,
+            ordem: 'destinatario_cnpj',
+            classe: 'mono sem-quebra',
+            render: (n) => documento(n.destinatario_cnpj) || '—',
+          },
+          ...(naPasta ? [{ chave: 'destinatario_nome', titulo: `Nome ${quemRecebe}`, classe: 'nome', render: (n) => n.destinatario_nome || '—' }] : []),
+        ]),
     { chave: 'valor', titulo: 'Valor', ordem: 'valor', classe: 'num sem-quebra', render: (n) => dinheiro(n.valor_total) },
     { chave: 'situacao', titulo: 'Situação', classe: 'sem-quebra', render: (n) => <SituacaoNota nota={n} limite={limite} /> },
     {
@@ -183,7 +209,8 @@ export default function Mes() {
   ]
 
   const contagem = exibido?.contagemTipo || { entradas: 0, saidas: 0 }
-  const filtrado = !!(tipo || status || busca)
+  const contagemModelo = exibido?.contagemModelo || { nfe: 0, nfse: 0 }
+  const filtrado = !!((!naPasta && (tipo || modelo)) || status || busca)
 
   let conteudo
   if (!exibido) conteudo = carregando && <p className="vazio">Carregando…</p>
@@ -227,7 +254,13 @@ export default function Mes() {
         { rotulo: 'Início', para: '/notas' },
         { rotulo: nome, para: `/notas/${cnpj}` },
         { rotulo: ano, para: `/notas/${cnpj}/${ano}` },
-        { rotulo: nomeDoMes },
+        ...(naPasta
+          ? [
+              { rotulo: nomeDoMes, para: `/notas/${cnpj}/${ano}/${mes}` },
+              { rotulo: pastaModelo.rotulo, para: `/notas/${cnpj}/${ano}/${mes}/${slugModelo}` },
+              { rotulo: pastaDirecao.rotulo },
+            ]
+          : [{ rotulo: nomeDoMes, para: `/notas/${cnpj}/${ano}/${mes}` }, { rotulo: 'Todas' }]),
       ]
 
   const acimaDoLimite = selecao.tamanho > LIMITE_ZIP
@@ -235,7 +268,7 @@ export default function Mes() {
 
   return (
     <Pagina
-      titulo="NF-es"
+      titulo={naPasta ? `${pastaModelo.rotulo} · ${pastaDirecao.rotulo}` : 'Notas'}
       subtitulo="Ordene clicando no cabeçalho. Marque as notas e baixe os XMLs num ZIP."
       trilha={trilha}
       erro={erro || erroLista}
@@ -243,16 +276,30 @@ export default function Mes() {
       aviso={aviso}
     >
       <div className="barra-notas">
-        <Segmentado
-          rotulo="Tipo de nota"
-          valor={tipo}
-          onChange={(v) => mudar({ tipo: v })}
-          opcoes={[
-            { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas)})` },
-            { valor: 'entrada', rotulo: `Entradas (${inteiro(contagem.entradas)})` },
-            { valor: 'saida', rotulo: `Saídas (${inteiro(contagem.saidas)})` },
-          ]}
-        />
+        {!naPasta && (
+          <>
+            <Segmentado
+              rotulo="Tipo de nota"
+              valor={tipo}
+              onChange={(v) => mudar({ tipo: v })}
+              opcoes={[
+                { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas)})` },
+                { valor: 'entrada', rotulo: `Entradas (${inteiro(contagem.entradas)})` },
+                { valor: 'saida', rotulo: `Saídas (${inteiro(contagem.saidas)})` },
+              ]}
+            />
+            <Segmentado
+              rotulo="Modelo de nota"
+              valor={modelo}
+              onChange={(v) => mudar({ modelo: v })}
+              opcoes={[
+                { valor: '', rotulo: `Todas (${inteiro(contagemModelo.nfe + contagemModelo.nfse)})` },
+                { valor: 'nfe', rotulo: `NF-e (${inteiro(contagemModelo.nfe)})` },
+                { valor: 'nfse', rotulo: `NFS-e (${inteiro(contagemModelo.nfse)})` },
+              ]}
+            />
+          </>
+        )}
         <div className="filtros-notas">
           <label className="campo-situacao">
             <span>Situação</span>

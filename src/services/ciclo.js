@@ -8,6 +8,7 @@
 const { criarServicoCaptura } = require('./captura')
 const { criarServicoManifestacao } = require('./manifestacao')
 const { criarServicoDownload } = require('./download')
+const { criarServicoCapturaNfse } = require('./capturaNfse')
 
 const JANELA_TRAVA_MS = 30 * 60e3 // execução sem fim há mais de 30 min = processo que caiu
 
@@ -16,10 +17,11 @@ function criarServicoCiclo(deps) {
   const captura = criarServicoCaptura(deps)
   const manifestacao = criarServicoManifestacao(deps)
   const download = criarServicoDownload({ ...deps, captura })
+  const capturaNfse = criarServicoCapturaNfse(deps)
   let rodando = false
 
   const sql = {
-    emAndamento: db.prepare(`SELECT id, tipo, inicio FROM execucoes WHERE fim IS NULL AND tipo IN ('captura', 'ciencia', 'download')
+    emAndamento: db.prepare(`SELECT id, tipo, inicio FROM execucoes WHERE fim IS NULL AND tipo IN ('captura', 'captura_nfse', 'ciencia', 'download')
       AND inicio > ? LIMIT 1`),
     ativos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' ORDER BY id"),
     escritorio: db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio' AND ativo = 1 LIMIT 1"),
@@ -96,11 +98,32 @@ function criarServicoCiclo(deps) {
   }
 
   /** Ciclo completo. `forcar` ignora a espera de 1 h da consulta por NSU (nunca o bloqueio do 656). */
-  function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente } = {}) {
-    return comTrava({ cnpj, cnpjs }, async (cliente) => ({
-      captura: await captura.capturarCliente(cliente.id, { forcar }),
-      download: await download.baixarPendentes(cliente.id),
-    }), async (escritorio) => ({ captura: await captura.capturarCliente(escritorio.id, { forcar }) }), aoIniciarCliente)
+  /** `modelos`: ['nfe', 'nfse'] (padrão) ou só um deles. Sem NF-e, o escritório não roda (ele só busca NF-e). */
+  function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente, modelos = ['nfe', 'nfse'] } = {}) {
+    const comNfe = modelos.includes('nfe')
+    const comNfse = modelos.includes('nfse')
+    return comTrava({ cnpj, cnpjs }, async (cliente) => {
+      // NF-e e NFS-e são serviços separados: a falha de um não impede o outro.
+      const resultado = {}
+      if (comNfe) {
+        const nfe = await semExcecao(async () => ({
+          captura: await captura.capturarCliente(cliente.id, { forcar }),
+          download: await download.baixarPendentes(cliente.id),
+        }), cliente, 'NF-e')
+        Object.assign(resultado, nfe.ok === false && nfe.erro ? { captura: nfe } : nfe)
+      }
+      if (comNfse) resultado.nfse = await semExcecao(() => capturaNfse.capturarCliente(cliente.id, { forcar }), cliente, 'NFS-e')
+      return resultado
+    }, comNfe ? async (escritorio) => ({ captura: await captura.capturarCliente(escritorio.id, { forcar }) }) : null, aoIniciarCliente)
+  }
+
+  async function semExcecao(fn, cliente, servico) {
+    try {
+      return await fn()
+    } catch (e) {
+      logger.error(`Erro inesperado na captura de ${servico}`, { cnpj: cliente.cnpj, erro: e.message })
+      return { ok: false, erro: e.message }
+    }
   }
 
   const somenteDownload = ({ cnpj } = {}) => comTrava({ cnpj }, async (c) => ({ download: await download.baixarPendentes(c.id) }))

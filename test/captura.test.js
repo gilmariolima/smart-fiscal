@@ -73,11 +73,11 @@ test('laço de NSU: processa os lotes, grava ultNSU e espera 1 h com a fila zera
   assert.equal(ev[0].tp_evento, '110111')
   assert.equal(ev[0].chave, beta.chave)
 
-  const pasta = `${CNPJ_MOCK_OK}_Cliente_1/2026-10`
+  const pasta = `${CNPJ_MOCK_OK}_Cliente_1/2026/10/NF-e/Entradas`
   assert.deepEqual(arquivos(pastaXmls), [
-    `${pasta}/${alfa.chave}-resumo.xml`,
-    `${pasta}/${beta.chave}-evento-110111-1.xml`,
-    `${pasta}/${beta.chave}-resumo.xml`,
+    `${pasta}/Resumos/${alfa.chave}-resumo.xml`,
+    `${pasta}/Eventos/${beta.chave}-evento-110111-1.xml`,
+    `${pasta}/Resumos/${beta.chave}-resumo.xml`,
     `${pasta}/${gama.chave}-nfe.xml`,
   ].sort())
   const xml = fs.readFileSync(path.join(pastaXmls, gama.caminho_xml), 'utf8')
@@ -87,6 +87,8 @@ test('laço de NSU: processa os lotes, grava ultNSU e espera 1 h com a fila zera
   assert.equal(exec.length, 1)
   assert.equal(exec[0].tipo, 'captura')
   assert.equal(exec[0].docs_recebidos, 4)
+  assert.equal(exec[0].notas_recebidas, 3, 'resumos A e B + procNFe C')
+  assert.equal(exec[0].eventos_recebidos, 1, 'cancelamento de B')
   assert.ok(exec[0].fim)
   assert.equal(mock.chamadas.length, 2)
 })
@@ -332,12 +334,13 @@ test('escritório: saída, entrada que completa resumo, fora da carteira e resNF
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas').get().n, antes + 2)
 
   assert.equal(nota(f1).length, 0)
-  const pastaFora = new RegExp(`^${CNPJ_MOCK_ESCRITORIO}_Cliente_2/fora-da-carteira/\\d{4}-\\d{2}/${f1}-nfe\\.xml$`)
+  const pastaFora = new RegExp(`^${CNPJ_MOCK_ESCRITORIO}_Cliente_2/fora-da-carteira/\\d{4}/\\d{2}/NF-e/Entradas/${f1}-nfe\\.xml$`)
   assert.ok(arquivos(pastaXmls).some((f) => pastaFora.test(f)), 'XML fora da carteira na pasta do escritório')
 
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(ids[1]).n, 0)
   const evento = db.prepare('SELECT * FROM eventos WHERE chave = ?').get(s2)
   assert.ok(evento.caminho_xml.startsWith(`${CNPJ_MOCK_OK}_Cliente_1`), 'evento na pasta do dono da nota')
+  assert.match(evento.caminho_xml.replace(/\\/g, '/'), /\/NF-e\/Saidas\/Eventos\//, 'evento da saída em Saidas/Eventos')
 })
 
 test('nota de A para B pelo escritório vira saída em A e entrada em B', async (t) => {

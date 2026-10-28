@@ -50,7 +50,7 @@ export default function Anos() {
     )
 
   return (
-    <Pagina titulo="NF-es" subtitulo="Escolha o ano." trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome }]} erro={erro}>
+    <Pagina titulo="Notas" subtitulo="Escolha o ano." trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome }]} erro={erro}>
       {conteudo}
     </Pagina>
   )

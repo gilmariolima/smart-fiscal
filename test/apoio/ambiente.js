@@ -6,11 +6,13 @@ const os = require('node:os')
 const path = require('node:path')
 const { abrirBanco } = require('../../src/db')
 const { criarSefazMock, CNPJ_MOCK_OK } = require('../../src/sefaz/mock-client')
+const { criarAdnMock } = require('../../src/sefaz/adn-mock')
 
 const AGORA = new Date('2026-10-09T12:00:00Z')
 const silencioso = { info() {}, warn() {}, error() {} }
 
-function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cienciaDoDono: true }), fabrica, agora = () => AGORA, config = {} } = {}) {
+// O ADN simulado começa vazio: só os testes de NFS-e passam documentos (adn).
+function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cienciaDoDono: true }), fabrica, adn = criarAdnMock({ documentos: {} }), fabricaAdn, agora = () => AGORA, config = {} } = {}) {
   const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-teste-'))
   const db = abrirBanco(':memory:')
   const ins = db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, ?, ?, 'CE', 'x.pfx', 'a:b:c')`)
@@ -21,10 +23,11 @@ function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cie
     config: { pastaXmls, intervaloEntreChamadasMs: 2000, maxConsultasChavePorCiclo: 20, maxTentativasDownload: 5, ...config },
     logger: silencioso,
     fabricaSefaz: fabrica || ((c) => mock.cliente(c.cnpj)),
+    fabricaAdn: fabricaAdn || ((c) => adn.cliente(c.cnpj)),
     dormir: async (ms) => pausas.push(ms),
     agora,
   }
-  return { db, deps, mock, ids, pausas, pastaXmls, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
+  return { db, deps, mock, adn, ids, pausas, pastaXmls, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
 }
 
 /** Insere notas direto no banco (chaves sintéticas de 44 dígitos). */

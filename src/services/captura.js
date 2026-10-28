@@ -1,7 +1,7 @@
 'use strict'
 
 const { tipoDocumento } = require('../sefaz/client')
-const { criarArmazenamento, nomes } = require('./armazenamento')
+const { criarArmazenamento, nomes, direcaoPelaChave, modeloPelaChave } = require('./armazenamento')
 const { dadosResNFe, dadosNfeProc, dadosEvento, competenciaDe } = require('./extracao')
 
 const UMA_HORA = 3600e3
@@ -64,14 +64,15 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     clienteDaCarteira: db.prepare("SELECT * FROM clientes WHERE cnpj = ? AND papel = 'cliente'"),
     iniciarExecucao: db.prepare(`INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura', ?)`),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, c_stat = @c_stat, x_motivo = @x_motivo,
-      docs_recebidos = @docs_recebidos, erro = @erro WHERE id = @id`),
+      docs_recebidos = @docs_recebidos, notas_recebidas = @notas_recebidas, eventos_recebidos = @eventos_recebidos,
+      erro = @erro WHERE id = @id`),
   }
 
   function processarResumo(cliente, doc) {
     const d = dadosResNFe(doc.json)
     if (!d.chave) return 'ignorado'
     const existente = sql.nota.get(cliente.id, d.chave)
-    armazenamento.salvar({ cliente, competencia: existente?.competencia || d.competencia, nomeArquivo: nomes.resumo(d.chave), xml: doc.xml })
+    armazenamento.salvar({ cliente, competencia: existente?.competencia || d.competencia, categoria: 'resumo', nomeArquivo: nomes.resumo(d.chave), xml: doc.xml })
     const cancelada = d.situacao_sefaz === '3' || !!sql.temCancelamento.get(d.chave) ? 1 : 0
     if (existente) {
       // Nunca rebaixa o status: só atualiza a situação informada pela SEFAZ.
@@ -90,7 +91,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
   function gravarCompleta(cliente, doc, d, tipo, contagem) {
     const existente = sql.nota.get(cliente.id, d.chave)
     const competencia = d.competencia || existente?.competencia
-    const caminho = armazenamento.salvar({ cliente, competencia, nomeArquivo: nomes.nfe(d.chave), xml: doc.xml })
+    const caminho = armazenamento.salvar({ cliente, competencia, direcao: tipo, nomeArquivo: nomes.nfe(d.chave), xml: doc.xml })
     const cancelada = sql.temCancelamento.get(d.chave) ? 1 : 0
     const dados = { ...d, competencia, cliente_id: cliente.id, caminho_xml: caminho, cancelada, atualizado_em: iso() }
     if (existente) sql.completarNota.run(dados)
@@ -112,7 +113,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const emitente = d.emitente_cnpj ? sql.clienteDaCarteira.get(d.emitente_cnpj) : null
     const destinatario = d.destinatario_cnpj ? sql.clienteDaCarteira.get(d.destinatario_cnpj) : null
     if (!emitente && !destinatario) {
-      armazenamento.salvar({ cliente: escritorio, subpasta: nomes.foraDaCarteira, competencia: d.competencia, nomeArquivo: nomes.nfe(d.chave), xml: doc.xml })
+      armazenamento.salvar({ cliente: escritorio, foraDaCarteira: true, competencia: d.competencia, nomeArquivo: nomes.nfe(d.chave), xml: doc.xml })
       return 'fora'
     }
     if (emitente) gravarCompleta(emitente, doc, d, 'saida', contagem)
@@ -131,6 +132,9 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
       : armazenamento.salvar({
           cliente: dono,
           competencia: nota?.competencia || competenciaDe(e.data_evento),
+          modelo: modeloPelaChave(e.chave),
+          direcao: nota?.tipo || direcaoPelaChave(e.chave, dono.cnpj),
+          categoria: 'evento',
           nomeArquivo: nomes.evento(e.chave, e.tp_evento, e.n_seq),
           xml: doc.xml,
         })
@@ -214,7 +218,10 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     const resultado = { ok: true, cnpj: cliente.cnpj, docs: 0, lotes: 0, resumo: 0, completa: 0, evento: 0, ignorado: 0, fora: 0, saida: 0, cStat: null, xMotivo: null, erro: null }
     const fechar = () => {
-      sql.fecharExecucao.run({ id: execId, fim: iso(), c_stat: resultado.cStat, x_motivo: resultado.xMotivo, docs_recebidos: resultado.docs, erro: resultado.erro })
+      sql.fecharExecucao.run({
+        id: execId, fim: iso(), c_stat: resultado.cStat, x_motivo: resultado.xMotivo, docs_recebidos: resultado.docs,
+        notas_recebidas: resultado.resumo + resultado.completa + resultado.fora, eventos_recebidos: resultado.evento, erro: resultado.erro,
+      })
       return resultado
     }
     const falhar = (mensagem, extra = {}) => {

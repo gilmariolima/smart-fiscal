@@ -258,3 +258,66 @@ test('cliente bloqueado pelo 656 na lista é pulado com o motivo', async (t) => 
   const r = await criarServicoCiclo(amb.deps).executarCiclo({ cnpjs: [CNPJ_B] })
   assert.match(r.clientes[0].captura.pulado, /^bloqueado até/)
 })
+
+test('ciclo: NF-e e NFS-e na mesma rodada', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ adn: criarAdnMock() })
+  t.after(amb.limpar)
+  const r = await criarServicoCiclo(amb.deps).executarCiclo()
+  const [c] = r.clientes
+  assert.equal(c.captura.ok, true)
+  assert.equal(c.nfse.ok, true)
+  assert.equal(c.nfse.notas, 3)
+  assert.ok(amb.adn.chamadas.some((ch) => ch.cnpj === CNPJ_MOCK_OK))
+  assert.equal(amb.db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfse'").get().n, 3)
+})
+
+test('ciclo: escritório não consulta NFS-e', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, CNPJ_MOCK_ESCRITORIO], adn: criarAdnMock() })
+  t.after(amb.limpar)
+  amb.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(amb.ids[1])
+  const r = await criarServicoCiclo(amb.deps).executarCiclo()
+  assert.equal(r.escritorio.nfse, undefined)
+  assert.ok(amb.adn.chamadas.every((ch) => ch.cnpj !== CNPJ_MOCK_ESCRITORIO))
+})
+
+test('ciclo: erro na NFS-e não para a NF-e, e o contrário também', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const adn = criarAdnMock()
+  adn.falhar(CNPJ_MOCK_OK, 'Certificado indisponível: senha errada')
+  const amb = montarAmbiente({ adn })
+  t.after(amb.limpar)
+  let [c] = (await criarServicoCiclo(amb.deps).executarCiclo()).clientes
+  assert.equal(c.captura.ok, true)
+  assert.equal(c.nfse.ok, false)
+
+  const amb2 = montarAmbiente({ adn: criarAdnMock(), fabrica: () => ({ consultaUltNSU: async () => { throw new Error('SEFAZ caiu') } }) })
+  t.after(amb2.limpar)
+  ;[c] = (await criarServicoCiclo(amb2.deps).executarCiclo()).clientes
+  assert.equal(c.captura.ok, false)
+  assert.equal(c.nfse.ok, true)
+  assert.equal(c.nfse.notas, 3)
+})
+
+test('ciclo: só NFS-e não consulta a SEFAZ nem o escritório', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, CNPJ_MOCK_ESCRITORIO], adn: criarAdnMock() })
+  t.after(amb.limpar)
+  amb.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(amb.ids[1])
+  const r = await criarServicoCiclo(amb.deps).executarCiclo({ cnpjs: [CNPJ_MOCK_OK], modelos: ['nfse'] })
+  assert.equal(amb.mock.chamadas.length, 0, 'nenhuma consulta de NF-e')
+  assert.equal(r.escritorio, undefined)
+  assert.equal(r.clientes[0].nfse.notas, 3)
+  assert.equal(r.clientes[0].captura, undefined)
+})
+
+test('ciclo: só NF-e não consulta o ADN', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ adn: criarAdnMock() })
+  t.after(amb.limpar)
+  const r = await criarServicoCiclo(amb.deps).executarCiclo({ modelos: ['nfe'] })
+  assert.equal(amb.adn.chamadas.length, 0)
+  assert.equal(r.clientes[0].captura.ok, true)
+  assert.equal(r.clientes[0].nfse, undefined)
+})
