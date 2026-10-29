@@ -35,21 +35,27 @@ function criarServicoCiclo(deps) {
     return exec ? `Já existe uma execução (${exec.tipo}) em andamento desde ${exec.inicio}.` : null
   }
 
+  // `escritorioComoCliente`: o escritório entra também como cliente (NFS-e dele), quando ele é cliente e foi escolhido.
   function clientesAlvo({ cnpj, cnpjs }) {
     if (cnpjs) {
       const achados = []
+      let escritorioComoCliente = false
       for (const x of cnpjs) {
         const c = sql.porCnpj.get(x)
         if (!c) return { erro: `CNPJ ${x} não cadastrado.` }
-        if (c.papel === 'escritorio') return { erro: `CNPJ ${x} é do escritório.` }
+        if (c.papel === 'escritorio') {
+          if (!c.tambem_cliente) return { erro: `CNPJ ${x} é do escritório.` }
+          escritorioComoCliente = true
+          continue
+        }
         achados.push(c)
       }
-      return { clientes: achados.filter((c) => c.ativo === 1).sort((a, b) => a.id - b.id) }
+      return { clientes: achados.filter((c) => c.ativo === 1).sort((a, b) => a.id - b.id), escritorioComoCliente }
     }
-    if (!cnpj) return { clientes: sql.ativos.all() }
+    if (!cnpj) return { clientes: sql.ativos.all(), escritorioComoCliente: true }
     const c = sql.porCnpj.get(cnpj)
     if (!c) return { erro: `CNPJ ${cnpj} não cadastrado.` }
-    if (c.papel === 'escritorio') return { clientes: [], escritorio: c.ativo ? c : null }
+    if (c.papel === 'escritorio') return { clientes: [], escritorio: c.ativo ? c : null, escritorioComoCliente: true }
     return { clientes: [c] }
   }
 
@@ -62,20 +68,22 @@ function criarServicoCiclo(deps) {
   }
 
   // Executa `passo` para cada cliente sob a trava.
-  // O escritório (se existir e estiver ativo) roda antes, só com `passoEscritorio`.
+  // O escritório (se existir e estiver ativo) roda antes: `passoEscritorio(escritorio, comoCliente)` devolve
+  // a função a rodar, ou null quando não há nada a fazer com ele.
   async function comTrava({ cnpj, cnpjs } = {}, passo, passoEscritorio, aoIniciarCliente) {
     const ocupado = cicloEmAndamento()
     if (ocupado) return { ok: false, erro: ocupado, clientes: [] }
-    const { clientes, erro, escritorio: alvoEscritorio } = clientesAlvo({ cnpj, cnpjs })
+    const { clientes, erro, escritorio: alvoEscritorio, escritorioComoCliente } = clientesAlvo({ cnpj, cnpjs })
     if (erro) return { ok: false, erro, clientes: [] }
     const escritorio = passoEscritorio ? (cnpj && !cnpjs ? alvoEscritorio : sql.escritorio.get()) : null
+    const tarefaEscritorio = escritorio ? passoEscritorio(escritorio, !!(escritorioComoCliente && escritorio.tambem_cliente)) : null
     rodando = true
     try {
       let resultadoEscritorio
-      if (escritorio) {
+      if (tarefaEscritorio) {
         avisar(aoIniciarCliente, escritorio.cnpj)
         try {
-          resultadoEscritorio = { cnpj: escritorio.cnpj, ...(await passoEscritorio(escritorio)) }
+          resultadoEscritorio = { cnpj: escritorio.cnpj, ...(await tarefaEscritorio()) }
         } catch (e) {
           logger.error('Erro inesperado no ciclo do escritório', { cnpj: escritorio.cnpj, erro: e.message })
           resultadoEscritorio = { cnpj: escritorio.cnpj, erro: e.message }
@@ -98,7 +106,7 @@ function criarServicoCiclo(deps) {
   }
 
   /** Ciclo completo. `forcar` ignora a espera de 1 h da consulta por NSU (nunca o bloqueio do 656). */
-  /** `modelos`: ['nfe', 'nfse'] (padrão) ou só um deles. Sem NF-e, o escritório não roda (ele só busca NF-e). */
+  /** `modelos`: ['nfe', 'nfse'] (padrão) ou só um deles. A NFS-e do escritório só roda quando ele também é cliente. */
   function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente, modelos = ['nfe', 'nfse'] } = {}) {
     const comNfe = modelos.includes('nfe')
     const comNfse = modelos.includes('nfse')
@@ -114,7 +122,14 @@ function criarServicoCiclo(deps) {
       }
       if (comNfse) resultado.nfse = await semExcecao(() => capturaNfse.capturarCliente(cliente.id, { forcar }), cliente, 'NFS-e')
       return resultado
-    }, comNfe ? async (escritorio) => ({ captura: await captura.capturarCliente(escritorio.id, { forcar }) }) : null, aoIniciarCliente)
+    }, (escritorio, comoCliente) => {
+      const nfse = comNfse && comoCliente
+      if (!comNfe && !nfse) return null
+      return async () => ({
+        ...(comNfe && { captura: await captura.capturarCliente(escritorio.id, { forcar }) }),
+        ...(nfse && { nfse: await semExcecao(() => capturaNfse.capturarCliente(escritorio.id, { forcar }), escritorio, 'NFS-e') }),
+      })
+    }, aoIniciarCliente)
   }
 
   async function semExcecao(fn, cliente, servico) {

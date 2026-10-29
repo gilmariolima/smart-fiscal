@@ -1052,3 +1052,23 @@ test('PDF da NFS-e: gera o DANFSe na hora; NF-e não tem', async (t) => {
   const nfe = ctx.db.prepare("SELECT id FROM notas WHERE modelo = 'nfe' LIMIT 1").get()
   assert.equal((await pedir(`/api/notas/${nfe.id}/pdf`)).status, 404)
 })
+
+test('escritório cadastrado como cliente aparece em Clientes, tem meses e sai da lista ao desativar', async (t) => {
+  const { pedir } = await montar(t)
+  const cert = gerarPfx({ cnpj: CNPJ_NOVO })
+  const corpo = { cnpj: CNPJ_NOVO, razao: 'Contabilidade Teste', uf: 'CE', pfx: pfxBase64(cert), senha: cert.senha }
+  assert.equal((await pedir('/api/escritorio', { method: 'POST', body: corpo })).status, 201)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_NOVO}/meses`)).status, 404)
+
+  const cadastro = await pedir('/api/clientes', { method: 'POST', body: { ...corpo, apelido: 'Meu escritório' } })
+  assert.equal(cadastro.status, 201)
+  const lista = () => pedir('/api/clientes').then((r) => r.corpo.clientes)
+  const esc = (await lista()).find((c) => c.cnpj === CNPJ_NOVO)
+  assert.deepEqual([esc.escritorio, esc.apelido, esc.razaoSocial, esc.ativo], [true, null, 'Contabilidade Teste', true])
+  assert.equal((await pedir(`/api/clientes/${CNPJ_NOVO}/meses`)).status, 200)
+
+  const fora = await pedir(`/api/clientes/${CNPJ_NOVO}/ativo`, { method: 'POST', body: { ativo: false } })
+  assert.match(fora.corpo.mensagem, /fora da lista de clientes/)
+  assert.ok(!(await lista()).some((c) => c.cnpj === CNPJ_NOVO))
+  assert.ok((await pedir('/api/escritorio')).corpo, 'o escritório continua cadastrado')
+})

@@ -178,3 +178,21 @@ test('resumo não conta o escritório como cliente, mas avisa o certificado dele
   assert.equal(r.certificadosVencendo[0].nome, 'escritorio')
   assert.equal(r.clientesComErro.length, 1)
 })
+
+test('escritório cadastrado como cliente vira cliente também, sem linha nova', (t) => {
+  const m = montar()
+  t.after(m.limpar)
+  m.servico.cadastrarEscritorio({ cnpj: CNPJ, razao: 'Contabilidade Exemplo', uf: 'CE', pfx: certOk.pfx, senha: certOk.senha })
+  const { cliente } = m.servico.cadastrar(dados())
+  assert.equal(cliente.papel, 'escritorio')
+  assert.equal(cliente.tambem_cliente, 1)
+  assert.equal(cliente.apelido, 'escritorio', 'a pasta do escritório não muda')
+  assert.equal(m.db.prepare('SELECT COUNT(*) n FROM clientes').get().n, 1)
+  assert.throws(() => m.servico.cadastrar(dados()), /já cadastrado/)
+  assert.equal(criarServicoResumo({ db: m.db }).resumo().clientesTotal, 1)
+
+  // Desativar como cliente só tira a marca; o escritório continua ativo para as saídas.
+  m.servico.definirAtivo(CNPJ, false)
+  const e = m.servico.obterEscritorio()
+  assert.deepEqual([e.ativo, e.tambem_cliente], [1, 0])
+})

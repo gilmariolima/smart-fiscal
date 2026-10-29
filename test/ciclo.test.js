@@ -321,3 +321,27 @@ test('ciclo: só NF-e não consulta o ADN', async (t) => {
   assert.equal(r.clientes[0].captura.ok, true)
   assert.equal(r.clientes[0].nfse, undefined)
 })
+
+test('ciclo: escritório que também é cliente consulta a própria NFS-e e pode ser marcado na lista', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, CNPJ_MOCK_ESCRITORIO], adn: criarAdnMock() })
+  t.after(amb.limpar)
+  amb.db.prepare("UPDATE clientes SET papel = 'escritorio', tambem_cliente = 1 WHERE id = ?").run(amb.ids[1])
+  const ciclo = criarServicoCiclo(amb.deps)
+
+  const r = await ciclo.executarCiclo()
+  assert.equal(r.escritorio.captura.ok, true)
+  assert.equal(r.escritorio.nfse.ok, true)
+  assert.ok(amb.adn.chamadas.some((ch) => ch.cnpj === CNPJ_MOCK_ESCRITORIO))
+
+  // Só NFS-e, marcando só o escritório: roda ele e nenhum cliente.
+  const s = await ciclo.executarCiclo({ cnpjs: [CNPJ_MOCK_ESCRITORIO], modelos: ['nfse'], forcar: true })
+  assert.equal(s.ok, true)
+  assert.deepEqual(s.clientes, [])
+  assert.equal(s.escritorio.nfse.ok, true)
+  assert.equal(s.escritorio.captura, undefined)
+
+  // Só NFS-e de outro cliente: o escritório fica de fora.
+  const o = await ciclo.executarCiclo({ cnpjs: [CNPJ_MOCK_OK], modelos: ['nfse'], forcar: true })
+  assert.equal(o.escritorio, undefined)
+})

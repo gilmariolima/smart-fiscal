@@ -389,3 +389,22 @@ test('documento de tipo desconhecido ou sem chave é ignorado', async (t) => {
   assert.equal(servico.processarDocumento(c, { nsu: '2', schema: 'resNFe_v1.01.xsd', xml: semChave, json: xmlParaJson(semChave) }), 'ignorado')
   assert.equal(notas(db).length, 0)
 })
+
+test('escritório que também é cliente: guarda a nota destinada a ele como entrada própria', async (t) => {
+  const { db, servico, mock, ids, limpar } = montarComEscritorio()
+  t.after(limpar)
+  db.prepare('UPDATE clientes SET tambem_cliente = 1 WHERE id = ?').run(ids[1])
+  const docs = mock.estado(CNPJ_MOCK_ESCRITORIO).docs
+  const resumo = docs.find((d) => d.json.resNFe)
+  assert.equal(servico.processarDocumento(cliente(db, ids[1]), resumo), 'resumo')
+
+  // procNFe de fora da carteira destinado ao escritório: entrada dele, não "fora da carteira".
+  const [s1] = docs
+  const xml = s1.xml.replace(CNPJ_FORA_CARTEIRA, CNPJ_MOCK_ESCRITORIO)
+  const doc = { nsu: '000000000000009', schema: s1.schema, xml, json: xmlParaJson(xml) }
+  assert.equal(servico.processarDocumento(cliente(db, ids[1]), doc), 'completa')
+
+  const doEscritorio = db.prepare('SELECT tipo, status FROM notas WHERE cliente_id = ? ORDER BY status').all(ids[1])
+  assert.deepEqual(doEscritorio, [{ tipo: 'entrada', status: 'completa' }, { tipo: 'entrada', status: 'resumo' }])
+  assert.equal(db.prepare('SELECT tipo FROM notas WHERE cliente_id = ?').get(ids[0]).tipo, 'saida', 'a saída do cliente continua nele')
+})

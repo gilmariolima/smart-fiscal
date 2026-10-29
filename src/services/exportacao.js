@@ -75,7 +75,7 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia || '')) throw new Error(`Competência inválida: ${competencia}. Use AAAA-MM.`)
     const cliente = sql.cliente.get(somenteDigitos(cnpj))
     if (!cliente) throw new Error(`CNPJ ${somenteDigitos(cnpj)} não cadastrado.`)
-    if (cliente.papel === 'escritorio') throw new Error(`CNPJ ${cliente.cnpj} é do escritório: exporte pelo CNPJ do cliente.`)
+    if (cliente.papel === 'escritorio' && !cliente.tambem_cliente) throw new Error(`CNPJ ${cliente.cnpj} é do escritório: exporte pelo CNPJ do cliente.`)
 
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     try {

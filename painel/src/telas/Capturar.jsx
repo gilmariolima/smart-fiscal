@@ -217,6 +217,7 @@ function ListaDeClientes({ modelo }) {
                   <td className="nome-cliente">
                     {nomeDe(c)}
                     {c.apelido && <span className="secundario">{c.razaoSocial}</span>}
+                    {c.escritorio && <span className="secundario">Escritório</span>}
                   </td>
                   <td className="mono sem-quebra">{formatarCnpj(c.cnpj)}</td>
                   <td className="sem-quebra">

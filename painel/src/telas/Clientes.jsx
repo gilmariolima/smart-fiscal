@@ -116,7 +116,7 @@ function Acoes({ c, cadastroLiberado, onAtivo, ocupado }) {
       {cadastroLiberado && (
         <BotaoIcone
           icone={c.ativo ? 'fa-power-off' : 'fa-rotate-left'}
-          dica={c.ativo ? 'Desativar (fica fora das capturas)' : 'Reativar (volta a entrar nas capturas)'}
+          dica={c.escritorio ? 'Tirar da lista de clientes' : c.ativo ? 'Desativar (fica fora das capturas)' : 'Reativar (volta a entrar nas capturas)'}
           onClick={() => onAtivo(c)}
           disabled={ocupado}
           perigo={c.ativo}
@@ -220,9 +220,11 @@ export default function Clientes() {
 
   function alternarAtivo(c) {
     const nome = nomeDe(c)
-    const pergunta = c.ativo
-      ? `Desativar ${nome}? Ele fica fora das capturas até ser reativado. Nada é apagado.`
-      : `Reativar ${nome}? Ele volta a entrar nas capturas.`
+    const pergunta = c.escritorio
+      ? `Tirar ${nome} da lista de clientes? As notas do próprio escritório deixam de ser puxadas; as de saída dos clientes continuam. Nada é apagado.`
+      : c.ativo
+        ? `Desativar ${nome}? Ele fica fora das capturas até ser reativado. Nada é apagado.`
+        : `Reativar ${nome}? Ele volta a entrar nas capturas.`
     if (!window.confirm(pergunta)) return
     executar('ativo', async () => {
       const r = await api.post(`/api/clientes/${c.cnpj}/ativo`, { ativo: !c.ativo })
@@ -270,6 +272,7 @@ export default function Clientes() {
                   <td className="nome-cliente">
                     {nomeDe(c)}
                     {c.apelido && <span className="secundario">{c.razaoSocial}</span>}
+                    {c.escritorio && <span className="secundario">Escritório</span>}
                     {!c.ativo && <span className="secundario">Desativado</span>}
                   </td>
                   <td className="mono sem-quebra">{formatarCnpj(c.cnpj)}</td>

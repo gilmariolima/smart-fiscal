@@ -2,13 +2,13 @@
 
 // Números gerais do sistema (comando `status` e visão geral do painel).
 
-const { DIAS_ALERTA_CERT } = require('./clientes')
+const { DIAS_ALERTA_CERT, DA_CARTEIRA } = require('./clientes')
 
 function criarServicoResumo({ db, config = {}, agora = () => new Date() }) {
   const maxTentativas = config.maxTentativasDownload || 5
   const sql = {
     porStatus: db.prepare(`SELECT status, COUNT(*) total, SUM(cancelada) canceladas FROM notas GROUP BY status ORDER BY status`),
-    clientes: db.prepare("SELECT COUNT(*) total, COALESCE(SUM(ativo), 0) ativos FROM clientes WHERE papel = 'cliente'"),
+    clientes: db.prepare(`SELECT COUNT(*) total, COALESCE(SUM(ativo), 0) ativos FROM clientes WHERE ${DA_CARTEIRA}`),
     notasMes: db.prepare('SELECT COUNT(*) n FROM notas WHERE competencia = ?'),
     certificados: db.prepare(`SELECT COUNT(*) total,
         COALESCE(SUM(cert_validade < @agora), 0) vencidos,

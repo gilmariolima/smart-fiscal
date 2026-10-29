@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS clientes (
   nfse_ult_nsu TEXT NOT NULL DEFAULT '0', -- NSU do ADN (NFS-e), separado do da NF-e
   nfse_proxima_consulta TEXT,
   nfse_ultima_consulta TEXT,
-  nfse_ultimo_erro TEXT
+  nfse_ultimo_erro TEXT,
+  tambem_cliente INTEGER NOT NULL DEFAULT 0 -- escritório que também puxa as próprias notas, como cliente
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_um_escritorio ON clientes(papel) WHERE papel = 'escritorio';
 

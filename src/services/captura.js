@@ -3,6 +3,7 @@
 const { tipoDocumento } = require('../sefaz/client')
 const { criarArmazenamento, nomes, direcaoPelaChave, modeloPelaChave } = require('./armazenamento')
 const { dadosResNFe, dadosNfeProc, dadosEvento, competenciaDe } = require('./extracao')
+const { DA_CARTEIRA } = require('./clientes')
 
 const UMA_HORA = 3600e3
 const MAX_LOTES_POR_CICLO = 500 // trava de segurança: 500 lotes x 50 docs
@@ -61,7 +62,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     clientesAtivos: db.prepare('SELECT * FROM clientes WHERE ativo = 1 ORDER BY id'),
     clientePorCnpj: db.prepare('SELECT * FROM clientes WHERE cnpj = ?'),
     // Encaminhamento do escritório: CNPJ exato (filial é outro cliente); inativo também recebe a nota.
-    clienteDaCarteira: db.prepare("SELECT * FROM clientes WHERE cnpj = ? AND papel = 'cliente'"),
+    clienteDaCarteira: db.prepare(`SELECT * FROM clientes WHERE cnpj = ? AND ${DA_CARTEIRA}`),
     iniciarExecucao: db.prepare(`INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura', ?)`),
     marcarCaptura: db.prepare('UPDATE notas SET captura_id = ? WHERE cliente_id = ? AND chave = ?'),
     notasDaCaptura: db.prepare('SELECT COUNT(*) n FROM notas WHERE captura_id = ?'),
@@ -167,7 +168,8 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
   }
 
   function processarDoEscritorio(escritorio, doc, tipo, contagem) {
-    if (tipo === 'resNFe') return 'ignorado' // nota destinada ao próprio escritório
+    // Nota destinada ao próprio escritório: só fica quando ele também é cliente.
+    if (tipo === 'resNFe') return escritorio.tambem_cliente ? processarResumo(escritorio, doc) : 'ignorado'
     if (tipo === 'procNFe') return encaminharCompleta(escritorio, doc, contagem)
     const e = eventoDoDocumento(doc)
     if (!e) return 'ignorado'

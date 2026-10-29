@@ -1,8 +1,8 @@
 {
   "name": "smart-fiscal",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
-  "description": "Smart Fiscal: captura das NF-e dos clientes (SEFAZ) e inventário do bloco H do SPED Fiscal, num app só.",
+  "description": "Smart Fiscal",
   "type": "commonjs",
   "main": "electron/main.js",
   "engines": {

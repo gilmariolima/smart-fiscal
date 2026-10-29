@@ -10,7 +10,7 @@ const http = require('node:http')
 const path = require('node:path')
 const archiver = require('archiver')
 const express = require('express')
-const { COLUNAS_PUBLICAS } = require('../services/clientes')
+const { COLUNAS_PUBLICAS, DA_CARTEIRA } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
 const { detalharNfe, detalharNfse } = require('../services/detalheNota')
 const { montarPlanilhaDoMes } = require('../services/planilhaMes')
@@ -133,7 +133,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
   // ---------- consultas ----------
 
   const sql = {
-    clientes: db.prepare(`SELECT ${COLUNAS_PUBLICAS} FROM clientes WHERE papel = 'cliente' ORDER BY razao_social`),
+    clientes: db.prepare(`SELECT ${COLUNAS_PUBLICAS} FROM clientes WHERE ${DA_CARTEIRA} ORDER BY razao_social`),
     contagemPorCliente: db.prepare(`SELECT cliente_id,
         SUM(CASE WHEN status = 'resumo' AND cancelada = 0 THEN 1 ELSE 0 END) resumo,
         SUM(CASE WHEN status = 'ciencia_enviada' AND cancelada = 0 THEN 1 ELSE 0 END) ciencia,
@@ -163,7 +163,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
     ultimaCapturaNfsePorCliente: db.prepare(`SELECT cliente_id, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
-    clientePorCnpj: db.prepare('SELECT id, cnpj, papel FROM clientes WHERE cnpj = ?'),
+    clientePorCnpj: db.prepare('SELECT id, cnpj, papel, tambem_cliente FROM clientes WHERE cnpj = ?'),
     ultimaCapturaDoCliente: db.prepare(`SELECT e.id FROM execucoes e JOIN clientes c ON c.id = e.cliente_id
       WHERE c.cnpj = @cnpj AND e.tipo = @tipo AND e.fim IS NOT NULL AND e.erro IS NULL ORDER BY e.id DESC LIMIT 1`),
     ativosNaOrdem: db.prepare("SELECT cnpj FROM clientes WHERE ativo = 1 AND papel = 'cliente' ORDER BY id"),
@@ -212,7 +212,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
         return {
           cnpj: c.cnpj,
           razaoSocial: c.razao_social,
-          apelido: c.apelido,
+          // O apelido do escritório é o nome da pasta dele ("escritorio"); na lista vale a razão social.
+          apelido: c.papel === 'escritorio' ? null : c.apelido,
+          escritorio: c.papel === 'escritorio',
           uf: c.uf,
           ativo: !!c.ativo,
           ultNsu: c.ult_nsu,
@@ -250,7 +252,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
 
   app.get('/api/clientes/:cnpj/meses', (req, res) => {
     const cliente = sql.clientePorCnpj.get(req.params.cnpj)
-    if (!cliente || cliente.papel !== 'cliente') throw new ErroHttp(404, 'Cliente não cadastrado.')
+    if (!cliente || (cliente.papel !== 'cliente' && !cliente.tambem_cliente)) throw new ErroHttp(404, 'Cliente não cadastrado.')
     const anos = []
     const modelo = req.query.modelo || null
     if (modelo && modelo !== 'nfe' && modelo !== 'nfse') throw new ErroHttp(400, 'Modelo inválido.')
@@ -432,7 +434,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
   app.get('/api/planilha', async (req, res) => {
     const competencia = String(req.query.competencia || '')
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
-    const cliente = db.prepare("SELECT * FROM clientes WHERE cnpj = ? AND papel = 'cliente'").get(String(req.query.cnpj || '').replace(/\D/g, ''))
+    const cliente = db.prepare(`SELECT * FROM clientes WHERE cnpj = ? AND ${DA_CARTEIRA}`).get(String(req.query.cnpj || '').replace(/\D/g, ''))
     if (!cliente) throw new ErroHttp(404, 'Cliente não cadastrado.')
     const notas = db.prepare('SELECT * FROM notas WHERE cliente_id = ? AND competencia = ? ORDER BY modelo, tipo, data_emissao').all(cliente.id, competencia)
     const lerXml = (n) => {
@@ -529,13 +531,14 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     for (const cnpj of cnpjs) {
       const cliente = sql.clientePorCnpj.get(cnpj)
       if (!cliente) throw new ErroHttp(404, `Cliente ${cnpj} não cadastrado.`)
-      if (cliente.papel === 'escritorio') throw new ErroHttp(400, 'O escritório é capturado sempre junto; não o marque na lista.')
+      if (cliente.papel === 'escritorio' && !cliente.tambem_cliente) throw new ErroHttp(400, 'O escritório é capturado sempre junto; não o marque na lista.')
     }
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
     const escritorio = ctx.clientes.obterEscritorio()
     const marcados = new Set(cnpjs)
+    const escritorioNaFila = escritorio?.ativo && (modelos.includes('nfe') || (escritorio.tambem_cliente && marcados.has(escritorio.cnpj)))
     andamento.fila = [
-      ...(escritorio?.ativo && modelos.includes('nfe') ? [escritorio.cnpj] : []),
+      ...(escritorioNaFila ? [escritorio.cnpj] : []),
       ...sql.ativosNaOrdem.all().map((c) => c.cnpj).filter((c) => marcados.has(c)),
     ]
     const aoIniciarCliente = (cnpj) => {
@@ -698,6 +701,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     exigirLocal(req)
     if (typeof req.body?.ativo !== 'boolean') throw new ErroHttp(400, 'Informe se o cliente fica ativo.')
     const c = comoErroHttp(() => ctx.clientes.definirAtivo(req.params.cnpj, req.body.ativo))
+    if (c.papel === 'escritorio') {
+      return res.json({ ok: true, ativo: !!c.ativo, mensagem: c.ativo ? 'Escritório de volta na lista de clientes.' : 'Escritório fora da lista de clientes: as notas dele deixam de ser puxadas.' })
+    }
     res.json({ ok: true, ativo: !!c.ativo, mensagem: c.ativo ? 'Cliente reativado.' : 'Cliente desativado: fica fora das próximas capturas.' })
   })
 

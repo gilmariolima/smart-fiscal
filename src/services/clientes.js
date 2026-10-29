@@ -11,7 +11,10 @@ const DIAS_ALERTA_CERT = 30
 // Colunas seguras para exibir: nunca inclui cert_senha_enc.
 const COLUNAS_PUBLICAS = `id, cnpj, razao_social, apelido, uf, cert_arquivo, cert_validade, ativo, papel, ult_nsu, max_nsu,
   proxima_consulta, bloqueado_ate, ultima_consulta, ultimo_erro, criado_em,
-  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro`
+  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro, tambem_cliente`
+
+// Linhas que têm notas próprias: os clientes e o escritório quando ele também é cliente.
+const DA_CARTEIRA = "(papel = 'cliente' OR tambem_cliente = 1)"
 
 function somenteDigitos(v) {
   return String(v || '').replace(/\D/g, '')
@@ -45,6 +48,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     trocarCert: db.prepare(`UPDATE clientes SET cert_arquivo = @cert_arquivo, cert_senha_enc = @cert_senha_enc,
       cert_validade = @cert_validade, ultimo_erro = NULL WHERE cnpj = @cnpj`),
     ativo: db.prepare('UPDATE clientes SET ativo = ? WHERE cnpj = ?'),
+    tambemCliente: db.prepare("UPDATE clientes SET tambem_cliente = ? WHERE cnpj = ? AND papel = 'escritorio'"),
     dados: db.prepare('UPDATE clientes SET razao_social = @razao_social, uf = @uf WHERE id = @id'),
     notasDe: db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?'),
     apagarExecucoes: db.prepare('DELETE FROM execucoes WHERE cliente_id = ?'),
@@ -113,10 +117,21 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
    */
   function cadastrar({ cnpj, razao, uf, apelido, pfx, senha }) {
     const c = validarDados({ cnpj, razao, uf })
-    if (sql.porCnpj.get(c)) throw new Error(`CNPJ ${c} já cadastrado. Para renovar, troque o certificado do cliente (cliente:cert ou no painel).`)
+    const existente = sql.porCnpj.get(c)
+    if (existente?.papel === 'escritorio' && !existente.tambem_cliente) return tornarEscritorioCliente({ cnpj: c, pfx, senha })
+    if (existente) throw new Error(`CNPJ ${c} já cadastrado. Para renovar, troque o certificado do cliente (cliente:cert ou no painel).`)
     const r = inserirCliente({ cnpj: c, razao, uf, apelido, papel: 'cliente', pfx, senha })
     logger.info('Cliente cadastrado', { cnpj: c, validade: r.certificado.validade })
     return r
+  }
+
+  // O CNPJ do escritório cadastrado como cliente: a mesma linha passa a guardar as notas dele (uma fila de NSU por CNPJ).
+  // O certificado enviado substitui o do escritório (é o mesmo CNPJ).
+  function tornarEscritorioCliente({ cnpj, pfx, senha }) {
+    const r = trocarCertificado({ cnpj, pfx, senha })
+    sql.tambemCliente.run(1, cnpj)
+    logger.info('Escritório passou a ser cliente também', { cnpj })
+    return { ...r, cliente: sql.porCnpj.get(cnpj) }
   }
 
   /** Cadastra o escritório (no máximo um), que usa o próprio certificado A1 para as notas de saída. */
@@ -170,6 +185,12 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   function definirAtivo(cnpj, ativo) {
     const c = somenteDigitos(cnpj)
+    // No escritório, desativar como cliente só deixa de puxar as notas dele; as de saída dos clientes continuam.
+    if (sql.porCnpj.get(c)?.papel === 'escritorio') {
+      sql.tambemCliente.run(ativo ? 1 : 0, c)
+      logger.info(ativo ? 'Escritório voltou a ser cliente' : 'Escritório deixou de ser cliente', { cnpj: c })
+      return { ...sql.porCnpj.get(c), ativo: ativo ? 1 : 0 }
+    }
     if (!sql.ativo.run(ativo ? 1 : 0, c).changes) throw new Error(`CNPJ ${c} não cadastrado.`)
     logger.info(ativo ? 'Cliente ativado' : 'Cliente desativado', { cnpj: c })
     return sql.porCnpj.get(c)
@@ -187,4 +208,4 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
   return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, listar, obter, validarCertificado }
 }
 
-module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS }
+module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }
