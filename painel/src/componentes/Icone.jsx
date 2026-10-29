@@ -47,6 +47,22 @@ const DESENHOS = {
       <path d="M8 7h4M8 11h4M8 15h4" />
     </>
   ),
+  capturar: (
+    <>
+      <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" />
+      <path d="M4 4v4h4" />
+      <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
+      <path d="M20 20v-4h-4" />
+    </>
+  ),
+  certificado: (
+    <>
+      <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-4" />
+      <path d="M8 7h8M8 10.5h5" />
+      <circle cx="8.5" cy="16" r="2.8" />
+      <path d="m7 18.4-.8 3.1 2.3-1.1 2.3 1.1-.8-3.1" />
+    </>
+  ),
 }
 
 export default function Icone({ nome }) {

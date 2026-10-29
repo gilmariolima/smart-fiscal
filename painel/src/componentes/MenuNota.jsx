@@ -54,11 +54,9 @@ export default function MenuNota({ nota: n, cnpj, limite, onReprocessar, ocupado
           <Link to={ver}>Ver nota</Link>
           {!!n.tem_xml && (
             <>
-              <a href={`/api/notas/${n.id}/xml`} download={`${n.chave}-${n.modelo === 'nfse' ? 'nfse' : 'nfe'}.xml`}>
+              {/* Sem evento vem o .xml; com evento, um ZIP com a nota e os eventos (nome dado pelo servidor). */}
+              <a href={`/api/notas/${n.id}/xml-eventos`} download>
                 Baixar XML
-              </a>
-              <a href={`/api/notas/${n.id}/xml-eventos`} download={`${n.chave}-${n.modelo === 'nfse' ? 'nfse' : 'nfe'}-eventos.zip`}>
-                Baixar XML + eventos
               </a>
               {n.modelo === 'nfse' ? (
                 <a href={`/api/notas/${n.id}/pdf`} download={`${n.chave}-nfse.pdf`}>

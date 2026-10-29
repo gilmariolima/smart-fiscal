@@ -31,10 +31,10 @@ const SITUACOES = [
 
 export default function Mes() {
   const { cnpj, ano, mes, modelo: slugModelo, direcao: slugDirecao } = useParams()
-  // Dentro de NF-e|NFS-e → Entradas|Saídas o modelo e o tipo vêm do caminho; na lista "todas", dos filtros.
-  const pastaModelo = MODELOS[slugModelo]
+  // O modelo vem sempre do caminho (NF-e | NFS-e); dentro de Entradas|Saídas o tipo também. Na lista "todas", o tipo vem do filtro.
+  const pastaModelo = MODELOS[slugModelo] || MODELOS['nf-e']
   const pastaDirecao = DIRECOES[slugDirecao]
-  const naPasta = !!(pastaModelo && pastaDirecao)
+  const naPasta = !!pastaDirecao
   const [params, setParams] = useSearchParams()
   const nome = useNomeDoCliente(cnpj)
   const mes2 = String(mes).padStart(2, '0')
@@ -42,7 +42,7 @@ export default function Mes() {
   const nomeDoMes = NOMES_DOS_MESES[Number(mes) - 1] || mes
 
   const tipo = naPasta ? pastaDirecao.valor : ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
-  const modelo = naPasta ? pastaModelo.valor : ['nfe', 'nfse'].includes(params.get('modelo')) ? params.get('modelo') : ''
+  const modelo = pastaModelo.valor
   const status = params.get('status') || ''
   const busca = (params.get('busca') || '').trim()
   const todas = params.get('todas') === '1'
@@ -162,7 +162,6 @@ export default function Mes() {
       ? []
       : [
           { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</span> },
-          { chave: 'modelo', titulo: 'Modelo', classe: 'sem-quebra', render: (n) => (n.modelo === 'nfse' ? 'NFS-e' : 'NF-e') },
         ]),
     { chave: 'numero', titulo: 'Número', ordem: 'numero', classe: 'mono', render: (n) => <Link to={`/notas/${cnpj}/nota/${n.id}`}>{n.numero || '—'}</Link> },
     { chave: 'emissao', titulo: 'Emissão', ordem: 'emissao', classe: 'sem-quebra', render: (n) => data(n.data_emissao) },
@@ -174,7 +173,7 @@ export default function Mes() {
             classe: 'sem-quebra',
             render: (n) => {
               const [a, m] = (n.competencia || '').split('-')
-              return a ? <Link to={`/notas/${cnpj}/${a}/${m}`}>{`${m}/${a}`}</Link> : '—'
+              return a ? <Link to={`/notas/${cnpj}/${slugModelo}/${a}/${m}`}>{`${m}/${a}`}</Link> : '—'
             },
           },
         ]
@@ -209,8 +208,7 @@ export default function Mes() {
   ]
 
   const contagem = exibido?.contagemTipo || { entradas: 0, saidas: 0 }
-  const contagemModelo = exibido?.contagemModelo || { nfe: 0, nfse: 0 }
-  const filtrado = !!((!naPasta && (tipo || modelo)) || status || busca)
+  const filtrado = !!((!naPasta && tipo) || status || busca)
 
   let conteudo
   if (!exibido) conteudo = carregando && <p className="vazio">Carregando…</p>
@@ -244,23 +242,21 @@ export default function Mes() {
     )
   }
 
+  const raizModelo = `/notas/${cnpj}/${slugModelo}`
   const trilha = todas
     ? [
         { rotulo: 'Início', para: '/notas' },
         { rotulo: nome, para: `/notas/${cnpj}` },
+        { rotulo: pastaModelo.rotulo, para: raizModelo },
         { rotulo: busca ? `Busca: "${busca}"` : 'Todas as pastas' },
       ]
     : [
         { rotulo: 'Início', para: '/notas' },
         { rotulo: nome, para: `/notas/${cnpj}` },
-        { rotulo: ano, para: `/notas/${cnpj}/${ano}` },
-        ...(naPasta
-          ? [
-              { rotulo: nomeDoMes, para: `/notas/${cnpj}/${ano}/${mes}` },
-              { rotulo: pastaModelo.rotulo, para: `/notas/${cnpj}/${ano}/${mes}/${slugModelo}` },
-              { rotulo: pastaDirecao.rotulo },
-            ]
-          : [{ rotulo: nomeDoMes, para: `/notas/${cnpj}/${ano}/${mes}` }, { rotulo: 'Todas' }]),
+        { rotulo: pastaModelo.rotulo, para: raizModelo },
+        { rotulo: ano, para: `${raizModelo}/${ano}` },
+        { rotulo: nomeDoMes, para: `${raizModelo}/${ano}/${mes}` },
+        { rotulo: naPasta ? pastaDirecao.rotulo : 'Todas' },
       ]
 
   const acimaDoLimite = selecao.tamanho > LIMITE_ZIP
@@ -268,7 +264,7 @@ export default function Mes() {
 
   return (
     <Pagina
-      titulo={naPasta ? `${pastaModelo.rotulo} · ${pastaDirecao.rotulo}` : 'Notas'}
+      titulo={naPasta ? `${pastaModelo.rotulo} · ${pastaDirecao.rotulo}` : pastaModelo.rotulo}
       subtitulo="Ordene clicando no cabeçalho. Marque as notas e baixe os XMLs num ZIP."
       trilha={trilha}
       erro={erro || erroLista}
@@ -286,16 +282,6 @@ export default function Mes() {
                 { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas)})` },
                 { valor: 'entrada', rotulo: `Entradas (${inteiro(contagem.entradas)})` },
                 { valor: 'saida', rotulo: `Saídas (${inteiro(contagem.saidas)})` },
-              ]}
-            />
-            <Segmentado
-              rotulo="Modelo de nota"
-              valor={modelo}
-              onChange={(v) => mudar({ modelo: v })}
-              opcoes={[
-                { valor: '', rotulo: `Todas (${inteiro(contagemModelo.nfe + contagemModelo.nfse)})` },
-                { valor: 'nfe', rotulo: `NF-e (${inteiro(contagemModelo.nfe)})` },
-                { valor: 'nfse', rotulo: `NFS-e (${inteiro(contagemModelo.nfse)})` },
               ]}
             />
           </>

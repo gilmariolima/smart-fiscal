@@ -4,6 +4,8 @@ import MenuLateral from './layout/MenuLateral.jsx'
 import { ResumoProvider, useResumo } from './layout/ResumoProvider.jsx'
 import Anos from './telas/Anos.jsx'
 import Cadastro from './telas/Cadastro.jsx'
+import Capturar from './telas/Capturar.jsx'
+import NotasNovas from './telas/NotasNovas.jsx'
 import Clientes from './telas/Clientes.jsx'
 import Exportar from './telas/Exportar.jsx'
 import Execucoes from './telas/Execucoes.jsx'
@@ -13,6 +15,7 @@ import Inicio from './telas/Inicio.jsx'
 import Mes from './telas/Mes.jsx'
 import PastasDoMes from './telas/PastasDoMes.jsx'
 import Meses from './telas/Meses.jsx'
+import Modelos from './telas/Modelos.jsx'
 import Nota from './telas/Nota.jsx'
 import NotasRaiz from './telas/NotasRaiz.jsx'
 import Pendentes from './telas/Pendentes.jsx'
@@ -58,14 +61,18 @@ const rotas = createHashRouter([
     element: <Estrutura />,
     children: [
       { index: true, element: <Inicio /> },
+      { path: 'capturar', element: <Capturar /> },
+      { path: 'capturar/:modelo', element: <Capturar /> },
+      { path: 'capturar/:modelo/novas/:cnpj', element: <NotasNovas /> },
       { path: 'notas', element: <NotasRaiz /> },
-      { path: 'notas/:cnpj', element: <Anos /> },
-      { path: 'notas/:cnpj/:ano', element: <Meses /> },
+      // Cliente → NF-e | NFS-e | CT-e → ano → mês → Entradas | Saídas
+      { path: 'notas/:cnpj', element: <Modelos /> },
       { path: 'notas/:cnpj/nota/:id', element: <Nota /> },
-      { path: 'notas/:cnpj/:ano/:mes', element: <PastasDoMes /> },
-      { path: 'notas/:cnpj/:ano/:mes/todas', element: <Mes /> },
-      { path: 'notas/:cnpj/:ano/:mes/:modelo', element: <PastasDoMes /> },
-      { path: 'notas/:cnpj/:ano/:mes/:modelo/:direcao', element: <Mes /> },
+      { path: 'notas/:cnpj/:modelo', element: <Anos /> },
+      { path: 'notas/:cnpj/:modelo/:ano', element: <Meses /> },
+      { path: 'notas/:cnpj/:modelo/:ano/:mes', element: <PastasDoMes /> },
+      { path: 'notas/:cnpj/:modelo/:ano/:mes/todas', element: <Mes /> },
+      { path: 'notas/:cnpj/:modelo/:ano/:mes/:direcao', element: <Mes /> },
       { path: 'pendentes', element: <Pendentes /> },
       { path: 'clientes', element: <Clientes /> },
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },

@@ -1,64 +1,37 @@
-import { Link, useParams } from 'react-router'
+import { Link, Navigate, useParams } from 'react-router'
 import Pasta from '../componentes/Pasta.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { NOMES_DOS_MESES, inteiro } from '../formato.js'
 
-// Pastas do mês, iguais às do disco: <mês> → NF-e | NFS-e → Entradas | Saídas.
+// Caminho das notas: cliente → NF-e | NFS-e → ano → mês → Entradas | Saídas.
 export const MODELOS = { 'nf-e': { valor: 'nfe', rotulo: 'NF-e' }, 'nfs-e': { valor: 'nfse', rotulo: 'NFS-e' } }
 export const DIRECOES = { entradas: { valor: 'entrada', rotulo: 'Entradas' }, saidas: { valor: 'saida', rotulo: 'Saídas' } }
 
-function Contagens({ cnpj, competencia, modelo }) {
-  const { dados } = useApi(`/api/notas?cnpj=${cnpj}&competencia=${competencia}&modelo=${modelo}&somenteContagem=1`, [cnpj, competencia, modelo])
-  const c = dados?.contagemTipo
-  return (
-    <>
-      <td className="num">{c ? inteiro(c.entradas) : '…'}</td>
-      <td className="num">{c ? inteiro(c.saidas) : '…'}</td>
-    </>
-  )
-}
-
 export default function PastasDoMes() {
-  const { cnpj, ano, mes, modelo: slug } = useParams()
+  const { cnpj, modelo: slug, ano, mes } = useParams()
+  const modelo = MODELOS[slug]
   const nome = useNomeDoCliente(cnpj)
   const competencia = `${ano}-${String(mes).padStart(2, '0')}`
   const nomeDoMes = NOMES_DOS_MESES[Number(mes) - 1] || mes
-  const base = `/notas/${cnpj}/${ano}/${mes}`
-  const modelo = MODELOS[slug]
-  const filtro = `cnpj=${cnpj}&competencia=${competencia}${modelo ? `&modelo=${modelo.valor}` : ''}&somenteContagem=1`
+  const base = `/notas/${cnpj}/${slug}/${ano}/${mes}`
+  const filtro = `cnpj=${cnpj}&competencia=${competencia}&modelo=${modelo?.valor || 'nfe'}&somenteContagem=1`
   const { dados, erro } = useApi(`/api/notas?${filtro}`, [filtro])
+  if (!modelo) return <Navigate to={`/notas/${cnpj}`} replace />
 
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
     { rotulo: nome, para: `/notas/${cnpj}` },
-    { rotulo: ano, para: `/notas/${cnpj}/${ano}` },
-    ...(modelo ? [{ rotulo: nomeDoMes, para: base }, { rotulo: modelo.rotulo }] : [{ rotulo: nomeDoMes }]),
+    { rotulo: modelo.rotulo, para: `/notas/${cnpj}/${slug}` },
+    { rotulo: ano, para: `/notas/${cnpj}/${slug}/${ano}` },
+    { rotulo: nomeDoMes },
   ]
-
-  const linhas = modelo
-    ? Object.entries(DIRECOES).map(([d, info]) => (
-        <tr key={d}>
-          <td>
-            <Pasta para={`${base}/${slug}/${d}`}>{info.rotulo}</Pasta>
-          </td>
-          <td className="num">{dados ? inteiro(dados.contagemTipo[d === 'entradas' ? 'entradas' : 'saidas']) : '…'}</td>
-        </tr>
-      ))
-    : Object.entries(MODELOS).map(([m, info]) => (
-        <tr key={m}>
-          <td>
-            <Pasta para={`${base}/${m}`}>{info.rotulo}</Pasta>
-          </td>
-          <Contagens cnpj={cnpj} competencia={competencia} modelo={info.valor} />
-        </tr>
-      ))
 
   return (
     <Pagina
-      titulo="Notas"
-      subtitulo={modelo ? 'Escolha entradas ou saídas.' : 'Escolha NF-e ou NFS-e.'}
+      titulo={modelo.rotulo}
+      subtitulo="Escolha entradas ou saídas."
       trilha={trilha}
       erro={erro}
       acoes={
@@ -72,27 +45,25 @@ export default function PastasDoMes() {
           <thead>
             <tr>
               <th scope="col">Pasta</th>
-              {modelo ? (
-                <th scope="col" className="num">
-                  Notas
-                </th>
-              ) : (
-                <>
-                  <th scope="col" className="num">
-                    Entradas
-                  </th>
-                  <th scope="col" className="num">
-                    Saídas
-                  </th>
-                </>
-              )}
+              <th scope="col" className="num">
+                Notas
+              </th>
             </tr>
           </thead>
-          <tbody>{linhas}</tbody>
+          <tbody>
+            {Object.entries(DIRECOES).map(([d, info]) => (
+              <tr key={d}>
+                <td>
+                  <Pasta para={`${base}/${d}`}>{info.rotulo}</Pasta>
+                </td>
+                <td className="num">{dados ? inteiro(dados.contagemTipo[d === 'entradas' ? 'entradas' : 'saidas']) : '…'}</td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
       <p className="rodape-tabela">
-        <Link to={`${base}/todas`}>Ver todas as notas do mês numa lista só</Link>
+        <Link to={`${base}/todas`}>Ver todas as {modelo.rotulo} do mês numa lista só</Link>
       </p>
     </Pagina>
   )

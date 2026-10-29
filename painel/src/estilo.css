@@ -432,6 +432,31 @@ h2 {
   color: #c0c5ce;
 }
 
+.trilha-voltar {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 10px;
+  padding: 0;
+  color: var(--azul);
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.trilha-voltar:hover,
+.trilha-voltar:focus-visible {
+  border-color: #c7cff7;
+  background: var(--azul-claro);
+}
+
+.trilha-voltar svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Cartão: a mesma moldura do Estoque SPED (fundo branco, borda e sombra leve) */
 .cartao {
   background: var(--fundo);
@@ -1536,12 +1561,7 @@ tr.editavel:hover .botao-icone {
 
 /* ---------- início ---------- */
 
-/* Atalhos à esquerda e o quadro de certificados à direita, na mesma faixa. */
 .inicio-corpo {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
-  align-items: start;
-  gap: 18px 24px;
   padding-top: 8px;
   margin-bottom: 18px;
 }
@@ -1630,132 +1650,262 @@ tr.editavel:hover .botao-icone {
   --cor: #93370d;
 }
 
-/* Quadro de certificados */
-.certificados {
-  display: block;
-  padding: 14px 16px 10px;
-  background: var(--fundo);
-  border: 1px solid var(--borda);
-  border-radius: var(--raio);
-  box-shadow: var(--sombra);
-  text-decoration: none;
-  color: var(--texto);
+.atalho-ciano {
+  --cor: #0e7490;
 }
 
-.certificados:hover,
-.certificados:focus-visible {
-  border-color: #b8c2d6;
-}
-
-.certificados svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.arco-fundo,
-.arco {
-  fill: none;
-  stroke-width: 14;
-}
-
-.arco-fundo {
-  stroke: #f2f4f7;
-}
-
-.arco-verde {
-  stroke: #16a34a;
-}
-
-.arco-ambar {
-  stroke: #f79009;
-}
-
-.arco-vermelho {
-  stroke: #d92d20;
-}
-
-.arco-rotulo,
-.arco-total {
-  text-anchor: middle;
-  fill: var(--titulo);
-}
-
-.arco-rotulo {
-  font-size: 9px;
-}
-
-.arco-total {
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.legenda {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  font-size: 13px;
-}
-
-.legenda li {
-  display: flex;
-  align-items: center;
+/* Quadro dos certificados A1 (último dos atalhos): total, barra empilhada e legenda. */
+.quadro-cert {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
   gap: 8px;
-  padding: 3px 0;
 }
 
-.legenda strong {
-  margin-left: auto;
+.quadro-cert-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.quadro-cert-total {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--titulo);
   font-variant-numeric: tabular-nums;
 }
 
-.bolinha {
+.barra-cert {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f2f4f7;
+}
+
+.barra-cert > span {
+  flex-basis: 0;
+}
+
+.barra-cert-verde,
+.legenda-cert .bolinha-verde {
+  background: #16a34a;
+}
+
+.barra-cert-ambar,
+.legenda-cert .bolinha-ambar {
+  background: #f79009;
+}
+
+.barra-cert-vermelho,
+.legenda-cert .bolinha-vermelho {
+  background: #d92d20;
+}
+
+.legenda-cert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 12.5px;
+  color: var(--texto);
+}
+
+.legenda-cert > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.legenda-cert > span.zerada {
+  color: var(--apagado);
+}
+
+.legenda-cert i {
   width: 8px;
   height: 8px;
   border-radius: 50%;
 }
 
-.bolinha-verde {
-  background: #16a34a;
+/* ---------- capturar ---------- */
+
+/* Um card por tipo de documento; o escolhido abre a lista de clientes embaixo. */
+.cards-captura {
+  list-style: none;
+  margin: 8px 0 22px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
 }
 
-.bolinha-ambar {
-  background: #f79009;
+.card-captura {
+  --cor: var(--azul);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  padding: 16px 18px;
+  font: inherit;
+  text-align: left;
+  color: var(--texto);
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.bolinha-vermelho {
-  background: #d92d20;
+.card-captura:hover:not(:disabled),
+.card-captura:focus-visible {
+  border-color: #c7cff7;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.08);
 }
 
-/* Busca/ciência automáticas e Capturar agora, no cabeçalho do Início */
+.card-captura.escolhido {
+  border-color: var(--cor);
+  box-shadow: 0 0 0 1px var(--cor);
+}
+
+.card-roxo {
+  --cor: #6941c6;
+}
+
+.card-laranja {
+  --cor: #b54708;
+}
+
+.card-captura:disabled {
+  cursor: default;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.card-captura > i {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  border-radius: 10px;
+  color: var(--cor);
+  background: color-mix(in srgb, var(--cor) 11%, white);
+}
+
+.card-captura strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--titulo);
+}
+
+.card-captura small {
+  display: block;
+  color: var(--apagado);
+  font-size: 12.5px;
+}
+
+@media (max-width: 899px) {
+  .cards-captura {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ver-novas {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Busca automática e os horários dela, no cabeçalho do Capturar */
 .automacao {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 26px;
+  gap: 12px 22px;
 }
 
-.automacao .interruptor {
-  max-width: 250px;
+.horarios {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
-.automacao-captura {
+.horario {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--titulo);
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+}
+
+.horario button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--apagado);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.horario button:hover:not(:disabled) {
+  color: var(--erro);
+  background: var(--erro-fundo);
+}
+
+.horario button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.horario-novo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+}
+
+.horario-novo input {
+  height: 32px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--texto);
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+}
+
+.horario-novo .botao {
+  height: 32px;
+}
+
+.automacao.desligada .horarios {
+  opacity: 0.55;
 }
 
 @media (max-width: 1100px) {
-  .inicio-corpo {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .atalhos {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .certificados {
-    max-width: 300px;
   }
 }
 
@@ -1772,11 +1922,8 @@ tr.editavel:hover .botao-icone {
 
   .automacao {
     flex-direction: column;
+    align-items: flex-start;
     gap: 12px;
-  }
-
-  .automacao .interruptor {
-    max-width: none;
   }
 }
 
@@ -1860,6 +2007,19 @@ tr.editavel:hover .botao-icone {
 .pasta-icone {
   flex: none;
   fill: #f4b942;
+}
+
+/* Pasta que ainda não existe (CT-e "Em breve"): apagada e sem clique. */
+.pasta.pasta-desativada {
+  color: var(--apagado);
+}
+
+.pasta.pasta-desativada:hover span {
+  text-decoration: none;
+}
+
+.pasta-desativada .pasta-icone {
+  fill: #c3c8d4;
 }
 
 .tabela tr.inativo td,

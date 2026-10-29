@@ -1,19 +1,22 @@
-import { useParams } from 'react-router'
+import { Navigate, useParams } from 'react-router'
 import Pasta from '../componentes/Pasta.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { inteiro } from '../formato.js'
+import { MODELOS } from './PastasDoMes.jsx'
 
 export default function Anos() {
-  const { cnpj } = useParams()
+  const { cnpj, modelo: slug } = useParams()
+  const modelo = MODELOS[slug]
   const nome = useNomeDoCliente(cnpj)
-  const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses`, [cnpj])
+  const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses?modelo=${modelo?.valor || 'nfe'}`, [cnpj, slug])
   const anos = dados || []
+  if (!modelo) return <Navigate to={`/notas/${cnpj}`} replace />
 
   let conteudo
   if (carregando && !dados) conteudo = <p className="vazio">Carregando…</p>
-  else if (!anos.length) conteudo = !erro && <p className="vazio">Nenhuma nota capturada para este cliente.</p>
+  else if (!anos.length) conteudo = !erro && <p className="vazio">Nenhuma {modelo.rotulo} capturada para este cliente.</p>
   else
     conteudo = (
       <>
@@ -34,7 +37,7 @@ export default function Anos() {
               {anos.map((a) => (
                 <tr key={a.ano}>
                   <td>
-                    <Pasta para={`/notas/${cnpj}/${a.ano}`}>{a.ano}</Pasta>
+                    <Pasta para={`/notas/${cnpj}/${slug}/${a.ano}`}>{a.ano}</Pasta>
                   </td>
                   <td className="num">{inteiro(a.entradas)}</td>
                   <td className="num">{inteiro(a.saidas)}</td>
@@ -50,7 +53,12 @@ export default function Anos() {
     )
 
   return (
-    <Pagina titulo="Notas" subtitulo="Escolha o ano." trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome }]} erro={erro}>
+    <Pagina
+      titulo={modelo.rotulo}
+      subtitulo="Escolha o ano."
+      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome, para: `/notas/${cnpj}` }, { rotulo: modelo.rotulo }]}
+      erro={erro}
+    >
       {conteudo}
     </Pagina>
   )

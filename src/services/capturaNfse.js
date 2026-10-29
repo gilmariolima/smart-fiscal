@@ -29,9 +29,9 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
     cliente: db.prepare('SELECT * FROM clientes WHERE id = ?'),
     nota: db.prepare('SELECT * FROM notas WHERE cliente_id = ? AND chave = ?'),
     inserirNota: db.prepare(`INSERT INTO notas (cliente_id, chave, nsu, tipo, modelo, emitente_cnpj, emitente_nome, destinatario_cnpj, destinatario_nome,
-        numero, data_emissao, valor_total, status, cancelada, caminho_xml, competencia, atualizado_em)
+        numero, data_emissao, valor_total, status, cancelada, caminho_xml, competencia, atualizado_em, criado_em)
       VALUES (@cliente_id, @chave, @nsu, @tipo, 'nfse', @emitente_cnpj, @emitente_nome, @destinatario_cnpj, @destinatario_nome,
-        @numero, @data_emissao, @valor_total, 'completa', @cancelada, @caminho_xml, @competencia, @atualizado_em)`),
+        @numero, @data_emissao, @valor_total, 'completa', @cancelada, @caminho_xml, @competencia, @atualizado_em, @atualizado_em)`),
     atualizarNota: db.prepare(`UPDATE notas SET emitente_cnpj = @emitente_cnpj, emitente_nome = @emitente_nome, destinatario_cnpj = @destinatario_cnpj,
         destinatario_nome = @destinatario_nome, numero = @numero, data_emissao = @data_emissao, valor_total = @valor_total, caminho_xml = @caminho_xml,
         competencia = @competencia, cancelada = MAX(cancelada, @cancelada), atualizado_em = @atualizado_em WHERE cliente_id = @cliente_id AND chave = @chave`),
@@ -46,9 +46,14 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
     filaZerada: db.prepare('UPDATE clientes SET nfse_proxima_consulta = ?, nfse_ultima_consulta = ?, nfse_ultimo_erro = NULL WHERE id = ?'),
     erro: db.prepare('UPDATE clientes SET nfse_ultima_consulta = ?, nfse_ultimo_erro = ? WHERE id = ?'),
     iniciarExecucao: db.prepare("INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura_nfse', ?)"),
+    marcarCaptura: db.prepare('UPDATE notas SET captura_id = ? WHERE cliente_id = ? AND chave = ?'),
+    notasDaCaptura: db.prepare('SELECT COUNT(*) n FROM notas WHERE captura_id = ?'),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, c_stat = @c_stat, docs_recebidos = @docs, notas_recebidas = @notas,
       eventos_recebidos = @eventos, erro = @erro WHERE id = @id`),
   }
+
+  // Execução de captura em andamento: cada NFS-e recebida guarda o id dela (link "Ver notas").
+  let capturaAtual = null
 
   function gravarNota(cliente, doc) {
     const d = dadosNfse(doc.xml)
@@ -66,6 +71,7 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
     }
     if (sql.nota.get(cliente.id, d.chave)) sql.atualizarNota.run(dados)
     else sql.inserirNota.run(dados)
+    if (capturaAtual) sql.marcarCaptura.run(capturaAtual, cliente.id, d.chave)
     return tipo
   }
 
@@ -91,8 +97,9 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
   }
 
   // Documentos do lote + NSU novo numa transação: ou grava tudo, ou nada.
-  const gravarLote = db.transaction((cliente, documentos, novoNsu) => {
+  const gravarLote = db.transaction((cliente, documentos, novoNsu, execId) => {
     const contagem = { entrada: 0, saida: 0, evento: 0, ignorado: 0 }
+    capturaAtual = execId
     for (const doc of documentos) {
       let r = 'ignorado'
       try {
@@ -106,6 +113,7 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
       }
       contagem[r]++
     }
+    capturaAtual = null
     sql.salvarNsu.run(novoNsu, iso(), cliente.id)
     return contagem
   })
@@ -121,6 +129,8 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     const resultado = { ok: true, cnpj: cliente.cnpj, docs: 0, notas: 0, eventos: 0, entradas: 0, saidas: 0, ignorados: 0, lotes: 0, cStat: null, erro: null }
     const fechar = () => {
+      // A mesma NFS-e repetida no lote conta uma vez.
+      resultado.notas = sql.notasDaCaptura.get(execId).n
       sql.fecharExecucao.run({ id: execId, fim: iso(), c_stat: resultado.cStat, docs: resultado.docs, notas: resultado.notas, eventos: resultado.eventos, erro: resultado.erro })
       return resultado
     }
@@ -145,7 +155,7 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
         resultado.cStat = r.status
         if (!r.documentos.length) return fimDaFila()
         const novoNsu = r.documentos.reduce((m, d) => maiorNsu(m, d.nsu), nsu)
-        const c = gravarLote(cliente, r.documentos, novoNsu)
+        const c = gravarLote(cliente, r.documentos, novoNsu, execId)
         resultado.lotes++
         resultado.docs += r.documentos.length
         resultado.entradas += c.entrada

@@ -6,7 +6,12 @@ import { useResumo } from './ResumoProvider.jsx'
 
 // Seções do app: as notas (SEFAZ), o SPED Fiscal (inventário do bloco H) e os cadastros.
 const GRUPOS = [
-  { itens: [{ para: '/', rotulo: 'Início', icone: 'fa-house', fim: true }] },
+  {
+    itens: [
+      { para: '/', rotulo: 'Início', icone: 'fa-house', fim: true },
+      { para: '/capturar', rotulo: 'Capturar', icone: 'fa-rotate' },
+    ],
+  },
   {
     titulo: 'Notas fiscais',
     itens: [

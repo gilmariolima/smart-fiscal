@@ -88,7 +88,23 @@ const COLUNAS_NOVAS = [
   ['clientes', 'nfse_proxima_consulta', 'TEXT'],
   ['clientes', 'nfse_ultima_consulta', 'TEXT'],
   ['clientes', 'nfse_ultimo_erro', 'TEXT'],
+  ['notas', 'captura_id', 'INTEGER'], // última execução de captura que trouxe a nota (link "Ver notas")
 ]
+
+// Banco de antes do captura_id: liga à última captura de cada cliente as notas criadas desde o início dela,
+// para o link "Ver notas" já funcionar com a captura que está na tela.
+function preencherCapturaId(db) {
+  db.exec(`UPDATE notas SET captura_id = (
+      SELECT e.id FROM execucoes e
+      WHERE e.cliente_id = notas.cliente_id AND e.tipo = CASE notas.modelo WHEN 'nfse' THEN 'captura_nfse' ELSE 'captura' END
+        AND e.fim IS NOT NULL AND e.erro IS NULL AND datetime(notas.criado_em) >= datetime(e.inicio)
+      ORDER BY e.id DESC LIMIT 1)
+    WHERE captura_id IS NULL`)
+  // E refaz a contagem dessas capturas: notas distintas, não documentos (resumo + XML da mesma nota eram 2).
+  db.exec(`UPDATE execucoes SET notas_recebidas = (SELECT COUNT(*) FROM notas WHERE notas.captura_id = execucoes.id)
+    WHERE tipo IN ('captura', 'captura_nfse') AND notas_recebidas IS NOT NULL
+      AND cliente_id IN (SELECT id FROM clientes WHERE papel = 'cliente')`)
+}
 
 /** Abre (ou cria) o banco, aplica as migrations e devolve a conexão. Use ':memory:' em testes. */
 function abrirBanco(caminho) {
@@ -107,6 +123,7 @@ function abrirBanco(caminho) {
     for (const [tabela, coluna, definicao] of COLUNAS_NOVAS) {
       const existe = db.prepare(`SELECT 1 FROM pragma_table_info('${tabela}') WHERE name = ?`).get(coluna)
       if (!existe) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${definicao}`)
+      if (!existe && coluna === 'captura_id') preencherCapturaId(db)
     }
     db.exec('CREATE INDEX IF NOT EXISTS idx_notas_cliente_modelo_comp ON notas(cliente_id, modelo, competencia)')
     db.pragma('user_version = 1')

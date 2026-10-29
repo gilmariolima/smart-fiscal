@@ -1,17 +1,19 @@
-import { useParams } from 'react-router'
+import { Navigate, useParams } from 'react-router'
 import Pasta from '../componentes/Pasta.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { NOMES_DOS_MESES, inteiro } from '../formato.js'
-
+import { MODELOS } from './PastasDoMes.jsx'
 
 export default function Meses() {
-  const { cnpj, ano } = useParams()
+  const { cnpj, modelo: slug, ano } = useParams()
+  const modelo = MODELOS[slug]
   const nome = useNomeDoCliente(cnpj)
-  const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses`, [cnpj])
+  const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses?modelo=${modelo?.valor || 'nfe'}`, [cnpj, slug])
   const grupo = (dados || []).find((a) => String(a.ano) === ano)
   const meses = grupo?.meses || []
+  if (!modelo) return <Navigate to={`/notas/${cnpj}`} replace />
 
   let conteudo
   if (carregando && !dados) conteudo = <p className="vazio">Carregando…</p>
@@ -36,7 +38,7 @@ export default function Meses() {
               {meses.map((m) => (
                 <tr key={m.mes}>
                   <td>
-                    <Pasta para={`/notas/${cnpj}/${ano}/${String(m.mes).padStart(2, '0')}`}>{NOMES_DOS_MESES[m.mes - 1]}</Pasta>
+                    <Pasta para={`/notas/${cnpj}/${slug}/${ano}/${String(m.mes).padStart(2, '0')}`}>{NOMES_DOS_MESES[m.mes - 1]}</Pasta>
                   </td>
                   <td className="num">{inteiro(m.entradas)}</td>
                   <td className="num">{inteiro(m.saidas)}</td>
@@ -53,9 +55,14 @@ export default function Meses() {
 
   return (
     <Pagina
-      titulo="Notas"
+      titulo={modelo.rotulo}
       subtitulo="Escolha o mês."
-      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome, para: `/notas/${cnpj}` }, { rotulo: ano }]}
+      trilha={[
+        { rotulo: 'Início', para: '/notas' },
+        { rotulo: nome, para: `/notas/${cnpj}` },
+        { rotulo: modelo.rotulo, para: `/notas/${cnpj}/${slug}` },
+        { rotulo: ano },
+      ]}
       erro={erro}
     >
       {conteudo}

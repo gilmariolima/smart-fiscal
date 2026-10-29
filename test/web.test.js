@@ -182,6 +182,13 @@ test('download do XML: só nota completa e só de dentro da pasta de XMLs', asyn
   const { ctx, pedir } = await montar(t)
   await ctx.ciclo.executarCiclo()
   const completa = ctx.db.prepare("SELECT * FROM notas WHERE status = 'completa' LIMIT 1").get()
+  // "Baixar XML" da tela: nota sem evento vem como XML solto, não um ZIP.
+  if (!ctx.db.prepare('SELECT 1 FROM eventos WHERE chave = ?').get(completa.chave)) {
+    const solto = await pedir(`/api/notas/${completa.id}/xml-eventos`)
+    assert.equal(solto.status, 200)
+    assert.match(solto.headers.get('content-type'), /application\/xml/)
+    assert.match(solto.headers.get('content-disposition'), new RegExp(`filename="${completa.chave}-nfe\.xml"`))
+  }
   const r = await pedir(`/api/notas/${completa.id}/xml`)
   assert.equal(r.status, 200)
   assert.match(r.headers.get('content-disposition'), new RegExp(`${completa.chave}-nfe\\.xml`))
@@ -978,6 +985,37 @@ test('captura com modelos: só NFS-e repassa ao ciclo; valor inválido → 400',
   for (let i = 0; i < 50 && ctx.db.prepare("SELECT COUNT(*) n FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL").get().n === 0; i++) await new Promise((ok) => setTimeout(ok, 20))
   assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM execucoes WHERE tipo = 'captura_nfse'").get().n, 1)
   assert.equal(mock.chamadas.length, 0, 'nada de NF-e')
+})
+
+test('notas: novas=1 traz só as que chegaram na última captura do modelo', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  assert.equal((await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse&novas=1`)).corpo.total, 0, 'sem captura, nada é novo')
+  await ctx.ciclo.executarCiclo()
+  const r = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse&novas=1`)).corpo
+  assert.equal(r.total, 3)
+  assert.ok(r.notas.every((n) => n.modelo === 'nfse'))
+  // A contagem da captura é a mesma da lista (notas distintas, não documentos).
+  const exec = ctx.db
+    .prepare("SELECT e.id, e.notas_recebidas FROM execucoes e JOIN clientes c ON c.id = e.cliente_id WHERE e.tipo = 'captura_nfse' AND c.cnpj = ? ORDER BY e.id DESC")
+    .get(CNPJ_MOCK_OK)
+  assert.equal(exec.notas_recebidas, 3)
+  // Nota trazida por uma captura anterior não entra.
+  ctx.db.prepare('UPDATE notas SET captura_id = ? WHERE id = ?').run(exec.id - 1000, r.notas[0].id)
+  assert.equal((await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse&novas=1`)).corpo.total, 2)
+  assert.equal((await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&novas=1`)).status, 400)
+})
+
+test('meses do cliente por modelo: NF-e e NFS-e separadas; modelo inválido → 400', async (t) => {
+  const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
+  await ctx.ciclo.executarCiclo()
+  const soma = (anos) => anos.reduce((s, a) => s + a.entradas + a.saidas, 0)
+  const todas = soma((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses`)).corpo)
+  const nfe = soma((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=nfe`)).corpo)
+  const nfse = soma((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=nfse`)).corpo)
+  assert.equal(nfse, 3)
+  assert.ok(nfe > 0)
+  assert.equal(nfe + nfse, todas)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=cte`)).status, 400)
 })
 
 test('notas: somenteContagem devolve só as contagens', async (t) => {

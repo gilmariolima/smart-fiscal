@@ -392,8 +392,9 @@ export default function Nota() {
   const emitente = dados?.nfe?.emitente?.nome || dados?.nfse?.prestador?.nome || nota?.emitente_nome || ''
   const ehServico = nota?.modelo === 'nfse'
   const [ano, mes] = (nota?.competencia || '').split('-')
-  // Pasta da nota: <mês><NF-e|NFS-e><Entradas|Saídas>, como no disco.
-  const pastaDoMes = ano ? `/notas/${cnpj}/${ano}/${mes}/${nota.modelo === 'nfse' ? 'nfs-e' : 'nf-e'}/${nota.tipo === 'saida' ? 'saidas' : 'entradas'}` : `/notas/${cnpj}`
+  // Pasta da nota: <NF-e|NFS-e>/<ano>/<mês>/<Entradas|Saídas>.
+  const pastaModelo = `/notas/${cnpj}/${ehServico ? 'nfs-e' : 'nf-e'}`
+  const pastaDoMes = ano ? `${pastaModelo}/${ano}/${mes}/${nota.tipo === 'saida' ? 'saidas' : 'entradas'}` : `/notas/${cnpj}`
 
   // "Imprimir DANFE" do menu da nota: abre a impressão assim que a nota carrega, uma vez só.
   const imprimir = params.get('imprimir') === '1'
@@ -409,9 +410,10 @@ export default function Nota() {
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
     { rotulo: nota?.cliente_nome || cnpj, para: `/notas/${cnpj}` },
+    ...(nota ? [{ rotulo: ehServico ? 'NFS-e' : 'NF-e', para: pastaModelo }] : []),
     ...(ano
       ? [
-          { rotulo: ano, para: `/notas/${cnpj}/${ano}` },
+          { rotulo: ano, para: `${pastaModelo}/${ano}` },
           { rotulo: NOMES_DOS_MESES[Number(mes) - 1] || mes, para: pastaDoMes },
         ]
       : []),
@@ -424,7 +426,7 @@ export default function Nota() {
         Voltar
       </button>
       {nota?.tem_xml ? (
-        <a className="botao botao-claro" href={`/api/notas/${nota.id}/xml`} download={`${nota.chave}-${ehServico ? 'nfse' : 'nfe'}.xml`}>
+        <a className="botao botao-claro" href={`/api/notas/${nota.id}/xml-eventos`} download>
           Baixar XML
         </a>
       ) : null}

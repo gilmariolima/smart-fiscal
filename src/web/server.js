@@ -147,7 +147,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     competencias: db.prepare('SELECT DISTINCT competencia FROM notas WHERE competencia IS NOT NULL ORDER BY competencia DESC'),
     mesesDoCliente: db.prepare(`SELECT competencia,
         SUM(tipo = 'entrada') entradas, SUM(tipo = 'saida') saidas
-      FROM notas WHERE cliente_id = ? AND competencia IS NOT NULL GROUP BY competencia ORDER BY competencia DESC`),
+      FROM notas WHERE cliente_id = @cliente AND competencia IS NOT NULL AND (@modelo IS NULL OR modelo = @modelo)
+      GROUP BY competencia ORDER BY competencia DESC`),
     saidasDoMes: db.prepare("SELECT COUNT(*) n FROM notas WHERE tipo = 'saida' AND competencia = ?"),
     nota: db.prepare('SELECT * FROM notas WHERE id = ?'),
     eventosComArquivo: db.prepare('SELECT caminho_xml FROM eventos WHERE chave = ? AND caminho_xml IS NOT NULL ORDER BY tp_evento, n_seq'),
@@ -163,6 +164,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     ultimaCapturaNfsePorCliente: db.prepare(`SELECT cliente_id, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
     clientePorCnpj: db.prepare('SELECT id, cnpj, papel FROM clientes WHERE cnpj = ?'),
+    ultimaCapturaDoCliente: db.prepare(`SELECT e.id FROM execucoes e JOIN clientes c ON c.id = e.cliente_id
+      WHERE c.cnpj = @cnpj AND e.tipo = @tipo AND e.fim IS NOT NULL AND e.erro IS NULL ORDER BY e.id DESC LIMIT 1`),
     ativosNaOrdem: db.prepare("SELECT cnpj FROM clientes WHERE ativo = 1 AND papel = 'cliente' ORDER BY id"),
     execucoes: db.prepare(`SELECT e.*, c.cnpj, COALESCE(c.apelido, c.razao_social) cliente_nome FROM execucoes e
       LEFT JOIN clientes c ON c.id = e.cliente_id ORDER BY e.id DESC LIMIT 200`),
@@ -249,7 +252,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const cliente = sql.clientePorCnpj.get(req.params.cnpj)
     if (!cliente || cliente.papel !== 'cliente') throw new ErroHttp(404, 'Cliente não cadastrado.')
     const anos = []
-    for (const m of sql.mesesDoCliente.all(cliente.id)) {
+    const modelo = req.query.modelo || null
+    if (modelo && modelo !== 'nfe' && modelo !== 'nfse') throw new ErroHttp(400, 'Modelo inválido.')
+    for (const m of sql.mesesDoCliente.all({ cliente: cliente.id, modelo })) {
       const ano = Number(m.competencia.slice(0, 4))
       let grupo = anos[anos.length - 1]
       if (!grupo || grupo.ano !== ano) anos.push((grupo = { ano, entradas: 0, saidas: 0, meses: [] }))
@@ -315,6 +320,13 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       if (!/^\d{4}-\d{2}$/.test(q.competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
       where.push('n.competencia = @competencia')
       p.competencia = q.competencia
+    }
+    // Só as notas que chegaram na última captura do modelo (link "Ver notas" da tela Capturar).
+    if (q.novas === '1') {
+      if (!q.cnpj || !['nfe', 'nfse'].includes(q.modelo)) throw new ErroHttp(400, 'Informe o cliente e o modelo.')
+      const ultima = sql.ultimaCapturaDoCliente.get({ cnpj: p.cnpj, tipo: q.modelo === 'nfse' ? 'captura_nfse' : 'captura' })
+      where.push('n.captura_id = @captura')
+      p.captura = ultima?.id ?? -1
     }
     if (q.status) {
       if (!FILTROS_STATUS[q.status]) throw new ErroHttp(400, 'Filtro de estado inválido.')
@@ -442,15 +454,22 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       .all(nota.chave)
       .map((e) => dentroDe(config.pastaXmls, e.caminho_xml))
       .filter((a) => a && fs.existsSync(a))
+    // "Baixar XML": sem evento vai o XML solto; com evento, um ZIP com a nota e os eventos.
+    const nome = `${nota.chave}-${nota.modelo === 'nfse' ? 'nfse' : 'nfe'}`
+    if (!eventos.length) {
+      res.set('Content-Type', 'application/xml')
+      res.set('Content-Disposition', `attachment; filename="${nome}.xml"`)
+      return fs.createReadStream(arquivo).pipe(res)
+    }
     res.set('Content-Type', 'application/zip')
-    res.set('Content-Disposition', `attachment; filename="${nota.chave}-nfe-eventos.zip"`)
+    res.set('Content-Disposition', `attachment; filename="${nome}-eventos.zip"`)
     const zip = archiver('zip', { zlib: { level: 9 } })
     zip.on('error', (e) => {
       logger.error('Falha ao montar o ZIP da nota com eventos', { erro: e.message })
       res.destroy(e)
     })
     zip.pipe(res)
-    zip.append(fs.createReadStream(arquivo), { name: `${nota.chave}-nfe.xml` })
+    zip.append(fs.createReadStream(arquivo), { name: `${nome}.xml` })
     for (const a of eventos) zip.append(fs.createReadStream(a), { name: path.basename(a) })
     zip.finalize()
   })
@@ -553,7 +572,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     res.status(202).json({ ok: true, mensagem: cnpj ? `Captura de ${cnpj} iniciada.` : 'Captura de todos os clientes iniciada.' })
   })
 
-  app.post('/api/automacao', (req, res) => {
+  app.post('/api/automacao', async (req, res) => {
     const b = req.body || {}
     const mudancas = {}
     for (const nome of ['captura']) {
@@ -561,8 +580,17 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       if (typeof b[nome] !== 'boolean') throw new ErroHttp(400, 'Use ligado (true) ou desligado (false).')
       mudancas[nome] = b[nome]
     }
-    if (!Object.keys(mudancas).length) throw new ErroHttp(400, 'Nada para mudar.')
-    res.json({ ok: true, automacao: ctx.automacao.definir(mudancas), agendador: agendador.estado() })
+    if (!Object.keys(mudancas).length && b.horarios === undefined) throw new ErroHttp(400, 'Nada para mudar.')
+    if (b.horarios !== undefined) {
+      try {
+        ctx.automacao.definirHorarios(b.horarios)
+      } catch (e) {
+        throw new ErroHttp(400, e.message)
+      }
+      await agendador.reagendar()
+    }
+    const automacao = Object.keys(mudancas).length ? ctx.automacao.definir(mudancas) : ctx.automacao.obter()
+    res.json({ ok: true, automacao, agendador: agendador.estado() })
   })
 
   app.post('/api/notas/zip', (req, res) => {

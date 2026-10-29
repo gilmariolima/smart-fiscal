@@ -72,3 +72,50 @@ test('busca automática desligada: horário e início são ignorados; disparo à
   assert.equal(chamadas.length, 2)
   assert.equal(ag.estado().proximaExecucao, '2026-10-10T11:00:00.000Z')
 })
+
+test('automação: horários da busca ficam salvos, em ordem e sem repetir', (t) => {
+  const amb = montarAmbiente()
+  t.after(amb.limpar)
+  const a = criarAutomacao(amb.deps)
+  assert.equal(a.horarios(), null)
+  assert.deepEqual(a.definirHorarios(['13:00', '08:30', '13:00']), ['08:30', '13:00'])
+  assert.deepEqual(criarAutomacao(amb.deps).horarios(), ['08:30', '13:00'])
+  assert.deepEqual(a.definirHorarios([]), [])
+  assert.deepEqual(a.horarios(), [])
+  assert.throws(() => a.definirHorarios(['24:00']), /inválido/)
+  assert.throws(() => a.definirHorarios(['8h']), /inválido/)
+})
+
+test('agendador: horários do painel substituem o cron do .env e trocam sem reiniciar', async (t) => {
+  const amb = montarAmbiente()
+  t.after(amb.limpar)
+  const automacao = criarAutomacao(amb.deps)
+  const tarefas = []
+  const cron = {
+    validate: nodeCron.validate,
+    schedule(expressao) {
+      const t = { expressao, destruida: false, destroy() { t.destruida = true }, getNextRun: () => null }
+      tarefas.push(t)
+      return t
+    },
+  }
+  const ag = criarAgendador({ ciclo: { executarCiclo: async () => ({ ok: true, clientes: [] }) }, config: { cronCaptura: '0 8,13 * * *' }, logger: silencioso, automacao, cron, atrasoInicialMs: false })
+  ag.iniciar()
+  assert.deepEqual(tarefas.map((x) => x.expressao), ['0 8,13 * * *'])
+  assert.deepEqual(ag.estado().horarios, ['08:00', '13:00'])
+
+  automacao.definirHorarios(['07:30', '18:00'])
+  await ag.reagendar()
+  assert.deepEqual(tarefas.filter((x) => !x.destruida).map((x) => x.expressao), ['30 7 * * *', '0 18 * * *'])
+  assert.equal(tarefas[0].destruida, true)
+  assert.deepEqual(ag.estado().horarios, ['07:30', '18:00'])
+
+  // Sem horário nenhum: nada agendado, e o .env não volta a valer.
+  automacao.definirHorarios([])
+  await ag.reagendar()
+  assert.equal(tarefas.filter((x) => !x.destruida).length, 0)
+  assert.deepEqual(ag.estado().horarios, [])
+  assert.equal(ag.estado().ativo, true)
+  await ag.parar()
+  assert.ok(tarefas.every((x) => x.destruida))
+})

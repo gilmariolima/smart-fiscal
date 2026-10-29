@@ -31,10 +31,10 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     temCancelamento: db.prepare(`SELECT 1 FROM eventos WHERE chave = ? AND tp_evento = '${CANCELAMENTO}' LIMIT 1`),
     inserirNota: db.prepare(`INSERT INTO notas (cliente_id, chave, nsu, tipo, emitente_cnpj, emitente_nome, emitente_ie,
         destinatario_cnpj, destinatario_nome, numero, serie, data_emissao, valor_total, tipo_nf, situacao_sefaz, status, cancelada,
-        caminho_xml, competencia, atualizado_em)
+        caminho_xml, competencia, atualizado_em, criado_em)
       VALUES (@cliente_id, @chave, @nsu, @tipo, @emitente_cnpj, @emitente_nome, @emitente_ie,
         @destinatario_cnpj, @destinatario_nome, @numero, @serie, @data_emissao, @valor_total, @tipo_nf, @situacao_sefaz, @status, @cancelada,
-        @caminho_xml, @competencia, @atualizado_em)`),
+        @caminho_xml, @competencia, @atualizado_em, @atualizado_em)`),
     atualizarSituacao: db.prepare(`UPDATE notas SET situacao_sefaz = @situacao_sefaz,
         cancelada = MAX(cancelada, @cancelada), atualizado_em = @atualizado_em WHERE cliente_id = @cliente_id AND chave = @chave`),
     completarNota: db.prepare(`UPDATE notas SET status = 'completa', emitente_cnpj = COALESCE(@emitente_cnpj, emitente_cnpj),
@@ -63,6 +63,8 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     // Encaminhamento do escritório: CNPJ exato (filial é outro cliente); inativo também recebe a nota.
     clienteDaCarteira: db.prepare("SELECT * FROM clientes WHERE cnpj = ? AND papel = 'cliente'"),
     iniciarExecucao: db.prepare(`INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura', ?)`),
+    marcarCaptura: db.prepare('UPDATE notas SET captura_id = ? WHERE cliente_id = ? AND chave = ?'),
+    notasDaCaptura: db.prepare('SELECT COUNT(*) n FROM notas WHERE captura_id = ?'),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, c_stat = @c_stat, x_motivo = @x_motivo,
       docs_recebidos = @docs_recebidos, notas_recebidas = @notas_recebidas, eventos_recebidos = @eventos_recebidos,
       erro = @erro WHERE id = @id`),
@@ -77,6 +79,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     if (existente) {
       // Nunca rebaixa o status: só atualiza a situação informada pela SEFAZ.
       sql.atualizarSituacao.run({ cliente_id: cliente.id, chave: d.chave, situacao_sefaz: d.situacao_sefaz, cancelada, atualizado_em: iso() })
+      marcarCaptura(cliente, d.chave)
       return 'resumo'
     }
     const { competencia, ...campos } = d
@@ -84,8 +87,13 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
       ...campos, competencia, cliente_id: cliente.id, nsu: doc.nsu, tipo: 'entrada', destinatario_cnpj: null, destinatario_nome: null,
       status: 'resumo', cancelada, caminho_xml: null, atualizado_em: iso(),
     })
+    marcarCaptura(cliente, d.chave)
     return 'resumo'
   }
+
+  // Execução de captura em andamento: cada nota recebida guarda o id dela (o resumo e o XML da mesma nota contam uma vez).
+  let capturaAtual = null
+  const marcarCaptura = (cliente, chave) => capturaAtual && sql.marcarCaptura.run(capturaAtual, cliente.id, chave)
 
   /** Grava o procNFe como nota completa do cliente (cria a linha ou completa a que já existe). */
   function gravarCompleta(cliente, doc, d, tipo, contagem) {
@@ -96,6 +104,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const dados = { ...d, competencia, cliente_id: cliente.id, caminho_xml: caminho, cancelada, atualizado_em: iso() }
     if (existente) sql.completarNota.run(dados)
     else sql.inserirNota.run({ ...dados, tipo, nsu: doc.nsu, situacao_sefaz: null, status: 'completa' })
+    marcarCaptura(cliente, d.chave)
     if (tipo === 'saida' && contagem) contagem.saida++
   }
 
@@ -186,9 +195,14 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
   }
 
   // Documentos do lote + novo ultNSU numa única transação: ou grava tudo, ou nada.
-  const gravarLote = db.transaction((cliente, dados) => {
+  const gravarLote = db.transaction((cliente, dados, execId) => {
     const contagem = { resumo: 0, completa: 0, evento: 0, ignorado: 0, fora: 0, saida: 0 }
-    for (const doc of dados.docZip || []) contagem[processarDocumento(cliente, doc, contagem)]++
+    capturaAtual = execId
+    try {
+      for (const doc of dados.docZip || []) contagem[processarDocumento(cliente, doc, contagem)]++
+    } finally {
+      capturaAtual = null
+    }
     sql.salvarNsu.run({ id: cliente.id, ult_nsu: nsu15(dados.ultNSU), max_nsu: nsu15(dados.maxNSU), agora: iso() })
     return contagem
   })
@@ -220,7 +234,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const fechar = () => {
       sql.fecharExecucao.run({
         id: execId, fim: iso(), c_stat: resultado.cStat, x_motivo: resultado.xMotivo, docs_recebidos: resultado.docs,
-        notas_recebidas: resultado.resumo + resultado.completa + resultado.fora, eventos_recebidos: resultado.evento, erro: resultado.erro,
+        notas_recebidas: sql.notasDaCaptura.get(execId).n + resultado.fora, eventos_recebidos: resultado.evento, erro: resultado.erro,
       })
       return resultado
     }
@@ -247,7 +261,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
         if (resultado.cStat === '138') {
           const novoUlt = nsu15(dados.ultNSU)
           if (novoUlt <= ultNSU) return falhar(`SEFAZ devolveu ultNSU ${novoUlt} sem avançar de ${ultNSU}`)
-          const contagem = gravarLote(cliente, dados)
+          const contagem = gravarLote(cliente, dados, execId)
           resultado.lotes++
           resultado.docs += (dados.docZip || []).length
           for (const k of Object.keys(contagem)) resultado[k] += contagem[k]

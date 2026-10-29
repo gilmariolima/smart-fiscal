@@ -1,49 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import BotaoIcone from '../componentes/BotaoIcone.jsx'
 import Etiqueta from '../componentes/Etiqueta.jsx'
-import Segmentado from '../componentes/Segmentado.jsx'
+import SeloCertificado from '../componentes/SeloCertificado.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useAoTerminarCaptura, useResumo } from '../layout/ResumoProvider.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
 import { explicarSefaz, resumoDasCapturas } from '../mensagensSefaz.js'
 import { nomeDe } from '../useCliente.js'
-import { useSelecao } from '../useSelecao.js'
 import { cnpj as formatarCnpj, data, hora, inteiro, mesAno, plural, quando } from '../formato.js'
 
 const INTERVALO_CAPTURANDO = 5000
-
-// Escolha ao lado do botão: as duas (padrão) ou só uma.
-const MODELOS_CAPTURA = {
-  nfe: { rotulo: 'NF-e', modelos: ['nfe'], aviso: 'de NF-e' },
-  nfse: { rotulo: 'NFS-e', modelos: ['nfse'], aviso: 'de NFS-e' },
-  ambos: { rotulo: 'Ambos', modelos: ['nfe', 'nfse'], aviso: 'de NF-e e NFS-e' },
-}
-
-// Desativado não entra na captura; bloqueado pelo 656 só fica de fora quando a captura inclui NF-e.
-const marcavel = (c, oQue = '') => c.ativo && (oQue === 'nfse' || !c.bloqueadoAte)
-
-function Certificado({ c }) {
-  if (c.certDias === null || c.certDias === undefined) return '—'
-  if (c.certDias < 0)
-    return (
-      <Etiqueta cor="vermelha" titulo={`Venceu em ${data(c.certValidade)}`}>
-        Vencido
-      </Etiqueta>
-    )
-  if (c.certDias < 30)
-    return (
-      <Etiqueta cor="ambar" titulo={`Válido até ${data(c.certValidade)}`}>
-        {c.certDias === 0 ? 'Vence hoje' : `Vence em ${plural(c.certDias, 'dia', 'dias')}`}
-      </Etiqueta>
-    )
-  return (
-    <Etiqueta cor="verde" titulo={`Válido até ${data(c.certValidade)}`}>
-      No prazo
-    </Etiqueta>
-  )
-}
 
 // Resumo do balão da Última captura: o que houve, quando, o que a SEFAZ respondeu e o que acontece agora.
 function ResumoCaptura({ titulo, c, dica, depois }) {
@@ -202,11 +170,9 @@ export default function Clientes() {
   const { resumo, recarregar: recarregarResumo } = useResumo()
   const { dados, erro: erroLista, recarregar } = useApi('/api/clientes')
   const { dados: escritorio, recarregar: recarregarEscritorio } = useApi('/api/escritorio')
-  const selecao = useSelecao('clientes')
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
   const [ocupado, setOcupado] = useState(null)
-  const [oQue, setOQue] = useState('ambos')
   const [busca, setBusca] = useState('')
 
   useAoTerminarCaptura(() => {
@@ -219,14 +185,6 @@ export default function Clientes() {
   const fila = dados?.filaCaptura || []
   const capturando = !!(resumo?.capturaEmAndamento || capturandoAgora || fila.length)
   const cadastroLiberado = !!resumo?.cadastroLiberado
-
-  // Ao abrir, vêm marcados todos os ativos que não estão bloqueados.
-  const marcouAoAbrir = useRef(false)
-  useEffect(() => {
-    if (!dados || marcouAoAbrir.current) return
-    marcouAoAbrir.current = true
-    selecao.marcar(dados.clientes.filter(marcavel).map((c) => c.cnpj))
-  }, [dados])
 
   // Durante a captura, a lista recarrega a cada 5 s para mostrar quem está sendo capturado e quem está na fila.
   useEffect(() => {
@@ -242,12 +200,10 @@ export default function Clientes() {
   const ordenados = [...lista.filter((c) => c.ativo), ...lista.filter((c) => !c.ativo)]
   // Busca por nome, razão social ou CNPJ (com ou sem pontuação).
   const termo = busca.trim().toLowerCase()
-  const digitos = termo.replace(/D/g, '')
+  const digitos = termo.replace(/\D/g, '')
   const visiveis = ordenados.filter(
     (c) => !termo || nomeDe(c).toLowerCase().includes(termo) || (c.razaoSocial || '').toLowerCase().includes(termo) || (digitos && c.cnpj.includes(digitos)),
   )
-  const podeMarcar = (c) => marcavel(c, oQue)
-  const marcados = lista.filter((c) => podeMarcar(c) && selecao.ids.has(c.cnpj)).map((c) => c.cnpj)
 
   async function executar(nome, fn) {
     setOcupado(nome)
@@ -262,32 +218,6 @@ export default function Clientes() {
     }
   }
 
-  // Hora em que o cliente volta a ser consultado nos modelos escolhidos (null = já pode).
-  // Cada serviço pede 1 hora entre consultas do mesmo CNPJ; a captura pula quem ainda está esperando.
-  const liberadoEm = (c) => {
-    const esperas = MODELOS_CAPTURA[oQue].modelos.map((m) => (m === 'nfse' ? c.nfse?.proximaConsulta : c.proximaConsulta || c.bloqueadoAte))
-    return esperas.every(Boolean) ? esperas.sort().at(0) : null
-  }
-
-  const capturar = () =>
-    executar('capturar', async () => {
-      const marcadosLista = lista.filter((c) => marcados.includes(c.cnpj))
-      const esperando = marcadosLista.filter(liberadoEm)
-      if (esperando.length === marcadosLista.length) {
-        const primeiro = esperando.map(liberadoEm).sort()[0]
-        setAviso(`Nada para consultar agora: ${esperando.length === 1 ? 'o cliente marcado foi consultado' : 'os clientes marcados foram consultados'} há menos de 1 hora. Libera às ${hora(primeiro)}.`)
-        return
-      }
-      try {
-        await api.post('/api/captura', { cnpjs: marcados, modelos: MODELOS_CAPTURA[oQue].modelos })
-        const pulados = esperando.length ? ` ${plural(esperando.length, 'cliente consultado', 'clientes consultados')} há menos de 1 hora fica${esperando.length === 1 ? '' : 'm'} para depois.` : ''
-        setAviso(`Captura ${MODELOS_CAPTURA[oQue].aviso} de ${plural(marcados.length - esperando.length, 'cliente', 'clientes')} iniciada.${pulados} Acompanhe na coluna Última captura.`)
-      } finally {
-        recarregarResumo()
-        recarregar()
-      }
-    })
-
   function alternarAtivo(c) {
     const nome = nomeDe(c)
     const pergunta = c.ativo
@@ -296,8 +226,6 @@ export default function Clientes() {
     if (!window.confirm(pergunta)) return
     executar('ativo', async () => {
       const r = await api.post(`/api/clientes/${c.cnpj}/ativo`, { ativo: !c.ativo })
-      if (r.ativo) selecao.marcar([c.cnpj])
-      else selecao.desmarcar([c.cnpj])
       setAviso(`${nome}: ${r.mensagem.charAt(0).toLowerCase()}${r.mensagem.slice(1)}`)
       recarregar()
       recarregarResumo()
@@ -326,9 +254,6 @@ export default function Clientes() {
         <table className="tabela tabela-clientes">
           <thead>
             <tr>
-              <th scope="col" className="marcar">
-                <span className="so-leitor">Capturar</span>
-              </th>
               <th scope="col">Cliente</th>
               <th scope="col">CNPJ</th>
               <th scope="col">Certificado</th>
@@ -340,22 +265,8 @@ export default function Clientes() {
             </tr>
           </thead>
           <tbody>
-            {visiveis.map((c) => {
-              const marcado = podeMarcar(c) && selecao.ids.has(c.cnpj)
-              return (
-                <tr key={c.cnpj} className={!c.ativo ? 'inativo' : marcado ? 'selecionada' : undefined}>
-                  <td className="marcar">
-                    {c.ativo && (
-                      <input
-                        type="checkbox"
-                        aria-label={`Capturar ${nomeDe(c)}`}
-                        title={c.bloqueadoAte && !podeMarcar(c) ? `NF-e bloqueada pela SEFAZ até ${hora(c.bloqueadoAte)} (656). Dá para capturar só NFS-e.` : undefined}
-                        checked={marcado}
-                        disabled={!podeMarcar(c)}
-                        onChange={() => selecao.alternar(c.cnpj)}
-                      />
-                    )}
-                  </td>
+            {visiveis.map((c) => (
+                <tr key={c.cnpj} className={!c.ativo ? 'inativo' : undefined}>
                   <td className="nome-cliente">
                     {nomeDe(c)}
                     {c.apelido && <span className="secundario">{c.razaoSocial}</span>}
@@ -363,7 +274,7 @@ export default function Clientes() {
                   </td>
                   <td className="mono sem-quebra">{formatarCnpj(c.cnpj)}</td>
                   <td className="sem-quebra">
-                    <Certificado c={c} />
+                    <SeloCertificado c={c} />
                   </td>
                   <td>{c.ativo ? <UltimaCaptura c={c} capturandoAgora={capturandoAgora} fila={fila} /> : '—'}</td>
                   <td>
@@ -373,14 +284,11 @@ export default function Clientes() {
                     <Acoes c={c} cadastroLiberado={cadastroLiberado} onAtivo={alternarAtivo} ocupado={!!ocupado} />
                   </td>
                 </tr>
-              )
-            })}
+            ))}
           </tbody>
         </table>
       </div>
     )
-
-  const algumMarcavel = lista.some(podeMarcar)
 
   return (
     <Pagina
@@ -397,32 +305,6 @@ export default function Clientes() {
       aoFecharErro={erro ? () => setErro(null) : undefined}
       aviso={aviso}
     >
-      {!!lista.length && (
-        <div className="barra-notas">
-          <div className="grupo-botoes">
-            <button
-              type="button"
-              className="botao botao-claro"
-              onClick={() => selecao.marcar(visiveis.filter(podeMarcar).map((c) => c.cnpj))}
-              disabled={!algumMarcavel}
-            >
-              Marcar todos
-            </button>
-            <button type="button" className="botao botao-claro" onClick={selecao.limpar} disabled={!marcados.length}>
-              Desmarcar todos
-            </button>
-          </div>
-          <Segmentado
-            rotulo="O que capturar"
-            valor={oQue}
-            onChange={setOQue}
-            opcoes={Object.entries(MODELOS_CAPTURA).map(([valor, m]) => ({ valor, rotulo: m.rotulo }))}
-          />
-          <button type="button" className="botao botao-verde" onClick={capturar} disabled={!marcados.length || capturando || !!ocupado}>
-            {capturando || ocupado === 'capturar' ? 'Capturando…' : `⟳ Capturar selecionados (${inteiro(marcados.length)})`}
-          </button>
-        </div>
-      )}
       {!!lista.length && (
         <div className="busca">
           <label htmlFor="busca-clientes">Buscar cliente</label>

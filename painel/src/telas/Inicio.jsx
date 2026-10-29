@@ -1,9 +1,6 @@
-import { useState } from 'react'
 import { Link } from 'react-router'
-import { api } from '../api.js'
 import Etiqueta from '../componentes/Etiqueta.jsx'
 import Icone from '../componentes/Icone.jsx'
-import Interruptor from '../componentes/Interruptor.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useResumo } from '../layout/ResumoProvider.jsx'
 import { inteiro, plural, quando } from '../formato.js'
@@ -28,9 +25,41 @@ const ATALHOS = [
   { para: '/exportar', icone: 'exportar', cor: 'laranja', titulo: 'Exportar', texto: 'ZIP do mês para o Domínio/Fortes' },
   { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Histórico de consultas e downloads' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado para as notas de saída', soNoPc: true },
+  { para: '/capturar', icone: 'capturar', cor: 'ciano', titulo: 'Capturar', texto: 'Buscar NF-e e NFS-e dos clientes' },
 ]
 
-function Atalhos({ cadastroLiberado }) {
+// Último quadro dos atalhos: barra com os certificados A1 no prazo, a vencer em 30 dias e vencidos.
+const PARTES_CERT = [
+  { chave: 'noPrazo', um: 'no prazo', varios: 'no prazo', classe: 'verde' },
+  { chave: 'aVencer', um: 'a vencer', varios: 'a vencer', classe: 'ambar' },
+  { chave: 'vencidos', um: 'vencido', varios: 'vencidos', classe: 'vermelho' },
+]
+
+function QuadroCertificados({ certificados: c }) {
+  const total = c?.total || 0
+  const partes = PARTES_CERT.map((p) => ({ ...p, valor: c?.[p.chave] || 0 }))
+  return (
+    <Link to="/clientes" className="atalho quadro-cert">
+      <span className="quadro-cert-topo">
+        <strong>Certificados A1</strong>
+        <span className="quadro-cert-total">{inteiro(total)}</span>
+      </span>
+      <span className="barra-cert" role="img" aria-label={partes.map((p) => plural(p.valor, p.um, p.varios)).join(', ')}>
+        {total > 0 && partes.map((p) => p.valor > 0 && <span key={p.chave} className={`barra-cert-${p.classe}`} style={{ flexGrow: p.valor }} />)}
+      </span>
+      <span className="legenda-cert">
+        {partes.map((p) => (
+          <span key={p.chave} className={p.valor ? undefined : 'zerada'}>
+            <i className={`bolinha-${p.classe}`} aria-hidden="true" />
+            {plural(p.valor, p.um, p.varios)}
+          </span>
+        ))}
+      </span>
+    </Link>
+  )
+}
+
+function Atalhos({ cadastroLiberado, certificados }) {
   return (
     <ul className="atalhos">
       {ATALHOS.filter((a) => cadastroLiberado || !a.soNoPc).map((a) => (
@@ -44,110 +73,54 @@ function Atalhos({ cadastroLiberado }) {
           </Link>
         </li>
       ))}
+      <li>
+        <QuadroCertificados certificados={certificados} />
+      </li>
     </ul>
   )
 }
 
-// Meio círculo dividido em no prazo / a vencer / vencidos (pathLength 100 = arco inteiro).
-const ARCO = 'M 12 62 A 50 50 0 0 1 112 62'
+// Certificados A1 só aparecem quando pedem ação: vencidos ou vencendo nos próximos 30 dias.
+const MAX_CERT_NOMES = 3
 
-function Certificados({ certificados: c }) {
-  const total = c?.total || 0
-  const partes = [
-    { chave: 'noPrazo', rotulo: 'No prazo', classe: 'verde', valor: c?.noPrazo || 0 },
-    { chave: 'aVencer', rotulo: 'A vencer (30 dias)', classe: 'ambar', valor: c?.aVencer || 0 },
-    { chave: 'vencidos', rotulo: 'Vencidos', classe: 'vermelho', valor: c?.vencidos || 0 },
-  ]
-  let inicio = 0
+function prazoCert(dias) {
+  if (dias < 0) return `venceu há ${plural(-dias, 'dia', 'dias')}`
+  if (dias === 0) return 'vence hoje'
+  return `vence em ${plural(dias, 'dia', 'dias')}`
+}
+
+function AvisoCertificados({ lista }) {
+  if (!lista?.length) return null
+  const vencido = lista.some((c) => c.dias < 0)
+  const nomes = lista.slice(0, MAX_CERT_NOMES).map((c) => `${c.nome} (${prazoCert(c.dias)})`)
+  const resto = lista.length - nomes.length
   return (
-    <Link to="/clientes" className="certificados">
-      <svg viewBox="0 0 124 70" role="img" aria-label={`${plural(total, 'certificado', 'certificados')}: ${partes.map((p) => `${p.valor} ${p.rotulo.toLowerCase()}`).join(', ')}`}>
-        <path d={ARCO} pathLength="100" className="arco-fundo" />
-        {total > 0 &&
-          partes.map((p) => {
-            const tamanho = (p.valor / total) * 100
-            const arco = (
-              <path key={p.chave} d={ARCO} pathLength="100" className={`arco arco-${p.classe}`} strokeDasharray={`${tamanho} 100`} strokeDashoffset={-inicio} />
-            )
-            inicio += tamanho
-            return p.valor ? arco : null
-          })}
-        <text x="62" y="46" className="arco-rotulo">
-          Certificados
-        </text>
-        <text x="62" y="64" className="arco-total">
-          {inteiro(total)}
-        </text>
-      </svg>
-      <ul className="legenda">
-        {partes.map((p) => (
-          <li key={p.chave}>
-            <span className={`bolinha bolinha-${p.classe}`} aria-hidden="true" />
-            {p.rotulo}
-            <strong>{inteiro(p.valor)}</strong>
-          </li>
-        ))}
-      </ul>
-    </Link>
+    <div className={`faixa ${vencido ? 'faixa-erro' : 'faixa-ambar'}`} role="status">
+      <span>
+        {lista.length === 1 ? 'Certificado A1' : 'Certificados A1'} para trocar: {nomes.join(', ')}
+        {resto > 0 && ` e mais ${resto}`}. Sem certificado válido a captura do cliente para.
+      </span>
+      <Link className="botao botao-claro" to="/clientes">
+        Abrir Clientes
+      </Link>
+    </div>
   )
 }
 
 export default function Inicio() {
-  const { resumo, recarregar } = useResumo()
-  const [erro, setErro] = useState(null)
-  const [aviso, setAviso] = useState(null)
-  const [enviando, setEnviando] = useState(false)
+  const { resumo } = useResumo()
 
   if (!resumo) return <Pagina titulo="Início" subtitulo="Carregando…" />
 
-  const auto = resumo.automacao || {}
   const pendentes = pendentesDeCiencia(resumo)
 
-  async function enviar(acao) {
-    setEnviando(true)
-    setErro(null)
-    setAviso(null)
-    try {
-      setAviso(await acao())
-    } catch (e) {
-      setErro(e.message)
-    } finally {
-      setEnviando(false)
-      recarregar()
-    }
-  }
-
-  function mudarBusca(ligar) {
-    enviar(async () => {
-      await api.post('/api/automacao', { captura: ligar })
-      return `Busca automática ${ligar ? 'ligada' : 'desligada'}.`
-    })
-  }
-
-  const automacao = (
-    <div className="automacao">
-      <Interruptor
-        ligado={auto.captura}
-        onChange={mudarBusca}
-        desabilitado={enviando}
-        rotulo="Busca automática"
-        descricao={auto.captura ? 'Busca as notas novas nos horários do agendamento.' : 'Só busca quando você manda capturar.'}
-      />
-      <div className="automacao-captura">
-        <Link className="botao botao-azul" to="/clientes">
-          Capturar agora
-        </Link>
-        {resumo.capturaEmAndamento && <Etiqueta cor="ambar">Capturando…</Etiqueta>}
-      </div>
-    </div>
-  )
-
   return (
-    <Pagina titulo="Início" subtitulo={subtitulo(resumo)} acoes={automacao} erro={erro} aoFecharErro={() => setErro(null)} aviso={aviso}>
+    <Pagina titulo="Início" subtitulo={subtitulo(resumo)} acoes={resumo.capturaEmAndamento && <Etiqueta cor="ambar">Capturando…</Etiqueta>}>
       <div className="inicio-corpo">
-        <Atalhos cadastroLiberado={resumo.cadastroLiberado} />
-        <Certificados certificados={resumo.certificados} />
+        <Atalhos cadastroLiberado={resumo.cadastroLiberado} certificados={resumo.certificados} />
       </div>
+
+      <AvisoCertificados lista={resumo.certificadosVencendo} />
 
       {resumo.backup?.alerta && (
         <div className="faixa faixa-ambar faixa-ciencia" role="status">

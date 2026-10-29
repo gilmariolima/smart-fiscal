@@ -114,13 +114,14 @@ test('reprocessar os mesmos NSUs (ultNSU zerado) é idempotente', async (t) => {
   const { db, servico, ids, pastaXmls, limpar } = montar()
   t.after(limpar)
   await servico.capturarCliente(ids[0])
-  const antes = notas(db).map(({ atualizado_em, ...n }) => n)
+  // atualizado_em e captura_id mudam a cada captura; o resto fica igual.
+  const antes = notas(db).map(({ atualizado_em, captura_id, ...n }) => n)
   const antesArquivos = arquivos(pastaXmls)
 
   db.prepare("UPDATE clientes SET ult_nsu = '000000000000000', proxima_consulta = NULL").run()
   const r = await servico.capturarCliente(ids[0])
   assert.equal(r.docs, 4)
-  assert.deepEqual(notas(db).map(({ atualizado_em, ...n }) => n), antes)
+  assert.deepEqual(notas(db).map(({ atualizado_em, captura_id, ...n }) => n), antes)
   assert.equal(db.prepare('SELECT COUNT(*) n FROM eventos').get().n, 1)
   assert.deepEqual(arquivos(pastaXmls), antesArquivos)
 })
