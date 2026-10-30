@@ -47,3 +47,20 @@ test('texto que parece fórmula continua texto', async () => {
   assert.match(zip.get('xl/worksheets/sheet1.xml').toString(), /t="inlineStr"><is><t>=HYPERLINK\(&quot;http:\/\/x&quot;\)<\/t>/)
   assert.doesNotMatch(zip.get('xl/worksheets/sheet1.xml').toString(), /<f>/)
 })
+
+test('com modelo: abas Entradas e Saídas só daquele modelo; NFS-e com as retenções na linha', async () => {
+  const saida = { ...nfse, tipo: 'saida', numero: '9', cancelada: 0 }
+  const zip = lerZip(await montarPlanilhaDoMes({ notas: [nfe, nfse, saida], modelo: 'nfse', lerXml: (n) => (n.numero === '17763' ? fortaleza : null) }))
+  assert.match(zip.get('xl/workbook.xml').toString(), /name="Entradas".*name="Saídas"/)
+  const [cab, entrada, ...resto] = linhas(zip, 1)
+  assert.deepEqual(cab.slice(0, 3), ['Número', 'Competência', 'Emissão'])
+  assert.equal(resto.length, 0, 'a NF-e não entra')
+  assert.equal(entrada[0], '17763')
+  assert.deepEqual(entrada.slice(7, 17), ['150', '7.5', 'Não', '0', '0', '0', '0', '0', '0', '150'])
+  const [, s] = linhas(zip, 2)
+  assert.equal(s[0], '9')
+
+  const soNfe = lerZip(await montarPlanilhaDoMes({ notas: [nfe, nfse], modelo: 'nfe', lerXml: () => null }))
+  assert.equal(linhas(soNfe, 1)[1][0], '190866')
+  assert.equal(linhas(soNfe, 2).length, 1, 'Saídas só com o cabeçalho')
+})

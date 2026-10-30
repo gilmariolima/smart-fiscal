@@ -18,10 +18,10 @@ function pendentesDeCiencia(resumo) {
 }
 
 const ATALHOS = [
-  { para: '/notas', icone: 'notas', cor: 'azul', titulo: 'Notas', texto: 'Pastas de cada cliente, por ano e mês' },
+  { para: '/notas', icone: 'notas', cor: 'azul', titulo: 'Notas', texto: 'Por tipo de nota, cliente, ano e mês' },
   { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e situação da captura' },
   { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar empresa com o certificado A1', soNoPc: true },
-  { para: '/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Notas aguardando a ciência do cliente' },
+  { para: '/notas/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Notas aguardando a ciência do cliente' },
   { para: '/exportar', icone: 'exportar', cor: 'laranja', titulo: 'Exportar', texto: 'ZIP do mês para o Domínio/Fortes' },
   { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Histórico de consultas e downloads' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado para as notas de saída', soNoPc: true },
@@ -137,7 +137,7 @@ export default function Inicio() {
             {plural(pendentes, 'nota aguarda', 'notas aguardam')} a ciência do cliente: avise o dono da empresa. Depois que ele der
             ciência, o XML completo chega sozinho na próxima captura.
           </span>
-          <Link className="botao botao-claro" to="/pendentes">
+          <Link className="botao botao-claro" to="/notas/pendentes">
             Ver as notas
           </Link>
         </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import MenuNota from '../componentes/MenuNota.jsx'
 import Paginacao from '../componentes/Paginacao.jsx'
 import SituacaoNota from '../componentes/SituacaoNota.jsx'
@@ -8,6 +8,7 @@ import Pagina from '../layout/Pagina.jsx'
 import { useAoTerminarCaptura, useResumo } from '../layout/ResumoProvider.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
+import { useNomeDoCliente } from '../useCliente.js'
 import { cnpj as formatarCnpj, data, dinheiro, inteiro } from '../formato.js'
 
 const ORDEM_PADRAO = 'emissao-desc'
@@ -20,15 +21,17 @@ const SITUACOES = [
   ['ciencia_erro', 'Erro na ciência'],
 ]
 
-// Notas sem XML completo de todos os clientes (canceladas ficam de fora: a SEFAZ não entrega o XML delas).
+// Pasta "XMLs não baixados" do cliente: notas sem XML completo (canceladas ficam de fora: a SEFAZ não entrega o XML delas).
 export default function Pendentes() {
+  const { cnpj } = useParams()
+  const nome = useNomeDoCliente(cnpj)
   const [params, setParams] = useSearchParams()
   const { recarregar: recarregarResumo } = useResumo()
   const status = SITUACOES.some(([v]) => v === params.get('status')) ? params.get('status') : 'sem_xml'
   const ordem = params.get('ordem') || ORDEM_PADRAO
   const pagina = Math.max(1, Number.parseInt(params.get('pagina'), 10) || 1)
 
-  const consulta = new URLSearchParams({ status, ordem, pagina })
+  const consulta = new URLSearchParams({ status, ordem, pagina, cnpj })
   const { dados, erro: erroLista, carregando, recarregar } = useApi(`/api/notas?${consulta}`)
   useAoTerminarCaptura(recarregar)
 
@@ -69,12 +72,6 @@ export default function Pendentes() {
 
   const limite = dados?.limiteTentativas
   const colunas = [
-    {
-      chave: 'cliente',
-      titulo: 'Cliente',
-      classe: 'nome',
-      render: (n) => <Link to={`/notas/${n.cliente_cnpj}`}>{n.cliente_nome}</Link>,
-    },
     { chave: 'numero', titulo: 'Número', ordem: 'numero', classe: 'mono', render: (n) => <Link to={`/notas/${n.cliente_cnpj}/nota/${n.id}`}>{n.numero || '—'}</Link> },
     { chave: 'emissao', titulo: 'Emissão', ordem: 'emissao', classe: 'sem-quebra', render: (n) => data(n.data_emissao) },
     { chave: 'emitente_cnpj', titulo: 'CNPJ Emitente', ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
@@ -112,7 +109,8 @@ export default function Pendentes() {
   return (
     <Pagina
       titulo="XMLs não baixados"
-      subtitulo="Notas de todos os clientes que ainda não têm o XML completo. Canceladas ficam de fora."
+      subtitulo="Notas do cliente que ainda não têm o XML completo. Canceladas ficam de fora."
+      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: 'XMLs não baixados', para: '/notas/pendentes' }, { rotulo: nome }]}
       erro={erro || erroLista}
       aoFecharErro={erro ? () => setErro(null) : undefined}
       aviso={aviso}

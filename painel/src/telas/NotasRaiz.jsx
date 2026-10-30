@@ -4,6 +4,7 @@ import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { nomeDe } from '../useCliente.js'
 import { cnpj, inteiro } from '../formato.js'
+import { MODELOS } from '../modelos.js'
 
 function filtrar(clientes, busca) {
   const texto = busca.trim().toLowerCase()
@@ -19,11 +20,11 @@ function filtrar(clientes, busca) {
   return lista.sort((a, b) => Number(!a.ativo) - Number(!b.ativo) || nomeDe(a).localeCompare(nomeDe(b), 'pt-BR'))
 }
 
-function Linha({ c }) {
+function Linha({ c, slug }) {
   return (
     <tr className={c.ativo ? undefined : 'inativo'}>
       <td>
-        <Pasta para={`/notas/${c.cnpj}`}>{nomeDe(c)}</Pasta>
+        <Pasta para={`/notas/${c.cnpj}/${slug}`}>{nomeDe(c)}</Pasta>
         {!c.ativo && <span className="secundario">Desativado</span>}
       </td>
       <td className="sem-quebra">{cnpj(c.cnpj)}</td>
@@ -31,7 +32,9 @@ function Linha({ c }) {
   )
 }
 
-export default function NotasRaiz() {
+// Segundo nível de Notas: depois do tipo (NF-e | NFS-e), o cliente.
+export default function NotasRaiz({ slug }) {
+  const modelo = MODELOS[slug]
   const [busca, setBusca] = useState('')
   const { dados, erro, carregando } = useApi('/api/clientes')
   const todos = dados?.clientes || []
@@ -66,7 +69,7 @@ export default function NotasRaiz() {
                 </thead>
                 <tbody>
                   {lista.map((c) => (
-                    <Linha key={c.cnpj} c={c} />
+                    <Linha key={c.cnpj} c={c} slug={slug} />
                   ))}
                 </tbody>
               </table>
@@ -82,7 +85,12 @@ export default function NotasRaiz() {
     )
 
   return (
-    <Pagina titulo="Notas" subtitulo="Escolha o cliente." erro={erro}>
+    <Pagina
+      titulo={modelo.rotulo}
+      subtitulo="Escolha o cliente."
+      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: modelo.rotulo }]}
+      erro={erro}
+    >
       {conteudo}
     </Pagina>
   )

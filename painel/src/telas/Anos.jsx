@@ -4,7 +4,7 @@ import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { inteiro } from '../formato.js'
-import { MODELOS } from './PastasDoMes.jsx'
+import { MODELOS } from '../modelos.js'
 
 export default function Anos() {
   const { cnpj, modelo: slug } = useParams()
@@ -56,7 +56,7 @@ export default function Anos() {
     <Pagina
       titulo={modelo.rotulo}
       subtitulo="Escolha o ano."
-      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome, para: `/notas/${cnpj}` }, { rotulo: modelo.rotulo }]}
+      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: modelo.rotulo, para: `/notas/${slug}` }, { rotulo: nome }]}
       erro={erro}
     >
       {conteudo}

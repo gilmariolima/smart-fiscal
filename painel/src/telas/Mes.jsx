@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
+import MenuExportar from '../componentes/MenuExportar.jsx'
 import MenuNota from '../componentes/MenuNota.jsx'
 import Paginacao from '../componentes/Paginacao.jsx'
-import ReciboExportacao from '../componentes/ReciboExportacao.jsx'
 import Segmentado from '../componentes/Segmentado.jsx'
 import SituacaoNota from '../componentes/SituacaoNota.jsx'
 import Tabela from '../componentes/Tabela.jsx'
 import Pagina from '../layout/Pagina.jsx'
-import { DIRECOES, MODELOS } from './PastasDoMes.jsx'
+import { MODELOS } from '../modelos.js'
 import { useAoTerminarCaptura } from '../layout/ResumoProvider.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
@@ -30,27 +30,23 @@ const SITUACOES = [
 ]
 
 export default function Mes() {
-  const { cnpj, ano, mes, modelo: slugModelo, direcao: slugDirecao } = useParams()
-  // O modelo vem sempre do caminho (NF-e | NFS-e); dentro de Entradas|Saídas o tipo também. Na lista "todas", o tipo vem do filtro.
+  const { cnpj, ano, mes, modelo: slugModelo } = useParams()
+  // O modelo vem do caminho (NF-e | NFS-e); entradas e saídas ficam juntas, com a coluna Tipo e o filtro Todas | Entradas | Saídas.
   const pastaModelo = MODELOS[slugModelo] || MODELOS['nf-e']
-  const pastaDirecao = DIRECOES[slugDirecao]
-  const naPasta = !!pastaDirecao
   const [params, setParams] = useSearchParams()
   const nome = useNomeDoCliente(cnpj)
   const mes2 = String(mes).padStart(2, '0')
   const competencia = `${ano}-${mes2}`
   const nomeDoMes = NOMES_DOS_MESES[Number(mes) - 1] || mes
 
-  const tipo = naPasta ? pastaDirecao.valor : ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
   const modelo = pastaModelo.valor
+  const tipo = ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
   const status = params.get('status') || ''
   const busca = (params.get('busca') || '').trim()
-  const todas = params.get('todas') === '1'
   const ordem = params.get('ordem') || ORDEM_PADRAO
   const pagina = Math.max(1, Number.parseInt(params.get('pagina'), 10) || 1)
 
-  const filtro = new URLSearchParams({ cnpj })
-  if (!todas) filtro.set('competencia', competencia)
+  const filtro = new URLSearchParams({ cnpj, competencia })
   if (tipo) filtro.set('tipo', tipo)
   if (modelo) filtro.set('modelo', modelo)
   if (status) filtro.set('status', status)
@@ -74,7 +70,6 @@ export default function Mes() {
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
   const [ocupado, setOcupado] = useState(null)
-  const [recibo, setRecibo] = useState(null)
 
   useEffect(() => {
     setErro(null)
@@ -130,7 +125,7 @@ export default function Mes() {
       ids.set('somenteIds', '1')
       const r = await api.get(`/api/notas?${ids}`)
       if (!vigente()) return
-      if (r.ids.length > LIMITE_ZIP) setErro(`${AVISO_LIMITE}. Este filtro tem mais de ${inteiro(LIMITE_ZIP)}; use a situação, o tipo ou a busca para reduzir.`)
+      if (r.ids.length > LIMITE_ZIP) setErro(`${AVISO_LIMITE}. Este filtro tem mais de ${inteiro(LIMITE_ZIP)}; use o tipo, a situação ou a busca para reduzir.`)
       else selecao.marcar(r.ids)
     })
 
@@ -139,10 +134,18 @@ export default function Mes() {
     executar('zip', () => api.baixar('/api/notas/zip', { ids: [...selecao.ids] }))
   }
 
-  const exportarMes = () =>
+  // incluir: o que vai no ZIP (xml, excel, pdf), escolhido no menu do botão.
+  const exportarMes = (incluir) =>
     executar('exportar', async () => {
-      const r = await api.post('/api/exportar', { cnpj, competencia })
-      setRecibo({ ...r, competencia, cnpj })
+      // Gera o pacote e já baixa o ZIP; só os avisos da exportação (se houver) aparecem na tela.
+      const r = await api.post('/api/exportar', { cnpj, competencia, modelo, incluir })
+      const link = document.createElement('a')
+      link.href = r.url
+      link.download = r.nome
+      document.body.append(link)
+      link.click()
+      link.remove()
+      if (r.avisos?.length) setAviso(r.avisos.join(' '))
     })
 
   const reprocessar = (n) =>
@@ -157,46 +160,18 @@ export default function Mes() {
   const quemEmite = modelo === 'nfse' ? 'Prestador' : 'Emitente'
   const quemRecebe = modelo === 'nfse' ? 'Tomador' : 'Destinatário'
   const colunas = [
-    // Dentro de uma pasta (NF-e · Entradas...) tipo e modelo já estão no título: as colunas só alargariam a tabela.
-    ...(naPasta
-      ? []
-      : [
-          { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</span> },
-        ]),
+    { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</span> },
     { chave: 'numero', titulo: 'Número', ordem: 'numero', classe: 'mono', render: (n) => <Link to={`/notas/${cnpj}/nota/${n.id}`}>{n.numero || '—'}</Link> },
     { chave: 'emissao', titulo: 'Emissão', ordem: 'emissao', classe: 'sem-quebra', render: (n) => data(n.data_emissao) },
-    ...(todas
-      ? [
-          {
-            chave: 'mes',
-            titulo: 'Mês',
-            classe: 'sem-quebra',
-            render: (n) => {
-              const [a, m] = (n.competencia || '').split('-')
-              return a ? <Link to={`/notas/${cnpj}/${slugModelo}/${a}/${m}`}>{`${m}/${a}`}</Link> : '—'
-            },
-          },
-        ]
-      : []),
-    // Na pasta só aparece a outra parte: o cliente é o destinatário em Entradas e o emitente em Saídas.
-    ...(naPasta && tipo === 'saida'
-      ? []
-      : [
-          { chave: 'emitente_cnpj', titulo: `CNPJ ${quemEmite}`, ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
-          { chave: 'emitente_nome', titulo: `Nome ${quemEmite}`, ordem: 'emitente_nome', classe: 'nome', render: (n) => n.emitente_nome || '—' },
-        ]),
-    ...(naPasta && tipo === 'entrada'
-      ? []
-      : [
-          {
-            chave: 'destinatario_cnpj',
-            titulo: `CNPJ ${quemRecebe}`,
-            ordem: 'destinatario_cnpj',
-            classe: 'mono sem-quebra',
-            render: (n) => documento(n.destinatario_cnpj) || '—',
-          },
-          ...(naPasta ? [{ chave: 'destinatario_nome', titulo: `Nome ${quemRecebe}`, classe: 'nome', render: (n) => n.destinatario_nome || '—' }] : []),
-        ]),
+    { chave: 'emitente_cnpj', titulo: `CNPJ ${quemEmite}`, ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
+    { chave: 'emitente_nome', titulo: `Nome ${quemEmite}`, ordem: 'emitente_nome', classe: 'nome', render: (n) => n.emitente_nome || '—' },
+    {
+      chave: 'destinatario_cnpj',
+      titulo: `CNPJ ${quemRecebe}`,
+      ordem: 'destinatario_cnpj',
+      classe: 'mono sem-quebra',
+      render: (n) => documento(n.destinatario_cnpj) || '—',
+    },
     { chave: 'valor', titulo: 'Valor', ordem: 'valor', classe: 'num sem-quebra', render: (n) => dinheiro(n.valor_total) },
     { chave: 'situacao', titulo: 'Situação', classe: 'sem-quebra', render: (n) => <SituacaoNota nota={n} limite={limite} /> },
     {
@@ -208,7 +183,7 @@ export default function Mes() {
   ]
 
   const contagem = exibido?.contagemTipo || { entradas: 0, saidas: 0 }
-  const filtrado = !!((!naPasta && tipo) || status || busca)
+  const filtrado = !!(tipo || status || busca)
 
   let conteudo
   if (!exibido) conteudo = carregando && <p className="vazio">Carregando…</p>
@@ -216,7 +191,7 @@ export default function Mes() {
   else if (!exibido.total)
     conteudo = (
       <p className="vazio">
-        {todas ? 'Nenhuma nota encontrada para essa busca.' : filtrado ? 'Nenhuma nota com esses filtros.' : 'Nenhuma nota neste mês.'}
+        {filtrado ? 'Nenhuma nota com esses filtros.' : 'Nenhuma nota neste mês.'}
       </p>
     )
   else {
@@ -243,49 +218,43 @@ export default function Mes() {
   }
 
   const raizModelo = `/notas/${cnpj}/${slugModelo}`
-  const trilha = todas
-    ? [
-        { rotulo: 'Início', para: '/notas' },
-        { rotulo: nome, para: `/notas/${cnpj}` },
-        { rotulo: pastaModelo.rotulo, para: raizModelo },
-        { rotulo: busca ? `Busca: "${busca}"` : 'Todas as pastas' },
-      ]
-    : [
-        { rotulo: 'Início', para: '/notas' },
-        { rotulo: nome, para: `/notas/${cnpj}` },
-        { rotulo: pastaModelo.rotulo, para: raizModelo },
-        { rotulo: ano, para: `${raizModelo}/${ano}` },
-        { rotulo: nomeDoMes, para: `${raizModelo}/${ano}/${mes}` },
-        { rotulo: naPasta ? pastaDirecao.rotulo : 'Todas' },
-      ]
+  const trilha = [
+    { rotulo: 'Início', para: '/notas' },
+    { rotulo: pastaModelo.rotulo, para: `/notas/${slugModelo}` },
+    { rotulo: nome, para: raizModelo },
+    { rotulo: ano, para: `${raizModelo}/${ano}` },
+    { rotulo: nomeDoMes },
+  ]
 
   const acimaDoLimite = selecao.tamanho > LIMITE_ZIP
-  const reciboAtual = !todas && recibo && recibo.cnpj === cnpj && recibo.competencia === competencia ? recibo : null
 
   return (
     <Pagina
-      titulo={naPasta ? `${pastaModelo.rotulo} · ${pastaDirecao.rotulo}` : pastaModelo.rotulo}
-      subtitulo="Ordene clicando no cabeçalho. Marque as notas e baixe os XMLs num ZIP."
+      titulo={`${pastaModelo.rotulo} · ${nomeDoMes} de ${ano}`}
+      acoes={
+        <MenuExportar
+          onEscolher={exportarMes}
+          ocupado={!!ocupado}
+          exportando={ocupado === 'exportar'}
+          titulo={`ZIP com as ${pastaModelo.rotulo} do mês: XMLs, Excel (abas Entradas e Saídas) e relatório em PDF.`}
+        />
+      }
       trilha={trilha}
       erro={erro || erroLista}
       aoFecharErro={erro ? () => setErro(null) : undefined}
       aviso={aviso}
     >
       <div className="barra-notas">
-        {!naPasta && (
-          <>
-            <Segmentado
-              rotulo="Tipo de nota"
-              valor={tipo}
-              onChange={(v) => mudar({ tipo: v })}
-              opcoes={[
-                { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas)})` },
-                { valor: 'entrada', rotulo: `Entradas (${inteiro(contagem.entradas)})` },
-                { valor: 'saida', rotulo: `Saídas (${inteiro(contagem.saidas)})` },
-              ]}
-            />
-          </>
-        )}
+        <Segmentado
+          rotulo="Tipo de nota"
+          valor={tipo}
+          onChange={(v) => mudar({ tipo: v })}
+          opcoes={[
+            { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas)})` },
+            { valor: 'entrada', rotulo: `Entradas (${inteiro(contagem.entradas)})` },
+            { valor: 'saida', rotulo: `Saídas (${inteiro(contagem.saidas)})` },
+          ]}
+        />
         <div className="filtros-notas">
           <label className="campo-situacao">
             <span>Situação</span>
@@ -305,10 +274,6 @@ export default function Mes() {
               mudar({ busca: termo.trim() })
             }}
           >
-            <label className="caixa-todas">
-              <input type="checkbox" checked={todas} onChange={(e) => mudar({ todas: e.target.checked })} />
-              Buscar em todas as pastas
-            </label>
             <span className="busca-campo">
               <input
                 type="search"
@@ -333,17 +298,7 @@ export default function Mes() {
           <button type="button" className="botao botao-claro" onClick={selecao.limpar} disabled={!selecao.tamanho}>
             Desmarcar todos
           </button>
-        </div>
-        <div className="grupo-botoes">
-          <button
-            type="button"
-            className="botao botao-azul"
-            onClick={exportarMes}
-            disabled={todas || !!ocupado}
-            title={todas ? 'Desmarque "Buscar em todas as pastas" para exportar o mês.' : undefined}
-          >
-            {ocupado === 'exportar' ? 'Exportando…' : 'Exportar mês (Domínio/Fortes)'}
-          </button>
+          {/* Marcar, desmarcar e baixar mexem nas mesmas notas marcadas: ficam juntos. */}
           <button type="button" className="botao botao-verde" onClick={baixarSelecionados} disabled={!selecao.tamanho || !!ocupado}>
             {ocupado === 'zip' ? 'Montando ZIP…' : `⤓ Baixar selecionados (${inteiro(selecao.tamanho)})`}
           </button>
@@ -354,7 +309,6 @@ export default function Mes() {
           {AVISO_LIMITE}: há {inteiro(selecao.tamanho)} marcadas.
         </p>
       )}
-      {reciboAtual && <ReciboExportacao r={reciboAtual} aoFechar={() => setRecibo(null)} />}
 
       {conteudo}
     </Pagina>

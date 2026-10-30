@@ -4,7 +4,7 @@ import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { NOMES_DOS_MESES, inteiro } from '../formato.js'
-import { MODELOS } from './PastasDoMes.jsx'
+import { MODELOS } from '../modelos.js'
 
 export default function Meses() {
   const { cnpj, modelo: slug, ano } = useParams()
@@ -59,8 +59,8 @@ export default function Meses() {
       subtitulo="Escolha o mês."
       trilha={[
         { rotulo: 'Início', para: '/notas' },
-        { rotulo: nome, para: `/notas/${cnpj}` },
-        { rotulo: modelo.rotulo, para: `/notas/${cnpj}/${slug}` },
+        { rotulo: modelo.rotulo, para: `/notas/${slug}` },
+        { rotulo: nome, para: `/notas/${cnpj}/${slug}` },
         { rotulo: ano },
       ]}
       erro={erro}

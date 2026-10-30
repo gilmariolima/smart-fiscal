@@ -32,7 +32,8 @@ function abrirNoExplorador(pasta) {
   }
 }
 
-const PADRAO_ZIP = /^\d{14}(_[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*)?_\d{4}-\d{2}\.zip$/
+// <CNPJ>[_apelido]_<AAAA-MM>[_NF-e|_NFS-e].zip: o "Exportar mês" de um modelo leva o sufixo.
+const PADRAO_ZIP = /^\d{14}(_[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*)?_\d{4}-\d{2}(_NFS?-e)?\.zip$/
 
 class ErroHttp extends Error {
   constructor(status, mensagem) {
@@ -618,13 +619,13 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
   })
 
   app.post('/api/exportar', async (req, res) => {
-    const { cnpj, competencia } = req.body || {}
+    const { cnpj, competencia, modelo, incluir } = req.body || {}
     if (!cnpj || !competencia) throw new ErroHttp(400, 'Informe o cliente e a competência.')
     let r
     try {
-      r = await ctx.exportacao.exportar({ cnpj: String(cnpj), competencia: String(competencia) })
+      r = await ctx.exportacao.exportar({ cnpj: String(cnpj), competencia: String(competencia), modelo: modelo ? String(modelo) : undefined, incluir: Array.isArray(incluir) ? incluir.map(String) : undefined })
     } catch (e) {
-      throw new ErroHttp(/inválid|não cadastrado/.test(e.message) ? 400 : 500, e.message)
+      throw new ErroHttp(/inválid|não cadastrado/i.test(e.message) ? 400 : 500, e.message)
     }
     res.json({
       nome: r.nome,

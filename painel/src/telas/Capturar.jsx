@@ -14,8 +14,8 @@ import { cnpj as formatarCnpj, hora, inteiro, plural, quando } from '../formato.
 
 const INTERVALO_CAPTURANDO = 5000
 
-// Um card por tipo de documento. CT-e ainda não é capturado.
-const MODELOS = {
+// Um card por tipo de documento (também na pasta do cliente em Notas). CT-e ainda não é capturado.
+export const MODELOS = {
   nfe: { rotulo: 'NF-e', icone: 'fa-file-invoice', cor: 'azul' },
   nfse: { rotulo: 'NFS-e', icone: 'fa-file-signature', cor: 'roxo' },
   cte: { rotulo: 'CT-e', icone: 'fa-truck', cor: 'laranja', emBreve: true },

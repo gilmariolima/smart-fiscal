@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link, NavLink, useLocation } from 'react-router'
+import { NavLink, useLocation } from 'react-router'
 import { api } from '../api.js'
-import { inteiro } from '../formato.js'
 import { useResumo } from './ResumoProvider.jsx'
 
 // Seções do app: as notas (SEFAZ), o SPED Fiscal (inventário do bloco H) e os cadastros.
@@ -16,8 +15,6 @@ const GRUPOS = [
     titulo: 'Notas fiscais',
     itens: [
       { para: '/notas', rotulo: 'Notas', icone: 'fa-folder-open' },
-      { para: '/pendentes', rotulo: 'XMLs não baixados', icone: 'fa-file-circle-exclamation' },
-      { para: '/exportar', rotulo: 'Exportar', icone: 'fa-file-export' },
       { para: '/execucoes', rotulo: 'Execuções', icone: 'fa-clock-rotate-left' },
     ],
   },
@@ -39,38 +36,6 @@ const GRUPOS = [
     ],
   },
 ]
-
-const SITUACOES_SEM_XML = [
-  { chave: 'aguardandoCiencia', status: 'resumo', rotulo: 'Aguardando o cliente', dica: 'Notas só com resumo: o XML chega depois que o cliente der ciência' },
-  { chave: 'aguardandoXml', status: 'aguardando_xml', rotulo: 'Aguardando XML' },
-  { chave: 'esgotada', status: 'esgotada', rotulo: 'Esgotada' },
-  { chave: 'cienciaErro', status: 'ciencia_erro', rotulo: 'Erro na ciência' },
-]
-
-// Notas sem XML completo (todos os meses, sem as canceladas), uma linha por situação.
-function SemXml() {
-  const { resumo } = useResumo()
-  const contagem = resumo?.semXmlPorSituacao
-  if (!contagem) return null
-  return (
-    <section className="sem-xml" aria-labelledby="sem-xml-titulo">
-      <h2 id="sem-xml-titulo">
-        <Link to="/pendentes">Notas sem XML</Link>
-        <strong>{inteiro(resumo.notasSemXml)}</strong>
-      </h2>
-      <ul>
-        {SITUACOES_SEM_XML.map((s) => (
-          <li key={s.chave} className={contagem[s.chave] ? undefined : 'zerada'}>
-            <Link to={`/pendentes?status=${s.status}`} title={s.dica}>
-              {s.rotulo}
-              <strong>{inteiro(contagem[s.chave])}</strong>
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </section>
-  )
-}
 
 // Texto ao lado do botão "Verificar atualizações", conforme a situação da atualização do app.
 function textoDaAtualizacao(a) {
@@ -193,7 +158,6 @@ export default function MenuLateral() {
             </div>
           ))}
         </nav>
-        <SemXml />
         {resumo?.versao && <Versao versao={resumo.versao} />}
       </aside>
     </>

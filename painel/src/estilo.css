@@ -251,62 +251,6 @@ h2 {
   color: var(--erro);
 }
 
-/* Notas sem XML por situação */
-.sem-xml {
-  margin: 14px 2px 12px;
-  padding: 10px 10px 8px;
-  font-size: 12px;
-  color: var(--apagado);
-  background: var(--cab);
-  border: 1px solid var(--borda-clara);
-  border-radius: var(--raio);
-}
-
-.sem-xml h2 {
-  display: flex;
-  justify-content: space-between;
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.sem-xml h2 a {
-  color: var(--titulo);
-  text-decoration: none;
-}
-
-.sem-xml ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.sem-xml li a {
-  display: flex;
-  justify-content: space-between;
-  padding: 3px 0;
-  color: var(--apagado);
-  text-decoration: none;
-}
-
-.sem-xml a:hover,
-.sem-xml a:focus-visible {
-  color: var(--azul);
-}
-
-.sem-xml strong {
-  color: var(--titulo);
-  font-variant-numeric: tabular-nums;
-}
-
-.sem-xml li:not(.zerada) strong {
-  color: var(--pend);
-}
-
-.sem-xml li.zerada a {
-  color: #98a2b3;
-}
-
 .barra-movel,
 .menu-fundo {
   display: none;
@@ -1778,6 +1722,15 @@ tr.editavel:hover .botao-icone {
   --cor: #b54708;
 }
 
+.card-vermelho {
+  --cor: #b42318;
+}
+
+/* Na pasta do cliente em Notas os cards são links. */
+a.card-captura {
+  text-decoration: none;
+}
+
 .card-captura:disabled {
   cursor: default;
   opacity: 0.6;
@@ -1940,6 +1893,13 @@ tr.editavel:hover .botao-icone {
   font-weight: 600;
   cursor: pointer;
   box-shadow: var(--sombra);
+}
+
+/* Uma ação só ("Ver nota"): o link fica com a cara do botão. */
+a.botao-acoes {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .botao-acoes:hover,
@@ -2138,14 +2098,6 @@ tr.editavel:hover .botao-icone {
   align-items: center;
   gap: 8px 10px;
   margin-left: auto;
-}
-
-.caixa-todas {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
 }
 
 .busca-campo {

@@ -365,6 +365,12 @@ test('exportar pelo painel e baixar o ZIP; nome de arquivo forjado é recusado',
   assert.equal(zip.headers.get('content-type'), 'application/zip')
   assert.ok(lerZip(zip.corpo).has('notas.xlsx'))
 
+  // "Exportar mês" de um modelo: nome com _NF-e e o download funciona.
+  const soNfe = await pedir('/api/exportar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe' } })
+  assert.equal(soNfe.corpo.url, `/api/exportacoes/${CNPJ_MOCK_OK}_Exemplo_${competencia}_NF-e.zip`)
+  assert.equal((await pedir(soNfe.corpo.url)).status, 200)
+  assert.equal((await pedir('/api/exportar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, competencia, modelo: 'cte' } })).status, 400)
+
   assert.equal((await pedir('/api/exportacoes/..%2F..%2Fdata%2Fnfe.db')).status, 404)
   assert.equal((await pedir(`/api/exportacoes/${CNPJ_MOCK_OK}_x_2020-01.zip`)).status, 404)
   assert.equal((await pedir('/api/exportar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, competencia: '2026-13' } })).status, 400)

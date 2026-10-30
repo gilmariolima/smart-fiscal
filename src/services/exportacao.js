@@ -10,6 +10,10 @@
 //   └─ notas.xlsx                                  abas NF-e, NFS-e e Retenções com todas as notas da competência,
 //                                                  inclusive as sem XML completo
 //                                                  (pastas só existem quando têm notas)
+// Com `modelo` ("Exportar mês" da NF-e ou da NFS-e) o pacote leva só aquele modelo, o nome ganha
+// _NF-e ou _NFS-e e a planilha vem com as abas Entradas e Saídas.
+// `incluir` escolhe o que vai no ZIP: 'xml' (XMLs e, na NFS-e, o DANFSe), 'excel' (notas.xlsx) e 'pdf' (relatorio.pdf).
+// Padrão: os três com `modelo`; XMLs e planilha sem ele (pacote da tela Exportar).
 //
 // O layout de importação do Domínio e do Fortes ainda precisa ser confirmado com o escritório:
 // toda a montagem do pacote fica neste arquivo, para ajustar sem mexer no resto.
@@ -20,6 +24,7 @@ const archiver = require('archiver')
 const { criarArmazenamento, pastaDoCliente, pastaNoZip, nomeNoZip } = require('./armazenamento')
 const { somenteDigitos } = require('./clientes')
 const { montarPlanilhaDoMes } = require('./planilhaMes')
+const { montarRelatorioPdf } = require('./relatorioPdf')
 const { gerarDanfse, situacaoDanfse } = require('./danfse/gerar')
 
 // ---------- ZIP ----------
@@ -68,18 +73,22 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
   }
 
   /**
-   * Gera o ZIP do cliente na competência ('AAAA-MM').
+   * Gera o ZIP do cliente na competência ('AAAA-MM'); com `modelo` ('nfe' | 'nfse'), só daquele modelo.
+   * `incluir`: subconjunto de ['xml', 'excel', 'pdf'] (ver o topo do arquivo).
    * @returns {Promise<{ arquivo, nome, bytes, xmls, canceladas, semXml, totalNotas, avisos, porTipo }>}
    */
-  async function exportar({ cnpj, competencia }) {
+  async function exportar({ cnpj, competencia, modelo, incluir }) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(competencia || '')) throw new Error(`Competência inválida: ${competencia}. Use AAAA-MM.`)
+    if (modelo && modelo !== 'nfe' && modelo !== 'nfse') throw new Error(`Modelo inválido: ${modelo}. Use nfe ou nfse.`)
+    const partes = new Set(incluir ?? (modelo ? ['xml', 'excel', 'pdf'] : ['xml', 'excel']))
+    if (!partes.size || [...partes].some((p) => !['xml', 'excel', 'pdf'].includes(p))) throw new Error('Conteúdo inválido: escolha xml, excel e/ou pdf.')
     const cliente = sql.cliente.get(somenteDigitos(cnpj))
     if (!cliente) throw new Error(`CNPJ ${somenteDigitos(cnpj)} não cadastrado.`)
     if (cliente.papel === 'escritorio' && !cliente.tambem_cliente) throw new Error(`CNPJ ${cliente.cnpj} é do escritório: exporte pelo CNPJ do cliente.`)
 
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     try {
-      const notas = sql.notas.all(cliente.id, competencia)
+      const notas = sql.notas.all(cliente.id, competencia).filter((n) => !modelo || (n.modelo === 'nfse') === (modelo === 'nfse'))
       const arquivos = []
       const incluidas = []
       const avisos = []
@@ -88,7 +97,7 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
       for (const n of notas) {
         const tipo = n.tipo === 'saida' ? 'saida' : 'entrada'
         if (n.status !== 'completa' && !n.cancelada) porTipo[tipo].semXml++
-        if (n.status !== 'completa' || !n.caminho_xml) continue
+        if (!partes.has('xml') || n.status !== 'completa' || !n.caminho_xml) continue
         const caminho = armazenamento.absoluto(n.caminho_xml)
         if (!fs.existsSync(caminho)) {
           avisos.push(`XML da nota ${n.chave} não encontrado em ${caminho}.`)
@@ -109,10 +118,15 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
         incluidas.push(n)
       }
       const lerXml = (n) => (n.caminho_xml && fs.existsSync(armazenamento.absoluto(n.caminho_xml)) ? fs.readFileSync(armazenamento.absoluto(n.caminho_xml), 'utf8') : null)
-      arquivos.push({ nome: 'notas.xlsx', conteudo: await montarPlanilhaDoMes({ notas, lerXml }), data: agora() })
+      if (partes.has('excel')) arquivos.push({ nome: 'notas.xlsx', conteudo: await montarPlanilhaDoMes({ notas, lerXml, modelo }), data: agora() })
+      if (partes.has('pdf')) {
+        const doCliente = { cnpj: cliente.cnpj, nome: cliente.apelido || cliente.razao_social }
+        arquivos.push({ nome: 'relatorio.pdf', conteudo: await montarRelatorioPdf({ cliente: doCliente, competencia, notas, lerXml, modelo }), data: agora() })
+      }
 
       fs.mkdirSync(config.pastaExports, { recursive: true })
-      const nome = `${pastaDoCliente(cliente)}_${competencia}.zip`
+      const sufixo = modelo ? `_${modelo === 'nfse' ? 'NFS-e' : 'NF-e'}` : ''
+      const nome = `${pastaDoCliente(cliente)}_${competencia}${sufixo}.zip`
       const destino = path.join(config.pastaExports, nome)
       const bytes = await gravarZip(destino, arquivos)
 

@@ -44,6 +44,13 @@ export default function MenuNota({ nota: n, cnpj, limite, onReprocessar, ocupado
   }, [posicao])
 
   const ver = `/notas/${cnpj}/nota/${n.id}`
+  // Sem XML e sem reprocessar só sobra "Ver nota": vai direto no botão, sem menu.
+  if (!n.tem_xml && !podeReprocessar(n, limite))
+    return (
+      <Link to={ver} className="botao-acoes">
+        Ver nota
+      </Link>
+    )
   return (
     <>
       <button ref={botao} type="button" className="botao-acoes" aria-haspopup="true" aria-expanded={!!posicao} aria-controls={id} onClick={abrir}>

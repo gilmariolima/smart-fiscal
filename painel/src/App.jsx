@@ -13,12 +13,12 @@ import Backup from './telas/Backup.jsx'
 import Pastas from './telas/Pastas.jsx'
 import Inicio from './telas/Inicio.jsx'
 import Mes from './telas/Mes.jsx'
-import PastasDoMes from './telas/PastasDoMes.jsx'
 import Meses from './telas/Meses.jsx'
 import Modelos from './telas/Modelos.jsx'
 import Nota from './telas/Nota.jsx'
 import NotasRaiz from './telas/NotasRaiz.jsx'
 import Pendentes from './telas/Pendentes.jsx'
+import PendentesClientes from './telas/PendentesClientes.jsx'
 import Camadas from './sped/Camadas.jsx'
 import Contador from './sped/Contador.jsx'
 import Converter from './sped/Converter.jsx'
@@ -64,16 +64,21 @@ const rotas = createHashRouter([
       { path: 'capturar', element: <Capturar /> },
       { path: 'capturar/:modelo', element: <Capturar /> },
       { path: 'capturar/:modelo/novas/:cnpj', element: <NotasNovas /> },
-      { path: 'notas', element: <NotasRaiz /> },
-      // Cliente → NF-e | NFS-e | CT-e → ano → mês → Entradas | Saídas
+      // Tipo (NF-e | NFS-e | CT-e | XMLs não baixados) → cliente → ano → mês → Entradas | Saídas
+      { path: 'notas', element: <Modelos /> },
+      { path: 'notas/nf-e', element: <NotasRaiz key="nf-e" slug="nf-e" /> },
+      { path: 'notas/nfs-e', element: <NotasRaiz key="nfs-e" slug="nfs-e" /> },
+      { path: 'notas/pendentes', element: <PendentesClientes /> },
+      // Pasta de um cliente só (botão "Ver as notas" em Clientes)
       { path: 'notas/:cnpj', element: <Modelos /> },
       { path: 'notas/:cnpj/nota/:id', element: <Nota /> },
+      { path: 'notas/:cnpj/pendentes', element: <Pendentes /> },
       { path: 'notas/:cnpj/:modelo', element: <Anos /> },
       { path: 'notas/:cnpj/:modelo/:ano', element: <Meses /> },
-      { path: 'notas/:cnpj/:modelo/:ano/:mes', element: <PastasDoMes /> },
-      { path: 'notas/:cnpj/:modelo/:ano/:mes/todas', element: <Mes /> },
-      { path: 'notas/:cnpj/:modelo/:ano/:mes/:direcao', element: <Mes /> },
-      { path: 'pendentes', element: <Pendentes /> },
+      // Entradas e saídas juntas na lista do mês; os caminhos antigos das pastas caem nela.
+      { path: 'notas/:cnpj/:modelo/:ano/:mes', element: <Mes /> },
+      { path: 'notas/:cnpj/:modelo/:ano/:mes/*', element: <Navigate to=".." relative="path" replace /> },
+      { path: 'pendentes', element: <Navigate to="/notas/pendentes" replace /> },
       { path: 'clientes', element: <Clientes /> },
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },
       { path: 'clientes/:cnpj/certificado', element: <Cadastro key="certificado" modo="certificado" /> },

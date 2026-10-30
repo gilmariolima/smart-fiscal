@@ -392,9 +392,9 @@ export default function Nota() {
   const emitente = dados?.nfe?.emitente?.nome || dados?.nfse?.prestador?.nome || nota?.emitente_nome || ''
   const ehServico = nota?.modelo === 'nfse'
   const [ano, mes] = (nota?.competencia || '').split('-')
-  // Pasta da nota: <NF-e|NFS-e>/<ano>/<mês>/<Entradas|Saídas>.
+  // Pasta da nota: <NF-e|NFS-e>/<ano>/<mês>.
   const pastaModelo = `/notas/${cnpj}/${ehServico ? 'nfs-e' : 'nf-e'}`
-  const pastaDoMes = ano ? `${pastaModelo}/${ano}/${mes}/${nota.tipo === 'saida' ? 'saidas' : 'entradas'}` : `/notas/${cnpj}`
+  const pastaDoMes = ano ? `${pastaModelo}/${ano}/${mes}` : `/notas/${cnpj}`
 
   // "Imprimir DANFE" do menu da nota: abre a impressão assim que a nota carrega, uma vez só.
   const imprimir = params.get('imprimir') === '1'
@@ -409,8 +409,8 @@ export default function Nota() {
 
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
-    { rotulo: nota?.cliente_nome || cnpj, para: `/notas/${cnpj}` },
-    ...(nota ? [{ rotulo: ehServico ? 'NFS-e' : 'NF-e', para: pastaModelo }] : []),
+    ...(nota ? [{ rotulo: ehServico ? 'NFS-e' : 'NF-e', para: `/notas/${ehServico ? 'nfs-e' : 'nf-e'}` }] : []),
+    { rotulo: nota?.cliente_nome || cnpj, para: nota ? pastaModelo : `/notas/${cnpj}` },
     ...(ano
       ? [
           { rotulo: ano, para: `${pastaModelo}/${ano}` },

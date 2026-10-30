@@ -200,3 +200,51 @@ test('NFS-e no ZIP leva o PDF (DANFSe) ao lado do XML; XML ilegível vira aviso'
   assert.ok(!zip.has(`NFS-e/Entradas/${ruim}-nfse.pdf`))
   assert.ok(r.avisos.some((a) => a.includes(ruim) && /PDF/.test(a)))
 })
+
+test('"Exportar mês" de um modelo: ZIP só daquele modelo, nome com _NF-e/_NFS-e e abas Entradas e Saídas', async (t) => {
+  const amb = ambienteVazio(t)
+  const e1 = notaComXml(amb, amb.ids[0], 1)
+  const s1 = notaComXml(amb, amb.ids[0], 2, { modelo: 'nfse', tipo: 'saida' })
+  const e2 = notaComXml(amb, amb.ids[0], 3, { modelo: 'nfse' })
+  const servico = criarServicoExportacao(amb.deps)
+
+  const nfse = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfse' })
+  assert.match(nfse.nome, /_2026-10_NFS-e\.zip$/)
+  const zip = lerZip(fs.readFileSync(nfse.arquivo))
+  assert.deepEqual([...zip.keys()].sort(), [`NFS-e/Entradas/${e2}-nfse.xml`, `NFS-e/Saidas/${s1}-nfse.xml`, 'notas.xlsx', 'relatorio.pdf'].sort())
+  const planilha = lerZip(zip.get('notas.xlsx'))
+  assert.match(planilha.get('xl/workbook.xml').toString(), /name="Entradas".*name="Saídas"/)
+  assert.ok(planilha.get('xl/worksheets/sheet1.xml').toString().includes(`<t>${e2}</t>`), 'entrada na aba Entradas')
+  assert.ok(planilha.get('xl/worksheets/sheet2.xml').toString().includes(`<t>${s1}</t>`), 'saída na aba Saídas')
+  assert.ok(!planilha.has('xl/worksheets/sheet3.xml'))
+
+  const nfe = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe' })
+  assert.match(nfe.nome, /_2026-10_NF-e\.zip$/)
+  assert.deepEqual([...lerZip(fs.readFileSync(nfe.arquivo)).keys()].sort(), [`NF-e/Entradas/${e1}-nfe.xml`, 'notas.xlsx', 'relatorio.pdf'])
+
+  await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'cte' }), /Modelo inválido/)
+})
+
+test('"Exportar mês" com a escolha do conteúdo: só XMLs, só Excel, só PDF ou tudo', async (t) => {
+  const amb = ambienteVazio(t)
+  const e1 = notaComXml(amb, amb.ids[0], 1)
+  const servico = criarServicoExportacao(amb.deps)
+  const conteudo = async (incluir) => [...lerZip(fs.readFileSync((await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir })).arquivo)).keys()].sort()
+
+  assert.deepEqual(await conteudo(['xml']), [`NF-e/Entradas/${e1}-nfe.xml`])
+  assert.deepEqual(await conteudo(['excel']), ['notas.xlsx'])
+  assert.deepEqual(await conteudo(['pdf']), ['relatorio.pdf'])
+  assert.deepEqual(await conteudo(undefined), [`NF-e/Entradas/${e1}-nfe.xml`, 'notas.xlsx', 'relatorio.pdf'])
+  const pdf = lerZip(fs.readFileSync((await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['pdf'] })).arquivo)).get('relatorio.pdf')
+  assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
+
+  await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: [] }), /Conteúdo inválido/)
+  await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['exe'] }), /Conteúdo inválido/)
+})
+
+test('sem modelo (tela Exportar) o pacote segue com XMLs e planilha, sem o relatório em PDF', async (t) => {
+  const amb = ambienteVazio(t)
+  notaComXml(amb, amb.ids[0], 1)
+  const r = await criarServicoExportacao(amb.deps).exportar({ cnpj: CNPJ_MOCK_OK, competencia })
+  assert.ok(!lerZip(fs.readFileSync(r.arquivo)).has('relatorio.pdf'))
+})
