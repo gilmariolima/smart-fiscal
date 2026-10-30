@@ -20,12 +20,6 @@ const DESENHOS = {
       <path d="M19 8v6M16 11h6" />
     </>
   ),
-  exportar: (
-    <>
-      <path d="M12 3v11M7.5 9.5 12 14l4.5-4.5" />
-      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-    </>
-  ),
   pendentes: (
     <>
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />

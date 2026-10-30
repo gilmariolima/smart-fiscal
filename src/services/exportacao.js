@@ -13,7 +13,9 @@
 // Com `modelo` ("Exportar mês" da NF-e ou da NFS-e) o pacote leva só aquele modelo, o nome ganha
 // _NF-e ou _NFS-e e a planilha vem com as abas Entradas e Saídas.
 // `incluir` escolhe o que vai no ZIP: 'xml' (XMLs e, na NFS-e, o DANFSe), 'excel' (notas.xlsx) e 'pdf' (relatorio.pdf).
-// Padrão: os três com `modelo`; XMLs e planilha sem ele (pacote da tela Exportar).
+// Padrão: os três com `modelo`; XMLs e planilha sem ele.
+// Só a planilha ou só o relatório saem como um arquivo solto (sem ZIP), com o nome da empresa, o mês e o modelo:
+//   <apelido>_<AAAA-MM>_<NF-e|NFS-e>.xlsx | .pdf
 //
 // O layout de importação do Domínio e do Fortes ainda precisa ser confirmado com o escritório:
 // toda a montagem do pacote fica neste arquivo, para ajustar sem mexer no resto.
@@ -21,7 +23,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const archiver = require('archiver')
-const { criarArmazenamento, pastaDoCliente, pastaNoZip, nomeNoZip } = require('./armazenamento')
+const { criarArmazenamento, pastaDoCliente, pastaNoZip, nomeNoZip, slug } = require('./armazenamento')
 const { somenteDigitos } = require('./clientes')
 const { montarPlanilhaDoMes } = require('./planilhaMes')
 const { montarRelatorioPdf } = require('./relatorioPdf')
@@ -126,9 +128,19 @@ function criarServicoExportacao({ db, config, logger, agora = () => new Date() }
 
       fs.mkdirSync(config.pastaExports, { recursive: true })
       const sufixo = modelo ? `_${modelo === 'nfse' ? 'NFS-e' : 'NF-e'}` : ''
-      const nome = `${pastaDoCliente(cliente)}_${competencia}${sufixo}.zip`
+      // Um arquivo só (planilha ou relatório): vai solto, com o nome da empresa; o resto vai em ZIP.
+      const solto = partes.size === 1 && !partes.has('xml') ? arquivos[0] : null
+      const nome = solto
+        ? `${slug(cliente.apelido || cliente.razao_social) || cliente.cnpj}_${competencia}${sufixo}${path.extname(solto.nome)}`
+        : `${pastaDoCliente(cliente)}_${competencia}${sufixo}.zip`
       const destino = path.join(config.pastaExports, nome)
-      const bytes = await gravarZip(destino, arquivos)
+      let bytes
+      if (solto) {
+        const tmp = `${destino}.${process.pid}.tmp`
+        fs.writeFileSync(tmp, solto.conteudo)
+        fs.renameSync(tmp, destino)
+        bytes = solto.conteudo.length
+      } else bytes = await gravarZip(destino, arquivos)
 
       const marcarTodas = db.transaction((lista, quando) => {
         for (const n of lista) sql.marcar.run(quando, n.id)

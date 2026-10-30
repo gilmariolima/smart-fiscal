@@ -107,4 +107,5 @@ function montarPlanilhaDoMes({ notas, lerXml, modelo }) {
   ])
 }
 
-module.exports = { montarPlanilhaDoMes }
+// Colunas e linhas das abas Entradas/Saídas também servem ao relatório em PDF (mesmos dados nos dois).
+module.exports = { montarPlanilhaDoMes, COLUNAS_NFE, COLUNAS_NFSE, linhaNfe, linhaNfse }

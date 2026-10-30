@@ -232,11 +232,16 @@ test('"Exportar mês" com a escolha do conteúdo: só XMLs, só Excel, só PDF o
   const conteudo = async (incluir) => [...lerZip(fs.readFileSync((await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir })).arquivo)).keys()].sort()
 
   assert.deepEqual(await conteudo(['xml']), [`NF-e/Entradas/${e1}-nfe.xml`])
-  assert.deepEqual(await conteudo(['excel']), ['notas.xlsx'])
-  assert.deepEqual(await conteudo(['pdf']), ['relatorio.pdf'])
   assert.deepEqual(await conteudo(undefined), [`NF-e/Entradas/${e1}-nfe.xml`, 'notas.xlsx', 'relatorio.pdf'])
-  const pdf = lerZip(fs.readFileSync((await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['pdf'] })).arquivo)).get('relatorio.pdf')
-  assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
+  assert.deepEqual(await conteudo(['xml', 'pdf']), [`NF-e/Entradas/${e1}-nfe.xml`, 'relatorio.pdf'])
+
+  // Só a planilha ou só o relatório: arquivo solto (sem ZIP), com o nome da empresa, o mês e o modelo.
+  const pdf = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['pdf'] })
+  assert.equal(pdf.nome, `Cliente_1_${competencia}_NF-e.pdf`)
+  assert.equal(fs.readFileSync(pdf.arquivo).subarray(0, 5).toString(), '%PDF-')
+  const xlsx = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfse', incluir: ['excel'] })
+  assert.equal(xlsx.nome, `Cliente_1_${competencia}_NFS-e.xlsx`)
+  assert.match(lerZip(fs.readFileSync(xlsx.arquivo)).get('xl/workbook.xml').toString(), /name="Entradas".*name="Saídas"/)
 
   await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: [] }), /Conteúdo inválido/)
   await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['exe'] }), /Conteúdo inválido/)

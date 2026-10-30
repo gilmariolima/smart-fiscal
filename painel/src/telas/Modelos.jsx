@@ -17,7 +17,7 @@ const pastaDe = (cnpj, slug) => (cnpj ? `/notas/${cnpj}/${slug}` : `/notas/${slu
 function Card({ cnpj, chave }) {
   const m = CARDS[chave]
   const ativo = !m.emBreve
-  const { dados } = useApi(ativo ? `/api/notas?${doCliente(cnpj)}modelo=${chave}&somenteContagem=1` : null, [cnpj, chave])
+  const { dados } = useApi(ativo ? `/api/notas?${doCliente(cnpj)}modelo=${chave}&status=com_xml&somenteContagem=1` : null, [cnpj, chave])
   const c = dados?.contagemTipo
   const conteudo = (
     <>

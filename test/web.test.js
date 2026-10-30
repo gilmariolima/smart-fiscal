@@ -323,16 +323,17 @@ test('GET /api/clientes devolve { clientes, capturandoAgora, filaCaptura }', asy
   assert.deepEqual(r.filaCaptura, [])
 })
 
-test('meses do cliente agrupados por ano, do mais recente ao mais antigo', async (t) => {
+test('meses do cliente agrupados por ano, do mais recente ao mais antigo; só notas com XML', async (t) => {
   const { ctx, pedir } = await montar(t)
   const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
   const grupo = (qtd, inicio, competencia, tipo) => {
-    for (const chave of inserirNotas(ctx.db, id, qtd, { inicio, competencia })) ctx.db.prepare('UPDATE notas SET tipo = ? WHERE chave = ?').run(tipo, chave)
+    for (const chave of inserirNotas(ctx.db, id, qtd, { inicio, competencia })) ctx.db.prepare("UPDATE notas SET tipo = ?, status = 'completa' WHERE chave = ?").run(tipo, chave)
   }
   grupo(2, 1, '2026-10', 'entrada')
   grupo(1, 3, '2026-10', 'saida')
   grupo(1, 4, '2026-08', 'entrada')
   grupo(1, 5, '2025-12', 'entrada')
+  inserirNotas(ctx.db, id, 1, { inicio: 6, competencia: '2026-10' }) // sem XML: fica em XMLs não baixados, não conta
   const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses`)
   assert.equal(r.status, 200)
   assert.deepEqual(r.corpo, [
@@ -369,6 +370,12 @@ test('exportar pelo painel e baixar o ZIP; nome de arquivo forjado é recusado',
   const soNfe = await pedir('/api/exportar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe' } })
   assert.equal(soNfe.corpo.url, `/api/exportacoes/${CNPJ_MOCK_OK}_Exemplo_${competencia}_NF-e.zip`)
   assert.equal((await pedir(soNfe.corpo.url)).status, 200)
+  // Só o relatório: PDF solto com o nome da empresa.
+  const pdf = await pedir('/api/exportar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['pdf'] } })
+  assert.equal(pdf.corpo.url, `/api/exportacoes/Exemplo_${competencia}_NF-e.pdf`)
+  const baixado = await pedir(pdf.corpo.url)
+  assert.equal(baixado.status, 200)
+  assert.equal(baixado.headers.get('content-type'), 'application/pdf')
   assert.equal((await pedir('/api/exportar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, competencia, modelo: 'cte' } })).status, 400)
 
   assert.equal((await pedir('/api/exportacoes/..%2F..%2Fdata%2Fnfe.db')).status, 404)
@@ -844,7 +851,8 @@ test('ZIP das selecionadas: pastas por tipo, canceladas com o evento e avisos', 
   const r = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [n1, n2, n3, n4, n5] } })
   assert.equal(r.status, 200)
   assert.equal(r.headers.get('content-type'), 'application/zip')
-  assert.match(r.headers.get('content-disposition'), /^attachment; filename="11222333000181_Exemplo_selecionadas_\d{8}-\d{6}\.zip"/)
+  // Todas do mesmo mês e modelo: o nome leva o mês e o modelo.
+  assert.match(r.headers.get('content-disposition'), /^attachment; filename="11222333000181_Exemplo_2026-10_NF-e\.zip"/)
   const zip = lerZip(r.corpo)
   assert.deepEqual([...zip.keys()].sort(), [
     'avisos.txt',
@@ -871,7 +879,7 @@ test('ZIP: sem avisos não leva avisos.txt; cliente sem apelido usa a razão soc
   ctx.db.prepare('UPDATE notas SET caminho_xml = ? WHERE id = ?').run(rel, n)
   const r = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [n] } })
   assert.equal(r.status, 200)
-  assert.match(r.headers.get('content-disposition'), /99888777000100_Loja_Bloqueada_Ltda_selecionadas_/)
+  assert.match(r.headers.get('content-disposition'), /99888777000100_Loja_Bloqueada_Ltda_2026-10_NF-e\.zip/)
   assert.deepEqual([...lerZip(r.corpo).keys()], [`NF-e/Entradas/${c}-nfe.xml`])
 })
 
@@ -1077,4 +1085,56 @@ test('escritório cadastrado como cliente aparece em Clientes, tem meses e sai d
   assert.match(fora.corpo.mensagem, /fora da lista de clientes/)
   assert.ok(!(await lista()).some((c) => c.cnpj === CNPJ_NOVO))
   assert.ok((await pedir('/api/escritorio')).corpo, 'o escritório continua cadastrado')
+})
+
+test('Baixar selecionados com escolha: planilha e PDF soltos, DANFSe e pacote completo em ZIP; meses diferentes → "selecionadas"', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
+  const fortaleza = fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml'))
+  const [c1, c2] = [1, 2].map(nota44)
+  const rel = (c) => `${CNPJ_MOCK_OK}_Exemplo/2026-10/${c}-nfse.xml`
+  const n1 = inserirNota(ctx.db, { cliente_id: id, chave: c1, status: 'completa' })
+  const n2 = inserirNota(ctx.db, { cliente_id: id, chave: c2, tipo: 'saida', status: 'completa' })
+  for (const [n, c] of [[n1, c1], [n2, c2]]) {
+    gravarXml(ctx, rel(c), fortaleza)
+    ctx.db.prepare("UPDATE notas SET modelo = 'nfse', competencia = '2026-10', caminho_xml = ? WHERE id = ?").run(rel(c), n)
+  }
+  const baixar = (incluir, ids = [n1, n2]) => pedir('/api/notas/zip', { method: 'POST', body: { ids, incluir } })
+
+  const pdf = await baixar(['pdf'])
+  assert.equal(pdf.status, 200)
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf')
+  assert.match(pdf.headers.get('content-disposition'), /filename="Exemplo_2026-10_NFS-e\.pdf"/)
+
+  const xlsx = await baixar(['excel'])
+  assert.match(xlsx.headers.get('content-disposition'), /filename="Exemplo_2026-10_NFS-e\.xlsx"/)
+  assert.match(lerZip(xlsx.corpo).get('xl/workbook.xml').toString(), /name="Entradas".*name="Saídas"/)
+
+  const danfse = await baixar(['danfse'])
+  assert.equal(danfse.headers.get('content-type'), 'application/zip')
+  assert.deepEqual([...lerZip(danfse.corpo).keys()].sort(), [`NFS-e/Entradas/${c1}-nfse.pdf`, `NFS-e/Saidas/${c2}-nfse.pdf`])
+
+  const completo = await baixar(['xml', 'danfse', 'excel', 'pdf'])
+  assert.match(completo.headers.get('content-disposition'), /filename="11222333000181_Exemplo_2026-10_NFS-e\.zip"/)
+  assert.equal([...lerZip(completo.corpo).keys()].length, 6, '2 XMLs + 2 DANFSe + planilha + relatório')
+
+  ctx.db.prepare("UPDATE notas SET competencia = '2026-09' WHERE id = ?").run(n2)
+  assert.match((await baixar(['pdf'])).headers.get('content-disposition'), /filename="Exemplo_selecionadas_\d{8}-\d{6}\.pdf"/)
+  assert.equal((await baixar(['exe'])).status, 400)
+})
+
+test('Baixar selecionados → Arquivos DANFE: PDF de cada NF-e ao lado do XML, no ZIP', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { nfeProc, item } = require('./apoio/nfe')
+  const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
+  const c = nota44(7)
+  const rel = `${CNPJ_MOCK_OK}_Exemplo/2026-10/${c}-nfe.xml`
+  const n = inserirNota(ctx.db, { cliente_id: id, chave: c, status: 'completa' })
+  gravarXml(ctx, rel, nfeProc({ det: item(1) }))
+  ctx.db.prepare("UPDATE notas SET competencia = '2026-10', caminho_xml = ? WHERE id = ?").run(rel, n)
+  const r = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [n], incluir: ['danfe'] } })
+  assert.equal(r.status, 200)
+  const zip = lerZip(r.corpo)
+  assert.deepEqual([...zip.keys()], [`NF-e/Entradas/${c}-nfe.pdf`])
+  assert.equal(zip.get(`NF-e/Entradas/${c}-nfe.pdf`).subarray(0, 5).toString(), '%PDF-')
 })

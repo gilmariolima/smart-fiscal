@@ -1,15 +1,20 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
-// O que vai no ZIP do "Exportar mês".
-export const OPCOES_EXPORTAR = [
-  { incluir: ['xml', 'excel', 'pdf'], rotulo: 'Pacote completo (XMLs, planilha e relatório)' },
-  { incluir: ['xml'], rotulo: 'Arquivos XML' },
-  { incluir: ['excel'], rotulo: 'Planilha (Excel)' },
-  { incluir: ['pdf'], rotulo: 'Relatório (PDF)' },
-]
+// O que o "Baixar selecionados" pode baixar das notas marcadas. Planilha e relatório saem soltos; o resto, em ZIP.
+// O PDF de cada nota é o DANFE na NF-e e o DANFSe na NFS-e.
+export function opcoesDeBaixar(modelo) {
+  const pdfNota = modelo === 'nfse' ? { incluir: ['danfse'], rotulo: 'DANFSe' } : { incluir: ['danfe'], rotulo: 'DANFE' }
+  return [
+    { incluir: ['xml', ...pdfNota.incluir, 'excel', 'pdf'], rotulo: `Pacote completo (XMLs, ${pdfNota.rotulo}, planilha e PDF)` },
+    { incluir: pdfNota.incluir, rotulo: `Arquivos ${pdfNota.rotulo}` },
+    { incluir: ['xml'], rotulo: 'Arquivos XML' },
+    { incluir: ['excel'], rotulo: 'Relatório em planilha (Excel)' },
+    { incluir: ['pdf'], rotulo: 'Relatório em PDF' },
+  ]
+}
 
-// Botão "Exportar mês ▾": o menu fica em position: fixed, como o "Ações" das notas; fecha com Esc ou clique fora.
-export default function MenuExportar({ onEscolher, ocupado, exportando, titulo }) {
+// Botão com menu ▾: o menu fica em position: fixed, como o "Ações" das notas; fecha com Esc ou clique fora.
+export default function MenuBaixar({ rotulo, opcoes, onEscolher, desativado, className = 'botao botao-verde' }) {
   const id = useId()
   const botao = useRef(null)
   const menu = useRef(null)
@@ -45,22 +50,12 @@ export default function MenuExportar({ onEscolher, ocupado, exportando, titulo }
 
   return (
     <>
-      <button
-        ref={botao}
-        type="button"
-        className="botao botao-azul"
-        aria-haspopup="true"
-        aria-expanded={!!posicao}
-        aria-controls={id}
-        onClick={abrir}
-        disabled={ocupado}
-        title={titulo}
-      >
-        {exportando ? 'Exportando…' : 'Exportar mês'} <span aria-hidden="true">▾</span>
+      <button ref={botao} type="button" className={className} aria-haspopup="true" aria-expanded={!!posicao} aria-controls={id} onClick={abrir} disabled={desativado}>
+        {rotulo} <span aria-hidden="true">▾</span>
       </button>
       {posicao && (
         <div id={id} ref={menu} className="menu-nota" style={posicao}>
-          {OPCOES_EXPORTAR.map((o) => (
+          {opcoes.map((o) => (
             <button
               key={o.rotulo}
               type="button"

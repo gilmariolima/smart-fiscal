@@ -2279,14 +2279,6 @@ a.botao-acoes {
   overflow-wrap: anywhere;
 }
 
-.recibo-topo {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--azul-escuro);
-}
-
 .recibo p {
   margin: 6px 0 10px;
 }

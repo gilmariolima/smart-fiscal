@@ -22,7 +22,6 @@ const ATALHOS = [
   { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e situação da captura' },
   { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar empresa com o certificado A1', soNoPc: true },
   { para: '/notas/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Notas aguardando a ciência do cliente' },
-  { para: '/exportar', icone: 'exportar', cor: 'laranja', titulo: 'Exportar', texto: 'ZIP do mês para o Domínio/Fortes' },
   { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Histórico de consultas e downloads' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado para as notas de saída', soNoPc: true },
   { para: '/capturar', icone: 'capturar', cor: 'ciano', titulo: 'Capturar', texto: 'Buscar NF-e e NFS-e dos clientes' },

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import MenuExportar from '../componentes/MenuExportar.jsx'
+import MenuBaixar, { opcoesDeBaixar } from '../componentes/MenuBaixar.jsx'
 import MenuNota from '../componentes/MenuNota.jsx'
 import Paginacao from '../componentes/Paginacao.jsx'
 import Segmentado from '../componentes/Segmentado.jsx'
@@ -19,15 +19,13 @@ const ORDEM_PADRAO = 'emissao-desc'
 const LIMITE_ZIP = 2000
 const AVISO_LIMITE = 'Selecione até 2.000 notas'
 
+// Só notas com XML; as que ainda não têm ficam na pasta "XMLs não baixados".
 const SITUACOES = [
-  ['', 'Todas as situações'],
-  ['completa', 'XML completo'],
-  ['sem_xml', 'Sem XML'],
-  ['resumo', 'Aguardando ciência do cliente'],
-  ['ciencia_erro', 'Erro na ciência'],
-  ['esgotada', 'Esgotada'],
-  ['cancelada', 'Cancelada'],
+  ['', 'Todas'],
+  ['completa', 'Completas'],
+  ['cancelada', 'Canceladas'],
 ]
+const FILTRO_DA_SITUACAO = { '': 'com_xml', completa: 'completa', cancelada: 'cancelada_com_xml' }
 
 export default function Mes() {
   const { cnpj, ano, mes, modelo: slugModelo } = useParams()
@@ -41,7 +39,7 @@ export default function Mes() {
 
   const modelo = pastaModelo.valor
   const tipo = ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
-  const status = params.get('status') || ''
+  const status = FILTRO_DA_SITUACAO[params.get('status')] ? params.get('status') : ''
   const busca = (params.get('busca') || '').trim()
   const ordem = params.get('ordem') || ORDEM_PADRAO
   const pagina = Math.max(1, Number.parseInt(params.get('pagina'), 10) || 1)
@@ -49,7 +47,7 @@ export default function Mes() {
   const filtro = new URLSearchParams({ cnpj, competencia })
   if (tipo) filtro.set('tipo', tipo)
   if (modelo) filtro.set('modelo', modelo)
-  if (status) filtro.set('status', status)
+  filtro.set('status', FILTRO_DA_SITUACAO[status])
   if (busca) filtro.set('busca', busca)
   const chaveDoFiltro = filtro.toString()
   const consulta = new URLSearchParams(filtro)
@@ -129,24 +127,11 @@ export default function Mes() {
       else selecao.marcar(r.ids)
     })
 
-  const baixarSelecionados = () => {
+  // incluir: o que baixar das marcadas (xml, danfse, excel, pdf), escolhido no menu do botão.
+  const baixarSelecionados = (incluir) => {
     if (selecao.tamanho > LIMITE_ZIP) return setErro(`${AVISO_LIMITE}. Há ${inteiro(selecao.tamanho)} marcadas.`)
-    executar('zip', () => api.baixar('/api/notas/zip', { ids: [...selecao.ids] }))
+    executar('zip', () => api.baixar('/api/notas/zip', { ids: [...selecao.ids], incluir }))
   }
-
-  // incluir: o que vai no ZIP (xml, excel, pdf), escolhido no menu do botão.
-  const exportarMes = (incluir) =>
-    executar('exportar', async () => {
-      // Gera o pacote e já baixa o ZIP; só os avisos da exportação (se houver) aparecem na tela.
-      const r = await api.post('/api/exportar', { cnpj, competencia, modelo, incluir })
-      const link = document.createElement('a')
-      link.href = r.url
-      link.download = r.nome
-      document.body.append(link)
-      link.click()
-      link.remove()
-      if (r.avisos?.length) setAviso(r.avisos.join(' '))
-    })
 
   const reprocessar = (n) =>
     executar('reprocessar', async (vigente) => {
@@ -231,14 +216,6 @@ export default function Mes() {
   return (
     <Pagina
       titulo={`${pastaModelo.rotulo} · ${nomeDoMes} de ${ano}`}
-      acoes={
-        <MenuExportar
-          onEscolher={exportarMes}
-          ocupado={!!ocupado}
-          exportando={ocupado === 'exportar'}
-          titulo={`ZIP com as ${pastaModelo.rotulo} do mês: XMLs, Excel (abas Entradas e Saídas) e relatório em PDF.`}
-        />
-      }
       trilha={trilha}
       erro={erro || erroLista}
       aoFecharErro={erro ? () => setErro(null) : undefined}
@@ -299,9 +276,12 @@ export default function Mes() {
             Desmarcar todos
           </button>
           {/* Marcar, desmarcar e baixar mexem nas mesmas notas marcadas: ficam juntos. */}
-          <button type="button" className="botao botao-verde" onClick={baixarSelecionados} disabled={!selecao.tamanho || !!ocupado}>
-            {ocupado === 'zip' ? 'Montando ZIP…' : `⤓ Baixar selecionados (${inteiro(selecao.tamanho)})`}
-          </button>
+          <MenuBaixar
+            rotulo={ocupado === 'zip' ? 'Preparando…' : `⤓ Baixar selecionados (${inteiro(selecao.tamanho)})`}
+            opcoes={opcoesDeBaixar(modelo)}
+            onEscolher={baixarSelecionados}
+            desativado={!selecao.tamanho || !!ocupado}
+          />
         </div>
       </div>
       {acimaDoLimite && (

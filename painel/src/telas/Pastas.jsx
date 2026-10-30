@@ -8,7 +8,7 @@ import { useApi } from '../useApi.js'
 
 const EXPLICACAO = {
   xmls: 'Os XMLs baixados, por cliente, ano e mês, separados em NF-e e NFS-e, entradas e saídas (CNPJ_Cliente\\AAAA\\MM\\NF-e\\Entradas). Ao trocar, os XMLs já baixados vão junto.',
-  exports: 'Os ZIPs criados na tela Exportar. Ao trocar, os ZIPs que já estão lá vão junto.',
+  exports: 'Os ZIPs criados pelo "Exportar mês". Ao trocar, os ZIPs que já estão lá vão junto.',
   sped: 'Os arquivos do SPED, separados por empresa e mês do inventário. Ao trocar, os próximos vão para a pasta nova; os de antes ficam onde estão.',
 }
 

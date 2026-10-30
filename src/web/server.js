@@ -32,8 +32,10 @@ function abrirNoExplorador(pasta) {
   }
 }
 
-// <CNPJ>[_apelido]_<AAAA-MM>[_NF-e|_NFS-e].zip: o "Exportar mês" de um modelo leva o sufixo.
-const PADRAO_ZIP = /^\d{14}(_[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*)?_\d{4}-\d{2}(_NFS?-e)?\.zip$/
+// Arquivos da exportação: <CNPJ>[_apelido]_<AAAA-MM>[_NF-e|_NFS-e].zip ou, planilha/relatório soltos,
+// <apelido>_<AAAA-MM>_<NF-e|NFS-e>.xlsx|.pdf. Só letras, números, '-' e '_' (nada de '/' ou '..').
+const PADRAO_EXPORTACAO = /^[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*_\d{4}-\d{2}(_NFS?-e)?\.(zip|xlsx|pdf)$/
+const TIPO_DA_EXPORTACAO = { zip: 'application/zip', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf' }
 
 class ErroHttp extends Error {
   constructor(status, mensagem) {
@@ -146,9 +148,10 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
         SUM(CASE WHEN competencia = @competencia AND tipo = 'saida' THEN 1 ELSE 0 END) saidas_no_mes
       FROM notas GROUP BY cliente_id`),
     competencias: db.prepare('SELECT DISTINCT competencia FROM notas WHERE competencia IS NOT NULL ORDER BY competencia DESC'),
+    // Anos e meses das pastas: só notas com XML, como a lista do mês (as sem XML ficam em "XMLs não baixados").
     mesesDoCliente: db.prepare(`SELECT competencia,
         SUM(tipo = 'entrada') entradas, SUM(tipo = 'saida') saidas
-      FROM notas WHERE cliente_id = @cliente AND competencia IS NOT NULL AND (@modelo IS NULL OR modelo = @modelo)
+      FROM notas WHERE cliente_id = @cliente AND competencia IS NOT NULL AND (@modelo IS NULL OR modelo = @modelo) AND status = 'completa'
       GROUP BY competencia ORDER BY competencia DESC`),
     saidasDoMes: db.prepare("SELECT COUNT(*) n FROM notas WHERE tipo = 'saida' AND competencia = ?"),
     nota: db.prepare('SELECT * FROM notas WHERE id = ?'),
@@ -278,6 +281,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     ciencia_erro: "n.status = 'ciencia_erro' AND n.cancelada = 0",
     completa: "n.status = 'completa' AND n.cancelada = 0",
     sem_xml: "n.status <> 'completa' AND n.cancelada = 0",
+    // Lista do mês: só notas com XML (completas e canceladas que têm o XML).
+    com_xml: "n.status = 'completa'",
+    cancelada_com_xml: "n.status = 'completa' AND n.cancelada = 1",
     aguardando_xml: "n.status = 'ciencia_enviada' AND n.cancelada = 0 AND n.tentativas_download < @maxTentativas",
     esgotada: "n.status = 'ciencia_enviada' AND n.cancelada = 0 AND n.tentativas_download >= @maxTentativas",
     cancelada: 'n.cancelada = 1',
@@ -597,13 +603,20 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     res.json({ ok: true, automacao, agendador: agendador.estado() })
   })
 
-  app.post('/api/notas/zip', (req, res) => {
+  // "Baixar selecionados": `incluir` (xml, danfe, danfse, excel, pdf) escolhe o conteúdo; um arquivo só vai solto, o resto em ZIP.
+  app.post('/api/notas/zip', async (req, res) => {
+    const { ids, incluir } = req.body || {}
     let zip
     try {
-      zip = ctx.selecao.montar((req.body || {}).ids)
+      zip = await ctx.selecao.montar(ids, Array.isArray(incluir) ? { incluir: incluir.map(String) } : undefined)
     } catch (e) {
       if (e.status) throw new ErroHttp(e.status, e.message)
       throw e
+    }
+    if (zip.conteudo) {
+      res.set('Content-Type', zip.tipo)
+      res.set('Content-Disposition', `attachment; filename="${zip.nome}"`)
+      return res.send(zip.conteudo)
     }
     res.set('Content-Type', 'application/zip')
     res.set('Content-Disposition', `attachment; filename="${zip.nome}"`)
@@ -642,9 +655,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
 
   app.get('/api/exportacoes/:nome', (req, res) => {
     const nome = req.params.nome
-    const arquivo = PADRAO_ZIP.test(nome) && dentroDe(config.pastaExports, nome)
+    const arquivo = PADRAO_EXPORTACAO.test(nome) && dentroDe(config.pastaExports, nome)
     if (!arquivo || !fs.existsSync(arquivo)) throw new ErroHttp(404, 'Arquivo de exportação não encontrado.')
-    res.set('Content-Type', 'application/zip')
+    res.set('Content-Type', TIPO_DA_EXPORTACAO[nome.split('.').pop()])
     res.attachment(nome)
     fs.createReadStream(arquivo).pipe(res)
   })
