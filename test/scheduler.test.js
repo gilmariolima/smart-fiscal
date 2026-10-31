@@ -236,3 +236,13 @@ test('falha do escritório entra na contagem de erros do ciclo', async () => {
   await ag.executarAgora('manual')
   assert.equal(ag.estado().ultimaExecucao.clientesComErro, 1)
 })
+
+test('horário e início usam a escolha de cada cliente (automatica); o painel captura tudo', async () => {
+  const opcoes = []
+  const ciclo = { executarCiclo: async (o) => (opcoes.push(o), { ok: true, clientes: [] }) }
+  const ag = criarAgendador({ ciclo, config, logger: silencioso, cron: cronFalso(), atrasoInicialMs: false })
+  await ag.executarAgora('agendado')
+  await ag.executarAgora('inicio')
+  await ag.executarAgora('painel')
+  assert.deepEqual(opcoes.map((o) => o.automatica), [true, true, false])
+})

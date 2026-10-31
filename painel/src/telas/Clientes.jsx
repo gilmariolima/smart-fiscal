@@ -253,14 +253,14 @@ export default function Clientes() {
   else
     conteudo = (
       <div className="tabela-moldura">
-        <table className="tabela tabela-clientes">
+        <table className="tabela tabela-clientes tabela-captura">
           <thead>
             <tr>
               <th scope="col">Cliente</th>
-              <th scope="col">CNPJ</th>
-              <th scope="col">Certificado</th>
-              <th scope="col">Última captura</th>
-              <th scope="col">Pendências</th>
+              <th scope="col" className="col-cnpj">CNPJ</th>
+              <th scope="col" className="col-certificado">Certificado</th>
+              <th scope="col" className="col-ultima">Última captura</th>
+              <th scope="col" className="col-pendencias">Pendências</th>
               <th scope="col" className="col-acoes">
                 <span className="so-leitor">Ações</span>
               </th>

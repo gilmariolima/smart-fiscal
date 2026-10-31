@@ -119,6 +119,7 @@ function ListaDeClientes({ modelo }) {
   const [aviso, setAviso] = useState(null)
   const [enviando, setEnviando] = useState(false)
   const [busca, setBusca] = useState('')
+  const [trocando, setTrocando] = useState(null)
 
   useAoTerminarCaptura(recarregar)
 
@@ -174,6 +175,20 @@ function ListaDeClientes({ modelo }) {
     }
   }
 
+  // Liga/desliga o cliente nos horários da busca automática deste tipo de nota; o botão Capturar não muda.
+  async function alternarAutomatica(c, ligado) {
+    setTrocando(c.cnpj)
+    setErro(null)
+    try {
+      await api.post(`/api/clientes/${c.cnpj}/automatica`, { modelo, ligado })
+      recarregar()
+    } catch (e) {
+      setErro(e.message)
+    } finally {
+      setTrocando(null)
+    }
+  }
+
   let conteudo
   if (!dados) conteudo = !erroLista && <p className="vazio">Carregando…</p>
   else if (!ativos.length)
@@ -186,16 +201,19 @@ function ListaDeClientes({ modelo }) {
   else
     conteudo = (
       <div className="tabela-moldura">
-        <table className="tabela tabela-clientes">
+        <table className="tabela tabela-clientes tabela-captura">
           <thead>
             <tr>
               <th scope="col" className="marcar">
                 <span className="so-leitor">Capturar</span>
               </th>
               <th scope="col">Cliente</th>
-              <th scope="col">CNPJ</th>
-              <th scope="col">Certificado</th>
-              <th scope="col">Última captura de {rotulo}</th>
+              <th scope="col" className="col-cnpj">CNPJ</th>
+              <th scope="col" className="col-certificado">Certificado</th>
+              <th scope="col" className="col-ultima">Última captura de {rotulo}</th>
+              <th scope="col" className="col-automatica" title={`Desligado: o cliente fica fora dos horários da busca automática de ${rotulo}, mas continua podendo ser capturado pelo botão.`}>
+                Automática
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -225,6 +243,14 @@ function ListaDeClientes({ modelo }) {
                   </td>
                   <td>
                     <UltimaCaptura c={c} modelo={modelo} capturandoAgora={capturandoAgora} fila={fila} />
+                  </td>
+                  <td className="sem-quebra">
+                    <Interruptor
+                      ligado={c.automatica?.[modelo] !== false}
+                      onChange={(ligado) => alternarAutomatica(c, ligado)}
+                      desabilitado={trocando === c.cnpj}
+                      rotulo={c.automatica?.[modelo] !== false ? 'Ligada' : 'Desligada'}
+                    />
                   </td>
                 </tr>
               )

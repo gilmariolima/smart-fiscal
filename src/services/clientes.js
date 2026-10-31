@@ -11,7 +11,7 @@ const DIAS_ALERTA_CERT = 30
 // Colunas seguras para exibir: nunca inclui cert_senha_enc.
 const COLUNAS_PUBLICAS = `id, cnpj, razao_social, apelido, uf, cert_arquivo, cert_validade, ativo, papel, ult_nsu, max_nsu,
   proxima_consulta, bloqueado_ate, ultima_consulta, ultimo_erro, criado_em,
-  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro, tambem_cliente`
+  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro, tambem_cliente, auto_nfe, auto_nfse`
 
 // Linhas que têm notas próprias: os clientes e o escritório quando ele também é cliente.
 const DA_CARTEIRA = "(papel = 'cliente' OR tambem_cliente = 1)"
@@ -49,6 +49,8 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
       cert_validade = @cert_validade, ultimo_erro = NULL WHERE cnpj = @cnpj`),
     ativo: db.prepare('UPDATE clientes SET ativo = ? WHERE cnpj = ?'),
     tambemCliente: db.prepare("UPDATE clientes SET tambem_cliente = ? WHERE cnpj = ? AND papel = 'escritorio'"),
+    autoNfe: db.prepare('UPDATE clientes SET auto_nfe = ? WHERE cnpj = ?'),
+    autoNfse: db.prepare('UPDATE clientes SET auto_nfse = ? WHERE cnpj = ?'),
     dados: db.prepare('UPDATE clientes SET razao_social = @razao_social, uf = @uf WHERE id = @id'),
     notasDe: db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?'),
     apagarExecucoes: db.prepare('DELETE FROM execucoes WHERE cliente_id = ?'),
@@ -196,6 +198,15 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     return sql.porCnpj.get(c)
   }
 
+  /** Liga ou desliga o cliente na busca automática de um tipo de nota ('nfe' | 'nfse'); o botão Capturar continua valendo. */
+  function definirAutomatica(cnpj, modelo, ligado) {
+    const c = somenteDigitos(cnpj)
+    if (modelo !== 'nfe' && modelo !== 'nfse') throw new Error(`Modelo inválido: ${modelo}. Use nfe ou nfse.`)
+    if (!(modelo === 'nfe' ? sql.autoNfe : sql.autoNfse).run(ligado ? 1 : 0, c).changes) throw new Error(`CNPJ ${c} não cadastrado.`)
+    logger.info(ligado ? 'Cliente na busca automática' : 'Cliente fora da busca automática', { cnpj: c, modelo })
+    return sql.porCnpj.get(c)
+  }
+
   /** Lista sem a senha; inclui dias para o certificado vencer. */
   function listar() {
     return sql.listar.all().map((c) => ({ ...c, cert_dias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null }))
@@ -205,7 +216,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, listar, obter, validarCertificado }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, listar, obter, validarCertificado }
 }
 
 module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }

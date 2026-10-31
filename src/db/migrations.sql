@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS clientes (
   nfse_proxima_consulta TEXT,
   nfse_ultima_consulta TEXT,
   nfse_ultimo_erro TEXT,
-  tambem_cliente INTEGER NOT NULL DEFAULT 0 -- escritório que também puxa as próprias notas, como cliente
+  tambem_cliente INTEGER NOT NULL DEFAULT 0, -- escritório que também puxa as próprias notas, como cliente
+  auto_nfe INTEGER NOT NULL DEFAULT 1, -- entra na busca automática de NF-e (0 = só pelo botão)
+  auto_nfse INTEGER NOT NULL DEFAULT 1 -- entra na busca automática de NFS-e
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_um_escritorio ON clientes(papel) WHERE papel = 'escritorio';
 

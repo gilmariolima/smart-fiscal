@@ -2,6 +2,8 @@
 
 // Cliente do ADN (Ambiente de Dados Nacional da NFS-e): distribuição por NSU com o certificado A1 do
 // próprio CNPJ. O mesmo lote traz as notas em que o CNPJ é prestador, tomador ou intermediário.
+// Desde 31/10/2026 o ADN recusa a consulta só pelo certificado (HTTP 400, REJEICAO, sem mensagem):
+// é preciso mandar o CNPJ em `cnpjConsulta` (a resposta vem com TipoConsulta CnpjBase).
 // O .pfx é aberto pelo node-forge e passado ao https em PEM (o OpenSSL 3 recusa o RC2 de certificados antigos).
 
 const fs = require('node:fs')
@@ -68,7 +70,7 @@ function criarClienteAdn({ cnpj, pfx, passphrase, producao = true, requisitar, d
     let r
     for (let tentativa = 0; ; tentativa++) {
       try {
-        r = await pedir(`${base}/contribuintes/DFe/${Number(nsu) || 0}?lote=true`)
+        r = await pedir(`${base}/contribuintes/DFe/${Number(nsu) || 0}?lote=true&cnpjConsulta=${cnpj}`)
       } catch (e) {
         return falha(`Sem conexão com o ADN: ${e.message}`)
       }
@@ -84,7 +86,10 @@ function criarClienteAdn({ cnpj, pfx, passphrase, producao = true, requisitar, d
     }
     if (json?.StatusProcessamento === 'NENHUM_DOCUMENTO_LOCALIZADO') return { ok: true, status: json.StatusProcessamento, documentos: [], erro: null }
     const erros = mensagensDeErro(json?.Erros)
-    if (r.status !== 200) return falha(`HTTP ${r.status}${erros.length ? `: ${erros.join('; ')}` : ''}`)
+    if (r.status !== 200) {
+      const recusada = json?.StatusProcessamento === 'REJEICAO' && !erros.length ? ': o ADN recusou a consulta sem dizer o motivo' : ''
+      return falha(`HTTP ${r.status}${erros.length ? `: ${erros.join('; ')}` : recusada}`)
+    }
     if (!json) return falha('Resposta inválida do ADN')
     if (erros.length) return falha(erros.join('; '))
     // Documento a documento: um XML ilegível não pode impedir os outros nem travar a fila.

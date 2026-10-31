@@ -2349,6 +2349,46 @@ a.botao-acoes {
   cursor: not-allowed;
 }
 
+/* Listas do Capturar e de Clientes: colunas de largura fixa e linhas de altura reservada, para a tela não se mexer
+   quando "Última captura" troca de texto (Capturando…, Na fila, Bloqueado…, Ver notas). */
+.tabela-captura {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.tabela-captura th.marcar {
+  width: 44px;
+}
+
+.tabela-captura .col-cnpj {
+  width: 160px;
+}
+
+.tabela-captura .col-certificado {
+  width: 110px;
+}
+
+.tabela-captura .col-ultima {
+  width: 230px;
+}
+
+.tabela-captura .col-automatica {
+  width: 140px;
+}
+
+.tabela-captura .col-pendencias {
+  width: 200px;
+}
+
+.tabela-captura .col-acoes {
+  width: 140px;
+}
+
+.tabela-captura td {
+  height: 84px; /* etiqueta + consulta + "Ver notas" */
+  overflow-wrap: anywhere;
+}
+
 .captura-erro {
   display: inline-block;
   max-width: 260px;

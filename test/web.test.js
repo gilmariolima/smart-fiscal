@@ -1138,3 +1138,15 @@ test('Baixar selecionados → Arquivos DANFE: PDF de cada NF-e ao lado do XML, n
   assert.deepEqual([...zip.keys()], [`NF-e/Entradas/${c}-nfe.pdf`])
   assert.equal(zip.get(`NF-e/Entradas/${c}-nfe.pdf`).subarray(0, 5).toString(), '%PDF-')
 })
+
+test('busca automática por cliente: liga e desliga por tipo; /api/clientes mostra a escolha', async (t) => {
+  const { pedir } = await montar(t)
+  const lista = async () => (await pedir('/api/clientes')).corpo.clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
+  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: true })
+  const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'nfse', ligado: false } })
+  assert.equal(r.status, 200)
+  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: false })
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'cte', ligado: false } })).status, 400)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'nfe' } })).status, 400)
+  assert.equal((await pedir('/api/clientes/99999999000199/automatica', { method: 'POST', body: { modelo: 'nfe', ligado: true } })).status, 404)
+})

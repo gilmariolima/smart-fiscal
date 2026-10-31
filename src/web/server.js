@@ -237,6 +237,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
             proximaConsulta: futuro(c.nfse_proxima_consulta),
             ultimoErro: c.nfse_ultimo_erro,
           },
+          // Busca automática ligada por tipo de nota (os horários pulam o que estiver desligado).
+          automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0 },
           certValidade: c.cert_validade,
           certDias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null,
           notas: {
@@ -719,6 +721,13 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       return res.json({ ok: true, ativo: !!c.ativo, mensagem: c.ativo ? 'Escritório de volta na lista de clientes.' : 'Escritório fora da lista de clientes: as notas dele deixam de ser puxadas.' })
     }
     res.json({ ok: true, ativo: !!c.ativo, mensagem: c.ativo ? 'Cliente reativado.' : 'Cliente desativado: fica fora das próximas capturas.' })
+  })
+
+  app.post('/api/clientes/:cnpj/automatica', (req, res) => {
+    const { modelo, ligado } = req.body || {}
+    if (typeof ligado !== 'boolean') throw new ErroHttp(400, 'Informe se a busca automática fica ligada.')
+    const c = comoErroHttp(() => ctx.clientes.definirAutomatica(req.params.cnpj, String(modelo || ''), ligado))
+    res.json({ ok: true, automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0 } })
   })
 
   // ---------- escritório (certificado próprio, notas de saída pelo autXML) ----------

@@ -65,7 +65,8 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
     logger.info('Ciclo iniciado', { origem })
     emExecucao = (async () => {
       try {
-        const r = await ciclo.executarCiclo()
+        // Horários e abertura do app seguem a escolha de cada cliente; "Capturar" pelo painel pega tudo o que foi marcado.
+        const r = await ciclo.executarCiclo({ automatica: origem === 'agendado' || origem === 'inicio' })
         const comErro = (r.clientes || []).filter((c) => c.erro || c.captura?.ok === false || c.download?.ok === false)
         if (r.escritorio && (r.escritorio.erro || r.escritorio.captura?.ok === false)) comErro.push(r.escritorio)
         ultima = { inicio, fim: agora().toISOString(), origem, ok: r.ok, erro: r.erro || null, clientes: (r.clientes || []).length, clientesComErro: comErro.length }

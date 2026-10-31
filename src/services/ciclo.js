@@ -107,10 +107,13 @@ function criarServicoCiclo(deps) {
 
   /** Ciclo completo. `forcar` ignora a espera de 1 h da consulta por NSU (nunca o bloqueio do 656). */
   /** `modelos`: ['nfe', 'nfse'] (padrão) ou só um deles. A NFS-e do escritório só roda quando ele também é cliente. */
-  function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente, modelos = ['nfe', 'nfse'] } = {}) {
-    const comNfe = modelos.includes('nfe')
-    const comNfse = modelos.includes('nfse')
+  /** `automatica`: busca dos horários — cada cliente só roda os tipos ligados nele (auto_nfe / auto_nfse). */
+  function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente, modelos = ['nfe', 'nfse'], automatica = false } = {}) {
+    const liga = (c, m) => modelos.includes(m) && (!automatica || c[`auto_${m}`] !== 0)
     return comTrava({ cnpj, cnpjs }, async (cliente) => {
+      const comNfe = liga(cliente, 'nfe')
+      const comNfse = liga(cliente, 'nfse')
+      if (!comNfe && !comNfse) return { pulado: 'fora da busca automática' }
       // NF-e e NFS-e são serviços separados: a falha de um não impede o outro.
       const resultado = {}
       if (comNfe) {
@@ -123,10 +126,11 @@ function criarServicoCiclo(deps) {
       if (comNfse) resultado.nfse = await semExcecao(() => capturaNfse.capturarCliente(cliente.id, { forcar }), cliente, 'NFS-e')
       return resultado
     }, (escritorio, comoCliente) => {
-      const nfse = comNfse && comoCliente
-      if (!comNfe && !nfse) return null
+      const nfe = liga(escritorio, 'nfe')
+      const nfse = liga(escritorio, 'nfse') && comoCliente
+      if (!nfe && !nfse) return null
       return async () => ({
-        ...(comNfe && { captura: await captura.capturarCliente(escritorio.id, { forcar }) }),
+        ...(nfe && { captura: await captura.capturarCliente(escritorio.id, { forcar }) }),
         ...(nfse && { nfse: await semExcecao(() => capturaNfse.capturarCliente(escritorio.id, { forcar }), escritorio, 'NFS-e') }),
       })
     }, aoIniciarCliente)

@@ -18,7 +18,8 @@ test('lote com documentos: descompacta, decodifica e devolve NSU como texto', as
     return resposta(200, { StatusProcessamento: 'DOCUMENTOS_LOCALIZADOS', Erros: [], LoteDFe: [{ NSU: 7, ChaveAcesso: 'x', TipoDocumento: 'NFSE', ArquivoXml: zip(xml), DataHoraGeracao: '2026-10-27T10:00:00' }] })()
   }
   const r = await criarClienteAdn({ cnpj: CNPJ_MOCK_OK, requisitar }).consultarLote('6')
-  assert.equal(urls[0], 'https://adn.nfse.gov.br/contribuintes/DFe/6?lote=true')
+  // O CNPJ vai em cnpjConsulta: sem ele o ADN responde 400 (REJEICAO) desde 31/10/2026.
+  assert.equal(urls[0], `https://adn.nfse.gov.br/contribuintes/DFe/6?lote=true&cnpjConsulta=${CNPJ_MOCK_OK}`)
   assert.equal(r.ok, true)
   assert.equal(r.status, 'DOCUMENTOS_LOCALIZADOS')
   assert.deepEqual(r.documentos.map((d) => [d.nsu, d.tipo, d.xml]), [['7', 'NFSE', xml]])
@@ -28,7 +29,14 @@ test('homologação usa a produção restrita', async () => {
   const urls = []
   const requisitar = async (url) => (urls.push(url), { status: 200, corpo: '{"StatusProcessamento":"NENHUM_DOCUMENTO_LOCALIZADO"}' })
   await criarClienteAdn({ cnpj: CNPJ_MOCK_OK, producao: false, requisitar }).consultarLote('0')
-  assert.equal(urls[0], 'https://adn.producaorestrita.nfse.gov.br/contribuintes/DFe/0?lote=true')
+  assert.equal(urls[0], `https://adn.producaorestrita.nfse.gov.br/contribuintes/DFe/0?lote=true&cnpjConsulta=${CNPJ_MOCK_OK}`)
+})
+
+test('REJEICAO sem mensagem vira erro claro', async () => {
+  const corpo = { TipoConsulta: 'InscricaoCertificado', StatusProcessamento: 'REJEICAO', LoteDFe: [], Alertas: [], Erros: [] }
+  const r = await criarClienteAdn({ cnpj: CNPJ_MOCK_OK, requisitar: resposta(400, corpo) }).consultarLote('39')
+  assert.equal(r.ok, false)
+  assert.equal(r.erro, 'HTTP 400: o ADN recusou a consulta sem dizer o motivo')
 })
 
 test('nenhum documento (200 ou 404) não é erro', async () => {

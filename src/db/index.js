@@ -90,6 +90,8 @@ const COLUNAS_NOVAS = [
   ['clientes', 'nfse_ultimo_erro', 'TEXT'],
   ['notas', 'captura_id', 'INTEGER'], // última execução de captura que trouxe a nota (link "Ver notas")
   ['clientes', 'tambem_cliente', 'INTEGER NOT NULL DEFAULT 0'], // escritório que também é cliente
+  ['clientes', 'auto_nfe', 'INTEGER NOT NULL DEFAULT 1'], // busca automática por cliente e tipo de nota
+  ['clientes', 'auto_nfse', 'INTEGER NOT NULL DEFAULT 1'],
 ]
 
 // Banco de antes do captura_id: liga à última captura de cada cliente as notas criadas desde o início dela,

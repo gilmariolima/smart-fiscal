@@ -345,3 +345,29 @@ test('ciclo: escritório que também é cliente consulta a própria NFS-e e pode
   const o = await ciclo.executarCiclo({ cnpjs: [CNPJ_MOCK_OK], modelos: ['nfse'], forcar: true })
   assert.equal(o.escritorio, undefined)
 })
+
+test('busca automática: cada cliente só roda os tipos ligados nele; manual ignora a escolha', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, CNPJ_MOCK_ESCRITORIO], adn: criarAdnMock() })
+  t.after(amb.limpar)
+  amb.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(amb.ids[1])
+  // Cliente sem NFS-e na automática; escritório sem NF-e (saídas) na automática.
+  amb.db.prepare('UPDATE clientes SET auto_nfse = 0 WHERE id = ?').run(amb.ids[0])
+  amb.db.prepare('UPDATE clientes SET auto_nfe = 0 WHERE id = ?').run(amb.ids[1])
+  const ciclo = criarServicoCiclo(amb.deps)
+
+  let r = await ciclo.executarCiclo({ automatica: true })
+  assert.equal(r.escritorio, undefined, 'escritório fora da NF-e automática')
+  assert.equal(r.clientes[0].captura.ok, true, 'NF-e do cliente roda')
+  assert.equal(r.clientes[0].nfse, undefined, 'NFS-e do cliente não roda')
+  assert.equal(amb.adn.chamadas.length, 0)
+
+  amb.db.prepare('UPDATE clientes SET auto_nfe = 0 WHERE id = ?').run(amb.ids[0])
+  r = await ciclo.executarCiclo({ automatica: true, forcar: true })
+  assert.deepEqual(r.clientes, [{ cnpj: CNPJ_MOCK_OK, pulado: 'fora da busca automática' }])
+
+  // Pelo botão (sem automatica) roda tudo.
+  r = await ciclo.executarCiclo({ forcar: true })
+  assert.ok(r.escritorio?.captura)
+  assert.ok(r.clientes[0].nfse)
+})
