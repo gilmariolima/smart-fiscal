@@ -13,7 +13,7 @@ const SLUG = Object.fromEntries(Object.entries(MODELOS).map(([slug, m]) => [m.va
 const doCliente = (cnpj) => (cnpj ? `cnpj=${cnpj}&` : '')
 const pastaDe = (cnpj, slug) => (cnpj ? `/notas/${cnpj}/${slug}` : `/notas/${slug}`)
 
-// Card de um tipo de nota, com as mesmas cores e ícones da tela Capturar. CT-e ainda não é capturado.
+// Card de um tipo de nota, com as mesmas cores e ícones da tela Capturar.
 function Card({ cnpj, chave }) {
   const m = CARDS[chave]
   const ativo = !m.emBreve

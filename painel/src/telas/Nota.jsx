@@ -352,6 +352,160 @@ function NotaServico({ nfse, nota }) {
   )
 }
 
+// CT-e: os blocos do conhecimento de transporte no mesmo visual de quadros.
+const MODAIS = { '01': 'Rodoviário', '02': 'Aéreo', '03': 'Aquaviário', '04': 'Ferroviário', '05': 'Dutoviário', '06': 'Multimodal' }
+const TIPOS_CTE = { 0: 'Normal', 1: 'Complementar', 2: 'Anulação', 3: 'Substituto' }
+const SERVICOS_CTE = { 0: 'Normal', 1: 'Subcontratação', 2: 'Redespacho', 3: 'Redespacho intermediário', 4: 'Serviço vinculado a multimodal' }
+const UNIDADES_CARGA = { '00': 'm³', '01': 'kg', '02': 't', '03': 'unidades', '04': 'litros', '05': 'MMBTU' }
+const DOCUMENTOS_CTE = { nfe: 'NF-e', nf: 'Nota fiscal', outro: 'Outro' }
+const lugar = (l) => [l?.municipio, l?.uf].filter(Boolean).join(' / ')
+
+function ConhecimentoTransporte({ cte, nota }) {
+  const participantes = [
+    ['Remetente', cte.remetente],
+    ['Destinatário', cte.destinatario],
+    ['Expedidor', cte.expedidor],
+    ['Recebedor', cte.recebedor],
+    ['Tomador do serviço', cte.tomador],
+  ].filter(([, p]) => p)
+  const quantidades = cte.carga.quantidades
+    .map((q) => [q.tipo, `${qtd(q.quantidade)} ${UNIDADES_CARGA[q.unidade] || q.unidade || ''}`.trim()].filter(Boolean).join(': '))
+    .join(' · ')
+  return (
+    <article className="danfe">
+      <section className="danfe-bloco">
+        <h2>Conhecimento de transporte</h2>
+        <div className="quadros">
+          <Quadro rotulo="Transportadora (emitente)" classe="largo">
+            {cte.emitente?.nome}
+          </Quadro>
+          <Quadro rotulo="CNPJ / CPF" classe="mono">
+            {documento(cte.emitente?.documento)}
+          </Quadro>
+          <Quadro rotulo="Inscrição estadual" classe="mono">
+            {cte.emitente?.ie}
+          </Quadro>
+          <Quadro rotulo="Endereço" classe="largo">
+            {enderecoEmLinha(cte.emitente?.endereco)}
+          </Quadro>
+          <Quadro rotulo="Município / UF">{lugar(cte.emitente?.endereco)}</Quadro>
+          <Quadro rotulo="Número / série">{[cte.numero, cte.serie].filter(Boolean).join(' / ')}</Quadro>
+          <Quadro rotulo="Data de emissão">{dataHora(cte.dataEmissao)}</Quadro>
+          <Quadro rotulo="Modal">{MODAIS[cte.modal] || cte.modal}</Quadro>
+          <Quadro rotulo="Tipo do CT-e">{TIPOS_CTE[cte.tipoCte] || cte.tipoCte}</Quadro>
+          <Quadro rotulo="Tipo do serviço">{SERVICOS_CTE[cte.tipoServico] || cte.tipoServico}</Quadro>
+          <Quadro rotulo="CFOP" classe="mono">
+            {cte.cfop}
+          </Quadro>
+          <Quadro rotulo="Natureza da operação" classe="largo">
+            {cte.natureza}
+          </Quadro>
+          <Quadro rotulo="Protocolo de autorização" classe="largo mono">
+            {cte.protocolo ? `${cte.protocolo.numero} - ${dataHora(cte.protocolo.data)}` : ''}
+          </Quadro>
+          <Quadro rotulo="Situação">
+            <Situacao nota={nota} />
+          </Quadro>
+          <Quadro rotulo="Chave de acesso" classe="largo mono">
+            {chaveEmGrupos(cte.chave)}
+          </Quadro>
+        </div>
+      </section>
+
+      {participantes.map(([titulo, p]) => (
+        <Pessoa key={titulo} titulo={titulo} p={p} />
+      ))}
+
+      <section className="danfe-bloco">
+        <h2>Origem → destino</h2>
+        <div className="quadros">
+          <Quadro rotulo="Início da prestação" classe="largo">
+            {lugar(cte.origem)}
+          </Quadro>
+          <Quadro rotulo="Término da prestação" classe="largo">
+            {lugar(cte.destino)}
+          </Quadro>
+          {cte.rntrc && (
+            <Quadro rotulo="RNTRC" classe="mono">
+              {cte.rntrc}
+            </Quadro>
+          )}
+        </div>
+      </section>
+
+      <section className="danfe-bloco">
+        <h2>Carga</h2>
+        <div className="quadros">
+          <Quadro rotulo="Produto predominante" classe="largo">
+            {cte.carga.produto}
+          </Quadro>
+          <Quadro rotulo="Outras características" classe="largo">
+            {cte.carga.outras}
+          </Quadro>
+          <Quadro rotulo="Valor da carga">{num(cte.carga.valor)}</Quadro>
+          <Quadro rotulo="Quantidades" classe="largo">
+            {quantidades}
+          </Quadro>
+        </div>
+      </section>
+
+      <section className="danfe-bloco">
+        <h2>Componentes do frete</h2>
+        <div className="quadros quadros-numeros">
+          {cte.componentes.map((c, i) => (
+            <Quadro key={i} rotulo={c.nome || 'Componente'}>
+              {num(c.valor)}
+            </Quadro>
+          ))}
+          <Quadro rotulo="Valor total do serviço" classe="destaque">
+            {num(cte.valorPrestacao)}
+          </Quadro>
+          <Quadro rotulo="Valor a receber">{num(cte.valorReceber)}</Quadro>
+          <Quadro rotulo="CST do ICMS">{cte.icms.cst}</Quadro>
+          <Quadro rotulo="Base de cálculo do ICMS">{num(cte.icms.base)}</Quadro>
+          <Quadro rotulo="Alíquota do ICMS">{num(cte.icms.aliquota)}</Quadro>
+          <Quadro rotulo="Valor do ICMS">{num(cte.icms.valor)}</Quadro>
+        </div>
+      </section>
+
+      {cte.documentos.length > 0 && (
+        <section className="danfe-bloco">
+          <h2>Documentos transportados</h2>
+          <div className="tabela-rolagem">
+            <table className="tabela-produtos">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Chave / número</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cte.documentos.map((d, i) => (
+                  <tr key={i}>
+                    <td>{DOCUMENTOS_CTE[d.tipo] || d.tipo}</td>
+                    <td className="mono">{d.chave ? chaveEmGrupos(d.chave) : d.numero}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {cte.observacoes && (
+        <section className="danfe-bloco">
+          <h2>Observações</h2>
+          <div className="quadros">
+            <Quadro rotulo="Observações gerais" classe="linha-inteira texto-livre">
+              {cte.observacoes}
+            </Quadro>
+          </div>
+        </section>
+      )}
+    </article>
+  )
+}
+
 function Eventos({ eventos }) {
   if (!eventos.length) return null
   return (
@@ -388,12 +542,15 @@ export default function Nota() {
   const { dados, erro, carregando } = useApi(`/api/notas/${encodeURIComponent(id)}/detalhe`)
   const nota = dados?.nota
   // Número e emitente do XML quando houver; senão, os do resumo.
-  const numero = dados?.nfe?.ide.numero || dados?.nfse?.numero || nota?.numero || ''
-  const emitente = dados?.nfe?.emitente?.nome || dados?.nfse?.prestador?.nome || nota?.emitente_nome || ''
+  const numero = dados?.nfe?.ide.numero || dados?.nfse?.numero || dados?.cte?.numero || nota?.numero || ''
+  const emitente = dados?.nfe?.emitente?.nome || dados?.nfse?.prestador?.nome || dados?.cte?.emitente?.nome || nota?.emitente_nome || ''
   const ehServico = nota?.modelo === 'nfse'
+  const ehCte = nota?.modelo === 'cte'
   const [ano, mes] = (nota?.competencia || '').split('-')
-  // Pasta da nota: <NF-e|NFS-e>/<ano>/<mês>.
-  const pastaModelo = `/notas/${cnpj}/${ehServico ? 'nfs-e' : 'nf-e'}`
+  // Pasta da nota: <NF-e|NFS-e|CT-e>/<ano>/<mês>.
+  const slugModelo = ehServico ? 'nfs-e' : ehCte ? 'ct-e' : 'nf-e'
+  const rotuloModelo = ehServico ? 'NFS-e' : ehCte ? 'CT-e' : 'NF-e'
+  const pastaModelo = `/notas/${cnpj}/${slugModelo}`
   const pastaDoMes = ano ? `${pastaModelo}/${ano}/${mes}` : `/notas/${cnpj}`
 
   // "Imprimir DANFE" do menu da nota: abre a impressão assim que a nota carrega, uma vez só.
@@ -409,7 +566,7 @@ export default function Nota() {
 
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
-    ...(nota ? [{ rotulo: ehServico ? 'NFS-e' : 'NF-e', para: `/notas/${ehServico ? 'nfs-e' : 'nf-e'}` }] : []),
+    ...(nota ? [{ rotulo: rotuloModelo, para: `/notas/${slugModelo}` }] : []),
     { rotulo: nota?.cliente_nome || cnpj, para: nota ? pastaModelo : `/notas/${cnpj}` },
     ...(ano
       ? [
@@ -435,6 +592,11 @@ export default function Nota() {
           Baixar PDF (DANFSe)
         </a>
       ) : null}
+      {nota?.tem_xml && ehCte ? (
+        <a className="botao botao-azul" href={`/api/notas/${nota.id}/pdf`} download={`${nota.chave}-cte.pdf`}>
+          Baixar PDF (DACTE)
+        </a>
+      ) : null}
       {dados?.nfe && (
         <button type="button" className="botao botao-azul" onClick={() => window.print()}>
           Imprimir / PDF
@@ -447,6 +609,7 @@ export default function Nota() {
   if (!dados) conteudo = carregando && <p className="vazio">Carregando…</p>
   else if (dados.nfe) conteudo = <Danfe nfe={dados.nfe} nota={nota} />
   else if (dados.nfse) conteudo = <NotaServico nfse={dados.nfse} nota={nota} />
+  else if (dados.cte) conteudo = <ConhecimentoTransporte cte={dados.cte} nota={nota} />
   else
     conteudo = (
       <>
@@ -462,8 +625,8 @@ export default function Nota() {
 
   return (
     <Pagina
-      titulo={`${ehServico ? 'NFS-e' : 'NF-e'} ${numero}`.trim()}
-      subtitulo={nota ? `${nota.tipo === 'saida' ? 'Saída' : 'Entrada'} · ${emitente}` : ''}
+      titulo={`${rotuloModelo} ${numero}`.trim()}
+      subtitulo={nota ? `${{ saida: 'Saída', outro: 'Outro' }[nota.tipo] || 'Entrada'} · ${emitente}` : ''}
       trilha={trilha}
       acoes={acoes}
       erro={erro}

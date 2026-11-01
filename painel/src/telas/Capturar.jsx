@@ -14,18 +14,22 @@ import { cnpj as formatarCnpj, hora, inteiro, plural, quando } from '../formato.
 
 const INTERVALO_CAPTURANDO = 5000
 
-// Um card por tipo de documento (também na pasta do cliente em Notas). CT-e ainda não é capturado.
+// Um card por tipo de documento (também na pasta do cliente em Notas).
 export const MODELOS = {
   nfe: { rotulo: 'NF-e', icone: 'fa-file-invoice', cor: 'azul' },
   nfse: { rotulo: 'NFS-e', icone: 'fa-file-signature', cor: 'roxo' },
-  cte: { rotulo: 'CT-e', icone: 'fa-truck', cor: 'laranja', emBreve: true },
+  cte: { rotulo: 'CT-e', icone: 'fa-truck', cor: 'laranja' },
 }
 
-// Dados da captura de um modelo: a NF-e fica na raiz do cliente, a NFS-e em `nfse`.
-const capturaDo = (c, modelo) => (modelo === 'nfse' ? { ...c.nfse, bloqueadoAte: null } : c)
+// Dados da captura de um modelo: a NF-e fica na raiz do cliente, a NFS-e em `nfse` e o CT-e em `cte`.
+const capturaDo = (c, modelo) => {
+  if (modelo === 'nfse') return { ...c.nfse, bloqueadoAte: null }
+  if (modelo === 'cte') return c.cte || {}
+  return c
+}
 
-// Desativado não entra; bloqueado pelo 656 só fica de fora da NF-e.
-const marcavel = (c, modelo) => c.ativo && (modelo === 'nfse' || !c.bloqueadoAte)
+// Desativado não entra; bloqueado pelo 656 (NF-e e CT-e, cada um com o seu) fica de fora.
+const marcavel = (c, modelo) => c.ativo && !capturaDo(c, modelo).bloqueadoAte
 
 // Cada serviço pede 1 hora entre consultas do mesmo CNPJ; a captura pula quem ainda está esperando.
 const liberadoEm = (c, modelo) => {
@@ -226,7 +230,7 @@ function ListaDeClientes({ modelo }) {
                     <input
                       type="checkbox"
                       aria-label={`Capturar ${nomeDe(c)}`}
-                      title={!pode ? `NF-e bloqueada pela SEFAZ até ${hora(c.bloqueadoAte)} (656).` : undefined}
+                      title={c.ativo && !pode ? `Consulta de ${rotulo} bloqueada pela SEFAZ até ${hora(capturaDo(c, modelo).bloqueadoAte)} (656).` : undefined}
                       checked={marcado}
                       disabled={!pode}
                       onChange={() => selecao.alternar(c.cnpj)}

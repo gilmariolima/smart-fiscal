@@ -28,13 +28,14 @@ const digitos = (v, padrao) => String(v ?? '').replace(/\D/g, '') || padrao
 const nomes = {
   nfe: (chave) => `${digitos(chave, 'sem-chave')}-nfe.xml`,
   nfse: (chave) => `${digitos(chave, 'sem-chave')}-nfse.xml`,
+  cte: (chave) => `${digitos(chave, 'sem-chave')}-cte.xml`,
   resumo: (chave) => `${digitos(chave, 'sem-chave')}-resumo.xml`,
   evento: (chave, tpEvento, nSeq) => `${digitos(chave, 'sem-chave')}-evento-${digitos(tpEvento, '0')}-${digitos(nSeq, '1')}.xml`,
 }
 
 const PASTAS = {
-  modelo: { nfe: 'NF-e', nfse: 'NFS-e' },
-  direcao: { entrada: 'Entradas', saida: 'Saidas' },
+  modelo: { nfe: 'NF-e', nfse: 'NFS-e', cte: 'CT-e' },
+  direcao: { entrada: 'Entradas', saida: 'Saidas', outro: 'Outros' },
   evento: 'Eventos',
   resumo: 'Resumos',
   // Subpasta do escritório para notas sem cliente cadastrado (nem emitente nem destinatário).
@@ -67,12 +68,12 @@ function caminhoDa({ cliente, modelo = 'nfe', direcao = 'entrada', competencia, 
 /** Pasta da nota dentro dos ZIPs (exportação e seleção): NF-e/Entradas, NFS-e/Saidas/Canceladas... */
 function pastaNoZip(nota) {
   const modelo = PASTAS.modelo[nota.modelo] || PASTAS.modelo.nfe
-  const direcao = nota.tipo === 'saida' ? PASTAS.direcao.saida : PASTAS.direcao.entrada
+  const direcao = PASTAS.direcao[nota.tipo] || PASTAS.direcao.entrada
   return `${modelo}/${direcao}${nota.cancelada ? '/Canceladas' : ''}`
 }
 
 /** Nome do XML da nota dentro dos ZIPs. */
-const nomeNoZip = (nota) => (nota.modelo === 'nfse' ? nomes.nfse(nota.chave) : nomes.nfe(nota.chave))
+const nomeNoZip = (nota) => (nomes[nota.modelo] || nomes.nfe)(nota.chave)
 
 function comDeclaracao(xml) {
   const s = String(xml).replace(/^﻿/, '').trimStart()

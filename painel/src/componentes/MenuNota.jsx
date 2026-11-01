@@ -69,6 +69,10 @@ export default function MenuNota({ nota: n, cnpj, limite, onReprocessar, ocupado
                 <a href={`/api/notas/${n.id}/pdf`} download={`${n.chave}-nfse.pdf`}>
                   Baixar PDF (DANFSe)
                 </a>
+              ) : n.modelo === 'cte' ? (
+                <a href={`/api/notas/${n.id}/pdf`} download={`${n.chave}-cte.pdf`}>
+                  Baixar PDF (DACTE)
+                </a>
               ) : (
                 <Link to={`${ver}?imprimir=1`}>Imprimir DANFE</Link>
               )}

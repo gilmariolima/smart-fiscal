@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
 // O que o "Baixar selecionados" pode baixar das notas marcadas. Planilha e relatório saem soltos; o resto, em ZIP.
-// O PDF de cada nota é o DANFE na NF-e e o DANFSe na NFS-e.
+// O PDF de cada nota é o DANFE na NF-e, o DANFSe na NFS-e e o DACTE no CT-e.
+const PDF_DA_NOTA = { nfse: { incluir: ['danfse'], rotulo: 'DANFSe' }, cte: { incluir: ['dacte'], rotulo: 'DACTE' } }
+
 export function opcoesDeBaixar(modelo) {
-  const pdfNota = modelo === 'nfse' ? { incluir: ['danfse'], rotulo: 'DANFSe' } : { incluir: ['danfe'], rotulo: 'DANFE' }
+  const pdfNota = PDF_DA_NOTA[modelo] || { incluir: ['danfe'], rotulo: 'DANFE' }
   return [
     { incluir: ['xml', ...pdfNota.incluir, 'excel', 'pdf'], rotulo: `Pacote completo (XMLs, ${pdfNota.rotulo}, planilha e PDF)` },
     { incluir: pdfNota.incluir, rotulo: `Arquivos ${pdfNota.rotulo}` },

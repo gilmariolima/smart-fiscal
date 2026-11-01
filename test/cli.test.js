@@ -188,12 +188,21 @@ test('processo real: cadastro com senha pelo pipe, captura duas vezes sem duplic
   const log = fs.readFileSync(path.join(p.env.PASTA_LOGS, 'app.log'), 'utf8')
   assert.ok(!log.includes(cert.senha), 'senha não aparece no log')
 
-  const competencia = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 7)
-  const exp = cli(p.env, ['exportar', '--cnpj', CNPJ_MOCK_OK, '--competencia', competencia])
-  assert.equal(exp.status, 0, exp.stderr)
-  assert.match(exp.stdout, /0 nota\(s\) ainda sem XML/)
-  assert.match(exp.stdout, /Entradas: 3 XML\(s\) e 1 cancelada\(s\) \| Saídas: 1 XML\(s\) e 0 cancelada\(s\), nas pastas NF-e\/ e NFS-e\/ do ZIP/)
-  assert.ok(fs.existsSync(path.join(p.env.PASTA_EXPORTS, `${CNPJ_MOCK_OK}_Comercial_Exemplo_Ltda_${competencia}.zip`)))
+  // O processo real usa o relógio do dia: as notas simuladas podem cair em dois meses, então exporta cada competência e soma.
+  const db2 = abrirBanco(path.join(p.env.PASTA_DADOS, 'nfe.db'))
+  const competencias = db2.prepare('SELECT DISTINCT competencia FROM notas WHERE competencia IS NOT NULL ORDER BY competencia').all().map((r) => r.competencia)
+  db2.close()
+  const soma = { entradas: 0, canceladasEntrada: 0, saidas: 0, canceladasSaida: 0, semXml: 0 }
+  for (const competencia of competencias) {
+    const exp = cli(p.env, ['exportar', '--cnpj', CNPJ_MOCK_OK, '--competencia', competencia])
+    assert.equal(exp.status, 0, exp.stderr)
+    const m = /Entradas: (\d+) XML\(s\) e (\d+) cancelada\(s\) \| Saídas: (\d+) XML\(s\) e (\d+) cancelada\(s\), nas pastas NF-e\/ e NFS-e\/ do ZIP/.exec(exp.stdout)
+    assert.ok(m, exp.stdout)
+    soma.entradas += Number(m[1]); soma.canceladasEntrada += Number(m[2]); soma.saidas += Number(m[3]); soma.canceladasSaida += Number(m[4])
+    soma.semXml += Number(/(\d+) nota\(s\) ainda sem XML/.exec(exp.stdout)[1])
+    assert.ok(fs.existsSync(path.join(p.env.PASTA_EXPORTS, `${CNPJ_MOCK_OK}_Comercial_Exemplo_Ltda_${competencia}.zip`)))
+  }
+  assert.deepEqual(soma, { entradas: 3, canceladasEntrada: 1, saidas: 1, canceladasSaida: 0, semXml: 0 })
 
   const erro = cli(p.env, ['cliente:ativar', '--cnpj', '1'])
   assert.equal(erro.status, 1)

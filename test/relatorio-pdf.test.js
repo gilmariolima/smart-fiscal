@@ -27,3 +27,12 @@ test('NFS-e lê as retenções do XML; mês sem notas ainda gera o PDF', async (
   const vazio = await montarRelatorioPdf({ cliente, competencia: '2026-10', modelo: 'nfse', lerXml: () => null, notas: [] })
   assert.equal(paginas(vazio), 1)
 })
+
+test('CT-e: uma página; mês só com outros gera PDF sem erro', async () => {
+  const { cteProc } = require('./apoio/cte')
+  const cte = nota(5, { modelo: 'cte', caminho_xml: 'x' })
+  const pdf = await montarRelatorioPdf({ cliente, competencia: '2026-10', modelo: 'cte', lerXml: () => cteProc({}), notas: [cte, nota(6, { modelo: 'cte', tipo: 'saida' }), nota(7, { modelo: 'cte', tipo: 'outro' })] })
+  assert.equal(paginas(pdf), 1)
+  const outros = await montarRelatorioPdf({ cliente, competencia: '2026-10', modelo: 'cte', lerXml: () => null, notas: [nota(8, { modelo: 'cte', tipo: 'outro' })] })
+  assert.equal(outros.subarray(0, 5).toString(), '%PDF-')
+})

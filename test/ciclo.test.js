@@ -362,7 +362,7 @@ test('busca automática: cada cliente só roda os tipos ligados nele; manual ign
   assert.equal(r.clientes[0].nfse, undefined, 'NFS-e do cliente não roda')
   assert.equal(amb.adn.chamadas.length, 0)
 
-  amb.db.prepare('UPDATE clientes SET auto_nfe = 0 WHERE id = ?').run(amb.ids[0])
+  amb.db.prepare('UPDATE clientes SET auto_nfe = 0, auto_cte = 0 WHERE id = ?').run(amb.ids[0])
   r = await ciclo.executarCiclo({ automatica: true, forcar: true })
   assert.deepEqual(r.clientes, [{ cnpj: CNPJ_MOCK_OK, pulado: 'fora da busca automática' }])
 
@@ -370,4 +370,60 @@ test('busca automática: cada cliente só roda os tipos ligados nele; manual ign
   r = await ciclo.executarCiclo({ forcar: true })
   assert.ok(r.escritorio?.captura)
   assert.ok(r.clientes[0].nfse)
+})
+
+const { cteProc, chaveCte } = require('./apoio/cte')
+
+function comCte(amb, qtd = 2) {
+  amb.cte.adicionar(CNPJ_MOCK_OK, Array.from({ length: qtd }, (_, i) => ({ xml: cteProc({ chave: chaveCte('11222333000181', i + 1) }) })))
+}
+
+test('ciclo: CT-e entra na mesma rodada e falha dele não altera NF-e e NFS-e', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ adn: criarAdnMock() })
+  t.after(amb.limpar)
+  comCte(amb)
+  let [c] = (await criarServicoCiclo(amb.deps).executarCiclo()).clientes
+  assert.equal(c.cte.ok, true)
+  assert.equal(c.captura.ok, true)
+  assert.equal(c.nfse.ok, true)
+
+  const amb2 = montarAmbiente({ adn: criarAdnMock() })
+  t.after(amb2.limpar)
+  amb2.cte.falhar(CNPJ_MOCK_OK, 'sem rede')
+  ;[c] = (await criarServicoCiclo(amb2.deps).executarCiclo()).clientes
+  assert.equal(c.cte.ok, false)
+  assert.equal(c.captura.ok, true)
+  assert.equal(c.nfse.ok, true)
+})
+
+test('ciclo: só CT-e não consulta a SEFAZ da NF-e nem o ADN; automática respeita auto_cte', async (t) => {
+  const { criarAdnMock } = require('../src/sefaz/adn-mock')
+  const amb = montarAmbiente({ adn: criarAdnMock() })
+  t.after(amb.limpar)
+  comCte(amb)
+  const ciclo = criarServicoCiclo(amb.deps)
+  const r = await ciclo.executarCiclo({ modelos: ['cte'] })
+  assert.equal(amb.mock.chamadas.length, 0)
+  assert.equal(amb.adn.chamadas.length, 0)
+  assert.equal(r.clientes[0].cte.ok, true)
+  assert.equal(r.clientes[0].captura, undefined)
+
+  amb.db.prepare('UPDATE clientes SET auto_cte = 0 WHERE id = ?').run(amb.ids[0])
+  const a = await ciclo.executarCiclo({ automatica: true, forcar: true })
+  assert.equal(a.clientes[0].cte, undefined)
+  assert.ok(a.clientes[0].captura)
+})
+
+test('ciclo: CT-e do escritório só quando ele também é cliente', async (t) => {
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, CNPJ_MOCK_ESCRITORIO] })
+  t.after(amb.limpar)
+  amb.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(amb.ids[1])
+  const ciclo = criarServicoCiclo(amb.deps)
+  let r = await ciclo.executarCiclo()
+  assert.equal(r.escritorio.cte, undefined)
+  assert.ok(amb.cte.chamadas.every((ch) => ch.cnpj !== CNPJ_MOCK_ESCRITORIO))
+  amb.db.prepare('UPDATE clientes SET tambem_cliente = 1 WHERE id = ?').run(amb.ids[1])
+  r = await ciclo.executarCiclo({ forcar: true })
+  assert.ok(r.escritorio.cte)
 })

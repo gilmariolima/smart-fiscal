@@ -4,6 +4,7 @@
 //   'xml'     XMLs das notas (e o evento de cancelamento das canceladas)
 //   'danfe'   PDF de cada NF-e (DANFE), gerado do XML
 //   'danfse'  PDF de cada NFS-e (DANFSe), gerado do XML
+//   'dacte'   PDF de cada CT-e (DACTE), gerado do XML
 //   'excel'   planilha das marcadas (abas Entradas e Saídas quando são de um modelo só)
 //   'pdf'     relatório em PDF com os mesmos dados da planilha
 // Um arquivo só (só a planilha ou só o relatório) sai solto; o resto sai em ZIP.
@@ -17,9 +18,10 @@ const { montarPlanilhaDoMes } = require('./planilhaMes')
 const { montarRelatorioPdf } = require('./relatorioPdf')
 const { gerarDanfse, situacaoDanfse } = require('./danfse/gerar')
 const { gerarDanfe } = require('./danfe/gerar')
+const { gerarDacte } = require('./dacte/gerar')
 
 const LIMITE_NOTAS = 2000
-const CONTEUDOS = ['xml', 'danfe', 'danfse', 'excel', 'pdf']
+const CONTEUDOS = ['xml', 'danfe', 'danfse', 'dacte', 'excel', 'pdf']
 const TIPOS = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf' }
 
 function erro(status, mensagem) {
@@ -61,7 +63,7 @@ function criarServicoSelecao({ db, config, agora = () => new Date() }) {
       throw erro(400, `Informe de 1 a ${LIMITE_NOTAS} notas.`)
     }
     const partes = new Set(incluir)
-    if (!partes.size || [...partes].some((p) => !CONTEUDOS.includes(p))) throw erro(400, 'Conteúdo inválido: escolha xml, danfe, danfse, excel e/ou pdf.')
+    if (!partes.size || [...partes].some((p) => !CONTEUDOS.includes(p))) throw erro(400, 'Conteúdo inválido: escolha xml, danfe, danfse, dacte, excel e/ou pdf.')
     const unicos = [...new Set(ids)]
     const notas = db
       .prepare(`SELECT * FROM notas WHERE id IN (${unicos.map(() => '?').join(',')}) ORDER BY data_emissao, emitente_cnpj, CAST(numero AS INTEGER)`)
@@ -72,8 +74,8 @@ function criarServicoSelecao({ db, config, agora = () => new Date() }) {
     const dono = cliente.get(notas[0].cliente_id)
     const competencia = unico(notas, 'competencia')
     const modeloComum = unico(notas, 'modelo')
-    const modelo = modeloComum === 'nfse' ? 'nfse' : modeloComum ? 'nfe' : undefined
-    const doMes = competencia && modelo ? `${competencia}_${modelo === 'nfse' ? 'NFS-e' : 'NF-e'}` : `selecionadas_${carimbo(agora())}`
+    const modelo = ['nfse', 'cte'].includes(modeloComum) ? modeloComum : modeloComum ? 'nfe' : undefined
+    const doMes = competencia && modelo ? `${competencia}_${{ nfse: 'NFS-e', cte: 'CT-e', nfe: 'NF-e' }[modelo]}` : `selecionadas_${carimbo(agora())}`
     const nomeDaEmpresa = slug(dono.apelido || dono.razao_social) || dono.cnpj
 
     const arquivos = []
@@ -96,8 +98,9 @@ function criarServicoSelecao({ db, config, agora = () => new Date() }) {
     }
     // PDF de cada nota: DANFE para NF-e, DANFSe para NFS-e (ao lado do XML, com o mesmo nome).
     const pdfsDasNotas = [
-      ['danfe', 'DANFE', (n) => n.modelo !== 'nfse', (xml, n) => gerarDanfe(xml, { situacao: n.cancelada ? 'cancelada' : 'autorizada' })],
+      ['danfe', 'DANFE', (n) => n.modelo !== 'nfse' && n.modelo !== 'cte', (xml, n) => gerarDanfe(xml, { situacao: n.cancelada ? 'cancelada' : 'autorizada' })],
       ['danfse', 'DANFSe', (n) => n.modelo === 'nfse', (xml, n) => gerarDanfse(xml, { situacao: situacaoDanfse(n, tiposEvento.all(n.chave).map((e) => e.tp_evento)) })],
+      ['dacte', 'DACTE', (n) => n.modelo === 'cte', (xml, n) => gerarDacte(xml, { situacao: n.cancelada ? 'cancelado' : 'autorizado' })],
     ]
     for (const [chave, rotulo, doModelo, gerar] of pdfsDasNotas) {
       if (!partes.has(chave)) continue

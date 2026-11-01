@@ -5,6 +5,7 @@
 const { xmlParaJson } = require('../sefaz/xml')
 const { texto, pegar } = require('./extracao')
 const { dadosNfse } = require('./extracaoNfse')
+const { dadosCte } = require('./extracaoCte')
 
 const MODALIDADES_FRETE = {
   0: 'Por conta do emitente',
@@ -152,4 +153,14 @@ function detalharNfse(xml) {
   }
 }
 
-module.exports = { detalharNfe, detalharNfse }
+/** Dados do CT-e para a tela "Ver nota": null se o XML não for CT-e. */
+function detalharCte(xml) {
+  try {
+    const d = dadosCte(xml)
+    return d.chave ? d : null
+  } catch {
+    return null
+  }
+}
+
+module.exports = { detalharNfe, detalharNfse, detalharCte }

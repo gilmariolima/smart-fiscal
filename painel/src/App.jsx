@@ -67,6 +67,7 @@ const rotas = createHashRouter([
       { path: 'notas', element: <Modelos /> },
       { path: 'notas/nf-e', element: <NotasRaiz key="nf-e" slug="nf-e" /> },
       { path: 'notas/nfs-e', element: <NotasRaiz key="nfs-e" slug="nfs-e" /> },
+      { path: 'notas/ct-e', element: <NotasRaiz key="ct-e" slug="ct-e" /> },
       { path: 'notas/pendentes', element: <PendentesClientes /> },
       // Pasta de um cliente só (botão "Ver as notas" em Clientes)
       { path: 'notas/:cnpj', element: <Modelos /> },

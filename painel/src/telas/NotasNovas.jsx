@@ -7,7 +7,8 @@ import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { cnpj as formatarCnpj, data, dinheiro, plural } from '../formato.js'
 
-const ROTULOS = { nfe: 'NF-e', nfse: 'NFS-e' }
+const ROTULOS = { nfe: 'NF-e', nfse: 'NFS-e', cte: 'CT-e' }
+const ROTULO_DO_TIPO = { entrada: 'Entrada', saida: 'Saída', outro: 'Outro' }
 
 // Notas que chegaram na última captura de um cliente (link "Ver notas" da tela Capturar).
 export default function NotasNovas() {
@@ -63,7 +64,7 @@ export default function NotasNovas() {
                     <Link to={`/notas/${cnpj}/nota/${n.id}`}>{n.numero || '—'}</Link>
                   </td>
                   <td className="sem-quebra">{data(n.data_emissao)}</td>
-                  <td>{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</td>
+                  <td>{ROTULO_DO_TIPO[n.tipo] || 'Entrada'}</td>
                   <td className="nome-cliente">
                     {parte.nome || '—'}
                     {parte.cnpj && <span className="secundario mono">{formatarCnpj(parte.cnpj)}</span>}

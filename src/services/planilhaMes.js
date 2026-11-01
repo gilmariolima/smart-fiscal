@@ -7,6 +7,7 @@
 
 const { montarXlsx } = require('./planilha')
 const { retencoesNfse } = require('./extracaoNfse')
+const { dadosCte } = require('./extracaoCte')
 
 const SITUACOES = { completa: 'XML completo', resumo: 'Só resumo', ciencia_enviada: 'Aguardando XML', ciencia_erro: 'Erro na ciência' }
 
@@ -48,14 +49,42 @@ function linhaNfse(n, lerXml) {
   ]
 }
 
-// Abas Entradas e Saídas de um modelo só.
+const COLUNAS_CTE = ['Número', 'Série', 'Emissão', 'CNPJ emitente', 'Emitente', 'CNPJ tomador', 'Tomador', 'Remetente', 'Destinatário', 'Origem', 'Destino', 'CFOP', 'Valor do frete', 'Valor da carga', 'Situação', 'Cancelada', 'Chave']
+
+// Dados lidos do XML do CT-e; null sem arquivo ou com XML ilegível.
+function cteDe(n, lerXml) {
+  try {
+    const xml = n.caminho_xml ? lerXml(n) : null
+    return xml ? dadosCte(xml) : null
+  } catch {
+    return null
+  }
+}
+
+const local = (l) => (l && l.municipio ? `${l.municipio}/${l.uf || ''}` : '')
+
+// Sem XML legível as colunas do XML ficam vazias e os valores vêm do banco.
+function linhaCte(n, lerXml) {
+  const d = cteDe(n, lerXml)
+  return [
+    n.numero, n.serie, n.data_emissao, documento(n.emitente_cnpj), n.emitente_nome,
+    d?.tomador ? documento(d.tomador.documento) : '', d?.tomador?.nome || '', d?.remetente?.nome || '', d?.destinatario?.nome || n.destinatario_nome || '',
+    d ? local(d.origem) : '', d ? local(d.destino) : '', d?.cfop || '',
+    d?.valorPrestacao ?? n.valor_total, d?.carga?.valor ?? '', SITUACOES[n.status] || n.status, simNao(n.cancelada), n.chave,
+  ]
+}
+
+// Abas Entradas e Saídas de um modelo só (no CT-e, notas "outro" não aparecem em nenhuma).
 function porDirecao(notas, modelo, lerXml) {
   const nfse = modelo === 'nfse'
-  const daquele = notas.filter((n) => (n.modelo === 'nfse') === nfse)
+  const cte = modelo === 'cte'
+  const daquele = notas.filter((n) => (n.modelo || 'nfe') === modelo)
   const aba = (nome, direcao) => ({
     nome,
-    colunas: nfse ? COLUNAS_NFSE : COLUNAS_NFE,
-    linhas: daquele.filter((n) => (n.tipo === 'saida' ? 'saida' : 'entrada') === direcao).map((n) => (nfse ? linhaNfse(n, lerXml) : linhaNfe(n))),
+    colunas: cte ? COLUNAS_CTE : nfse ? COLUNAS_NFSE : COLUNAS_NFE,
+    linhas: daquele
+      .filter((n) => (cte ? n.tipo === direcao : (n.tipo === 'saida' ? 'saida' : 'entrada') === direcao))
+      .map((n) => (cte ? linhaCte(n, lerXml) : nfse ? linhaNfse(n, lerXml) : linhaNfe(n))),
   })
   return montarXlsx([aba('Entradas', 'entrada'), aba('Saídas', 'saida')])
 }
@@ -64,13 +93,14 @@ function porDirecao(notas, modelo, lerXml) {
  * @param {object} p
  * @param {object[]} p.notas linhas da tabela `notas` (NF-e e NFS-e)
  * @param {(nota: object) => string|null} p.lerXml XML da nota ou null (sem arquivo)
- * @param {'nfe'|'nfse'} [p.modelo] só esse modelo, em abas Entradas e Saídas
+ * @param {'nfe'|'nfse'|'cte'} [p.modelo] só esse modelo, em abas Entradas e Saídas
  * @returns {Promise<Buffer>}
  */
 function montarPlanilhaDoMes({ notas, lerXml, modelo }) {
   if (modelo) return porDirecao(notas, modelo, lerXml)
-  const nfe = notas.filter((n) => n.modelo !== 'nfse')
+  const nfe = notas.filter((n) => n.modelo !== 'nfse' && n.modelo !== 'cte')
   const nfse = notas.filter((n) => n.modelo === 'nfse')
+  const cte = notas.filter((n) => n.modelo === 'cte' && n.tipo !== 'outro')
 
   const retencoes = []
   for (const n of nfse) {
@@ -104,8 +134,10 @@ function montarPlanilhaDoMes({ notas, lerXml, modelo }) {
       colunas: ['Tipo', 'Número', 'Competência', 'CNPJ prestador', 'Prestador', 'CNPJ tomador', 'Tomador', 'Valor do serviço', 'ISS', 'ISS retido', 'IRRF', 'CSLL', 'INSS', 'PIS', 'COFINS', 'Total retido', 'Valor líquido'],
       linhas: retencoes,
     },
+    // Aba CT-e só no mês que tem CT-e de entrada ou saída (escritório só de NF-e/NFS-e não vê aba vazia).
+    ...(cte.length ? [{ nome: 'CT-e', colunas: COLUNAS_CTE, linhas: cte.map((n) => linhaCte(n, lerXml)) }] : []),
   ])
 }
 
 // Colunas e linhas das abas Entradas/Saídas também servem ao relatório em PDF (mesmos dados nos dois).
-module.exports = { montarPlanilhaDoMes, COLUNAS_NFE, COLUNAS_NFSE, linhaNfe, linhaNfse }
+module.exports = { montarPlanilhaDoMes, COLUNAS_NFE, COLUNAS_NFSE, COLUNAS_CTE, linhaNfe, linhaNfse, linhaCte }

@@ -3,7 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const path = require('node:path')
-const { caminhoDa, direcaoPelaChave, modeloPelaChave, nomes } = require('../src/services/armazenamento')
+const { caminhoDa, direcaoPelaChave, modeloPelaChave, nomes, pastaNoZip, nomeNoZip } = require('../src/services/armazenamento')
 
 const cliente = { cnpj: '12138481000185', apelido: 'INOX' }
 const escritorio = { cnpj: '01904741000160', apelido: 'escritorio' }
@@ -53,4 +53,17 @@ test('salvar regrava a declaração ISO-8859-1 como UTF-8', (t) => {
   const rel = arm.salvar({ cliente, competencia: '2026-01', modelo: 'nfse', nomeArquivo: 'x.xml', xml: "<?xml version='1.0' encoding='ISO-8859-1'?><a>São Paulo</a>" })
   const gravado = fs.readFileSync(arm.absoluto(rel), 'utf8')
   assert.equal(gravado, "<?xml version='1.0' encoding=\"UTF-8\"?><a>São Paulo</a>")
+})
+
+test('CT-e: pastas CT-e/Entradas|Saidas|Outros e nome <chave>-cte.xml', () => {
+  const CH = '3'.repeat(44)
+  assert.equal(nomes.cte(CH), `${CH}-cte.xml`)
+  assert.equal(
+    caminhoDa({ cliente, modelo: 'cte', direcao: 'outro', competencia: '2026-10', nomeArquivo: nomes.cte(CH) }),
+    p('12138481000185_INOX', '2026', '10', 'CT-e', 'Outros', `${CH}-cte.xml`),
+  )
+  assert.equal(pastaNoZip({ modelo: 'cte', tipo: 'outro', cancelada: 0 }), 'CT-e/Outros')
+  assert.equal(pastaNoZip({ modelo: 'cte', tipo: 'entrada', cancelada: 1 }), 'CT-e/Entradas/Canceladas')
+  assert.equal(pastaNoZip({ modelo: 'cte', tipo: 'saida', cancelada: 0 }), 'CT-e/Saidas')
+  assert.equal(nomeNoZip({ modelo: 'cte', chave: CH }), `${CH}-cte.xml`)
 })

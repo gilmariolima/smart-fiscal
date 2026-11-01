@@ -7,15 +7,17 @@ const path = require('node:path')
 const { abrirBanco } = require('../../src/db')
 const { criarSefazMock, CNPJ_MOCK_OK } = require('../../src/sefaz/mock-client')
 const { criarAdnMock } = require('../../src/sefaz/adn-mock')
+const { criarCteMock } = require('../../src/sefaz/cte-mock')
 
 const AGORA = new Date('2026-10-09T12:00:00Z')
 const silencioso = { info() {}, warn() {}, error() {} }
 
-// O ADN simulado começa vazio: só os testes de NFS-e passam documentos (adn).
-function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cienciaDoDono: true }), fabrica, adn = criarAdnMock({ documentos: {} }), fabricaAdn, agora = () => AGORA, config = {} } = {}) {
+// O ADN e o CT-e simulados começam vazios: só os testes de NFS-e (adn) e de CT-e (cte) passam documentos.
+function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cienciaDoDono: true, dataBase: AGORA }), fabrica, adn = criarAdnMock({ documentos: {} }), fabricaAdn, cte = criarCteMock({ documentos: {} }), fabricaCte, agora = () => AGORA, config = {} } = {}) {
   const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-teste-'))
   const db = abrirBanco(':memory:')
-  const ins = db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, ?, ?, 'CE', 'x.pfx', 'a:b:c')`)
+  // Como o cadastro do app: cliente novo já entra na busca automática de CT-e (o padrão da coluna é 0, para os antigos).
+  const ins = db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc, auto_cte) VALUES (?, ?, ?, 'CE', 'x.pfx', 'a:b:c', 1)`)
   const ids = clientes.map((cnpj, i) => Number(ins.run(cnpj, `Cliente ${i + 1} Ltda`, `Cliente ${i + 1}`).lastInsertRowid))
   const pausas = []
   const deps = {
@@ -24,10 +26,11 @@ function montarAmbiente({ clientes = [CNPJ_MOCK_OK], mock = criarSefazMock({ cie
     logger: silencioso,
     fabricaSefaz: fabrica || ((c) => mock.cliente(c.cnpj)),
     fabricaAdn: fabricaAdn || ((c) => adn.cliente(c.cnpj)),
+    fabricaCte: fabricaCte || ((c) => cte.cliente(c.cnpj)),
     dormir: async (ms) => pausas.push(ms),
     agora,
   }
-  return { db, deps, mock, adn, ids, pausas, pastaXmls, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
+  return { db, deps, mock, adn, cte, ids, pausas, pastaXmls, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
 }
 
 /** Insere notas direto no banco (chaves sintéticas de 44 dígitos). */

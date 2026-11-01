@@ -4,7 +4,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const { montarPlanilhaDoMes } = require('../src/services/planilhaMes')
+const { montarPlanilhaDoMes, COLUNAS_CTE, linhaCte } = require('../src/services/planilhaMes')
 const { lerZip } = require('./apoio/zip')
 
 const fortaleza = fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml'), 'utf8')
@@ -22,6 +22,7 @@ test('abas NF-e, NFS-e e Retenções com os dados de cada nota', async () => {
   const buf = await montarPlanilhaDoMes({ notas: [nfe, nfse], lerXml: (n) => (n.modelo === 'nfse' ? fortaleza : null) })
   const zip = lerZip(buf)
   assert.match(zip.get('xl/workbook.xml').toString(), /name="NF-e".*name="NFS-e".*name="Retenções"/)
+  assert.doesNotMatch(zip.get('xl/workbook.xml').toString(), /name="CT-e"/, 'sem CT-e no mês, sem a aba CT-e')
 
   const [cabNfe, l1] = linhas(zip, 1)
   assert.deepEqual(cabNfe, ['Tipo', 'Número', 'Série', 'Emissão', 'CNPJ emitente', 'Emitente', 'CNPJ destinatário', 'Destinatário', 'Valor', 'Situação', 'Cancelada', 'Chave'])
@@ -63,4 +64,40 @@ test('com modelo: abas Entradas e Saídas só daquele modelo; NFS-e com as reten
   const soNfe = lerZip(await montarPlanilhaDoMes({ notas: [nfe, nfse], modelo: 'nfe', lerXml: () => null }))
   assert.equal(linhas(soNfe, 1)[1][0], '190866')
   assert.equal(linhas(soNfe, 2).length, 1, 'Saídas só com o cabeçalho')
+})
+
+const { cteProc } = require('./apoio/cte')
+const cte = { modelo: 'cte', tipo: 'entrada', numero: '77', serie: '1', data_emissao: '2026-10-08T10:00:00-03:00', emitente_cnpj: '99888777000166', emitente_nome: 'TRANSPORTADORA', destinatario_cnpj: '11222333000181', destinatario_nome: 'DEST', valor_total: 1234.56, status: 'completa', cancelada: 0, chave: '4'.repeat(44), competencia: '2026-10', caminho_xml: 'x' }
+
+test('CT-e: abas Entradas e Saídas com dados do XML; outros ficam fora; sem XML usa o banco', async () => {
+  const saida = { ...cte, tipo: 'saida', numero: '8', caminho_xml: null }
+  const outro = { ...cte, tipo: 'outro', numero: '99' }
+  const zip = lerZip(await montarPlanilhaDoMes({ notas: [cte, saida, outro, nfe], modelo: 'cte', lerXml: () => cteProc({}) }))
+  assert.match(zip.get('xl/workbook.xml').toString(), /name="Entradas".*name="Saídas"/)
+  const [cab, entrada, ...resto] = linhas(zip, 1)
+  assert.deepEqual(cab, COLUNAS_CTE)
+  assert.equal(resto.length, 0)
+  assert.equal(entrada[cab.indexOf('Valor do frete')], '1234.56')
+  assert.equal(entrada[cab.indexOf('Origem')], 'Blumenau/SC')
+  assert.equal(entrada[cab.indexOf('Destino')], 'Fortaleza/CE')
+  assert.equal(entrada[cab.indexOf('Valor da carga')], '50000')
+  const [, s, ...r2] = linhas(zip, 2)
+  assert.equal(r2.length, 0)
+  assert.equal(s[0], '8')
+  assert.equal(linhaCte(saida, () => null)[cab.indexOf('Valor do frete')], 1234.56)
+  assert.equal(linhaCte(saida, () => null)[cab.indexOf('Origem')], '')
+})
+
+test('planilha mista: aba CT-e só quando há CT-e de entrada ou saída', async () => {
+  const comCte = lerZip(await montarPlanilhaDoMes({ notas: [nfe, cte], lerXml: () => null }))
+  assert.match(comCte.get('xl/workbook.xml').toString(), /name="NF-e".*name="NFS-e".*name="Retenções".*name="CT-e"/)
+  assert.equal(linhas(comCte, 4).length, 2)
+  const soOutro = lerZip(await montarPlanilhaDoMes({ notas: [nfe, { ...cte, tipo: 'outro' }], lerXml: () => null }))
+  assert.doesNotMatch(soOutro.get('xl/workbook.xml').toString(), /name="CT-e"/)
+})
+
+test('CT-e: mês só com outros gera as abas só com o cabeçalho', async () => {
+  const zip = lerZip(await montarPlanilhaDoMes({ notas: [{ ...cte, tipo: 'outro' }], modelo: 'cte', lerXml: () => null }))
+  assert.equal(linhas(zip, 1).length, 1)
+  assert.equal(linhas(zip, 2).length, 1)
 })

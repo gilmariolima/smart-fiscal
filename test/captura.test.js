@@ -13,7 +13,7 @@ const { xmlParaJson } = require('../src/sefaz/xml')
 const silencioso = { info() {}, warn() {}, error() {} }
 const AGORA = new Date('2026-10-09T12:00:00Z')
 
-function montar({ mock = criarSefazMock(), clientes = [CNPJ_MOCK_OK], agora = () => AGORA, fabrica } = {}) {
+function montar({ mock = criarSefazMock({ dataBase: AGORA }), clientes = [CNPJ_MOCK_OK], agora = () => AGORA, fabrica } = {}) {
   const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-xmls-'))
   const db = abrirBanco(':memory:')
   const ins = db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, ?, ?, 'CE', 'x.pfx', 'a:b:c')`)

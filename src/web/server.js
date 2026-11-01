@@ -12,9 +12,10 @@ const archiver = require('archiver')
 const express = require('express')
 const { COLUNAS_PUBLICAS, DA_CARTEIRA } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
-const { detalharNfe, detalharNfse } = require('../services/detalheNota')
+const { detalharNfe, detalharNfse, detalharCte } = require('../services/detalheNota')
 const { montarPlanilhaDoMes } = require('../services/planilhaMes')
 const { gerarDanfse, situacaoDanfse } = require('../services/danfse/gerar')
+const { gerarDacte } = require('../services/dacte/gerar')
 const { pastaDoCliente, nomeNoZip } = require('../services/armazenamento')
 
 const POR_PAGINA = 50
@@ -33,8 +34,8 @@ function abrirNoExplorador(pasta) {
 }
 
 // Arquivos da exportação: <CNPJ>[_apelido]_<AAAA-MM>[_NF-e|_NFS-e].zip ou, planilha/relatório soltos,
-// <apelido>_<AAAA-MM>_<NF-e|NFS-e>.xlsx|.pdf. Só letras, números, '-' e '_' (nada de '/' ou '..').
-const PADRAO_EXPORTACAO = /^[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*_\d{4}-\d{2}(_NFS?-e)?\.(zip|xlsx|pdf)$/
+// <apelido>_<AAAA-MM>_<NF-e|NFS-e|CT-e>.xlsx|.pdf. Só letras, números, '-' e '_' (nada de '/' ou '..').
+const PADRAO_EXPORTACAO = /^[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)*_\d{4}-\d{2}(_(?:NFS?|CT)-e)?\.(zip|xlsx|pdf)$/
 const TIPO_DA_EXPORTACAO = { zip: 'application/zip', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf' }
 
 class ErroHttp extends Error {
@@ -165,6 +166,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     // O que a última captura de cada cliente trouxe (para a coluna Última captura).
     ultimaCapturaPorCliente: db.prepare(`SELECT cliente_id, c_stat, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
+    ultimaCapturaCtePorCliente: db.prepare(`SELECT cliente_id, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
+      WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_cte' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
     ultimaCapturaNfsePorCliente: db.prepare(`SELECT cliente_id, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
     clientePorCnpj: db.prepare('SELECT id, cnpj, papel, tambem_cliente FROM clientes WHERE cnpj = ?'),
@@ -209,6 +212,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const contagens = new Map(sql.contagemPorCliente.all({ maxTentativas: config.maxTentativasDownload, competencia: competenciaAtual() }).map((c) => [c.cliente_id, c]))
     const capturas = new Map(sql.ultimaCapturaPorCliente.all().map((e) => [e.cliente_id, e]))
     const capturasNfse = new Map(sql.ultimaCapturaNfsePorCliente.all().map((e) => [e.cliente_id, e]))
+    const capturasCte = new Map(sql.ultimaCapturaCtePorCliente.all().map((e) => [e.cliente_id, e]))
     const clientes =
       sql.clientes.all().map((c) => {
         const n = contagens.get(c.id) || {}
@@ -237,8 +241,17 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
             proximaConsulta: futuro(c.nfse_proxima_consulta),
             ultimoErro: c.nfse_ultimo_erro,
           },
+          cte: {
+            ultimoRecebido: capturasCte.has(c.id)
+              ? { notas: capturasCte.get(c.id).notas_recebidas || 0, eventos: capturasCte.get(c.id).eventos_recebidos || 0, docs: capturasCte.get(c.id).docs_recebidos || 0 }
+              : null,
+            ultimaConsulta: c.cte_ultima_consulta,
+            proximaConsulta: futuro(c.cte_proxima_consulta),
+            bloqueadoAte: futuro(c.cte_bloqueado_ate),
+            ultimoErro: c.cte_ultimo_erro,
+          },
           // Busca automática ligada por tipo de nota (os horários pulam o que estiver desligado).
-          automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0 },
+          automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0, cte: c.auto_cte !== 0 },
           certValidade: c.cert_validade,
           certDias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null,
           notas: {
@@ -261,7 +274,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     if (!cliente || (cliente.papel !== 'cliente' && !cliente.tambem_cliente)) throw new ErroHttp(404, 'Cliente não cadastrado.')
     const anos = []
     const modelo = req.query.modelo || null
-    if (modelo && modelo !== 'nfe' && modelo !== 'nfse') throw new ErroHttp(400, 'Modelo inválido.')
+    if (modelo && !['nfe', 'nfse', 'cte'].includes(modelo)) throw new ErroHttp(400, 'Modelo inválido.')
     for (const m of sql.mesesDoCliente.all({ cliente: cliente.id, modelo })) {
       const ano = Number(m.competencia.slice(0, 4))
       let grupo = anos[anos.length - 1]
@@ -325,8 +338,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       where.push('c.cnpj = @cnpj')
       p.cnpj = String(q.cnpj).replace(/\D/g, '')
     }
-    if (q.tipo && q.tipo !== 'entrada' && q.tipo !== 'saida') throw new ErroHttp(400, 'Tipo inválido.')
-    if (q.modelo && q.modelo !== 'nfe' && q.modelo !== 'nfse') throw new ErroHttp(400, 'Modelo inválido.')
+    if (q.tipo && !['entrada', 'saida', 'outro'].includes(q.tipo)) throw new ErroHttp(400, 'Tipo inválido.')
+    if (q.modelo && !['nfe', 'nfse', 'cte'].includes(q.modelo)) throw new ErroHttp(400, 'Modelo inválido.')
     if (q.competencia) {
       if (!/^\d{4}-\d{2}$/.test(q.competencia)) throw new ErroHttp(400, 'Competência inválida (use AAAA-MM).')
       where.push('n.competencia = @competencia')
@@ -334,8 +347,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     }
     // Só as notas que chegaram na última captura do modelo (link "Ver notas" da tela Capturar).
     if (q.novas === '1') {
-      if (!q.cnpj || !['nfe', 'nfse'].includes(q.modelo)) throw new ErroHttp(400, 'Informe o cliente e o modelo.')
-      const ultima = sql.ultimaCapturaDoCliente.get({ cnpj: p.cnpj, tipo: q.modelo === 'nfse' ? 'captura_nfse' : 'captura' })
+      if (!q.cnpj || !['nfe', 'nfse', 'cte'].includes(q.modelo)) throw new ErroHttp(400, 'Informe o cliente e o modelo.')
+      const ultima = sql.ultimaCapturaDoCliente.get({ cnpj: p.cnpj, tipo: { nfse: 'captura_nfse', cte: 'captura_cte' }[q.modelo] || 'captura' })
       where.push('n.captura_id = @captura')
       p.captura = ultima?.id ?? -1
     }
@@ -370,12 +383,13 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       const w = [...where, extra].filter(Boolean)
       return db.prepare(`SELECT n.${coluna} valor, COUNT(*) qtd FROM notas n JOIN clientes c ON c.id = n.cliente_id ${w.length ? `WHERE ${w.join(' AND ')}` : ''} GROUP BY n.${coluna}`).all(p)
     }
-    const contagemTipo = { entradas: 0, saidas: 0 }
+    const contagemTipo = { entradas: 0, saidas: 0, outros: 0 }
     for (const l of contar('tipo', clausulaModelo)) {
       if (l.valor === 'entrada') contagemTipo.entradas = l.qtd
       else if (l.valor === 'saida') contagemTipo.saidas = l.qtd
+      else if (l.valor === 'outro') contagemTipo.outros = l.qtd
     }
-    const contagemModelo = { nfe: 0, nfse: 0 }
+    const contagemModelo = { nfe: 0, nfse: 0, cte: 0 }
     for (const l of contar('modelo', clausulaTipo)) if (l.valor in contagemModelo) contagemModelo[l.valor] = l.qtd
     // Pastas do mês (NF-e/NFS-e → Entradas/Saídas) só precisam dos números.
     if (q.somenteContagem === '1') return res.json({ contagemTipo, contagemModelo })
@@ -429,11 +443,14 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
   // DANFSe (PDF) da NFS-e, gerado do XML na hora (NT 008/2026). NF-e não tem: o DANFE é a tela "Ver nota".
   app.get('/api/notas/:id/pdf', async (req, res) => {
     const nota = notaOu404(req.params.id)
-    if (nota.modelo !== 'nfse') throw new ErroHttp(404, 'O PDF (DANFSe) é só para NFS-e.')
+    if (nota.modelo !== 'nfse' && nota.modelo !== 'cte') throw new ErroHttp(404, 'O PDF (DANFSe ou DACTE) é só para NFS-e e CT-e.')
     const arquivo = nota.caminho_xml && dentroDe(config.pastaXmls, nota.caminho_xml)
     if (!arquivo || !fs.existsSync(arquivo)) throw new ErroHttp(404, 'O XML desta nota não foi encontrado na pasta de XMLs.')
     const tipos = db.prepare('SELECT tp_evento FROM eventos WHERE chave = ?').all(nota.chave).map((e) => e.tp_evento)
-    const pdf = await gerarDanfse(fs.readFileSync(arquivo, 'utf8'), { situacao: situacaoDanfse(nota, tipos) })
+    const xml = fs.readFileSync(arquivo, 'utf8')
+    const pdf = nota.modelo === 'cte'
+      ? await gerarDacte(xml, { situacao: nota.cancelada ? 'cancelado' : 'autorizado' })
+      : await gerarDanfse(xml, { situacao: situacaoDanfse(nota, tipos) })
     res.set('Content-Type', 'application/pdf')
     res.attachment(nomeNoZip(nota).replace(/\.xml$/, '.pdf'))
     res.send(pdf)
@@ -466,7 +483,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       .map((e) => dentroDe(config.pastaXmls, e.caminho_xml))
       .filter((a) => a && fs.existsSync(a))
     // "Baixar XML": sem evento vai o XML solto; com evento, um ZIP com a nota e os eventos.
-    const nome = `${nota.chave}-${nota.modelo === 'nfse' ? 'nfse' : 'nfe'}`
+    const nome = nomeNoZip(nota).replace(/\.xml$/, '') // <chave>-nfe, -nfse ou -cte
     if (!eventos.length) {
       res.set('Content-Type', 'application/xml')
       res.set('Content-Disposition', `attachment; filename="${nome}.xml"`)
@@ -490,6 +507,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const nota = notaOu404(req.params.id)
     let nfe = null
     let nfse = null
+    let cte = null
     let erroXml = null
     if (nota.caminho_xml) {
       const arquivo = dentroDe(config.pastaXmls, nota.caminho_xml)
@@ -497,11 +515,12 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
       else {
         const xml = fs.readFileSync(arquivo, 'utf8')
         if (nota.modelo === 'nfse') nfse = detalharNfse(xml)
+        else if (nota.modelo === 'cte') cte = detalharCte(xml)
         else nfe = detalharNfe(xml)
-        if (!nfe && !nfse) erroXml = 'Não foi possível ler o XML desta nota.'
+        if (!nfe && !nfse && !cte) erroXml = 'Não foi possível ler o XML desta nota.'
       }
     }
-    res.json({ nota: sql.notaComCliente.get(nota.id), nfe, nfse, erroXml, eventos: sql.eventosDaNota.all(nota.chave) })
+    res.json({ nota: sql.notaComCliente.get(nota.id), nfe, nfse, cte, erroXml, eventos: sql.eventosDaNota.all(nota.chave) })
   })
 
   app.post('/api/notas/:id/reprocessar', (req, res) => {
@@ -523,11 +542,11 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
 
   const MAX_CNPJS_CAPTURA = 500
 
-  // NF-e e/ou NFS-e; sem o campo, as duas.
+  // NF-e, NFS-e e/ou CT-e; sem o campo, todos.
   function modelosDaCaptura(modelos) {
-    if (modelos === undefined) return ['nfe', 'nfse']
-    if (!Array.isArray(modelos) || !modelos.length || modelos.some((m) => m !== 'nfe' && m !== 'nfse')) {
-      throw new ErroHttp(400, 'Escolha NF-e, NFS-e ou as duas.')
+    if (modelos === undefined) return ['nfe', 'nfse', 'cte']
+    if (!Array.isArray(modelos) || !modelos.length || modelos.some((m) => !['nfe', 'nfse', 'cte'].includes(m))) {
+      throw new ErroHttp(400, 'Escolha NF-e, NFS-e e/ou CT-e.')
     }
     return [...new Set(modelos)]
   }
@@ -605,7 +624,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     res.json({ ok: true, automacao, agendador: agendador.estado() })
   })
 
-  // "Baixar selecionados": `incluir` (xml, danfe, danfse, excel, pdf) escolhe o conteúdo; um arquivo só vai solto, o resto em ZIP.
+  // "Baixar selecionados": `incluir` (xml, danfe, danfse, dacte, excel, pdf) escolhe o conteúdo; um arquivo só vai solto, o resto em ZIP.
   app.post('/api/notas/zip', async (req, res) => {
     const { ids, incluir } = req.body || {}
     let zip
@@ -727,7 +746,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     const { modelo, ligado } = req.body || {}
     if (typeof ligado !== 'boolean') throw new ErroHttp(400, 'Informe se a busca automática fica ligada.')
     const c = comoErroHttp(() => ctx.clientes.definirAutomatica(req.params.cnpj, String(modelo || ''), ligado))
-    res.json({ ok: true, automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0 } })
+    res.json({ ok: true, automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0, cte: c.auto_cte !== 0 } })
   })
 
   // ---------- escritório (certificado próprio, notas de saída pelo autXML) ----------

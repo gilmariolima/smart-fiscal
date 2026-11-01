@@ -26,10 +26,12 @@ const SITUACOES = [
   ['cancelada', 'Canceladas'],
 ]
 const FILTRO_DA_SITUACAO = { '': 'com_xml', completa: 'completa', cancelada: 'cancelada_com_xml' }
+const ROTULO_DO_TIPO = { entrada: 'Entrada', saida: 'Saída', outro: 'Outro' }
 
 export default function Mes() {
   const { cnpj, ano, mes, modelo: slugModelo } = useParams()
-  // O modelo vem do caminho (NF-e | NFS-e); entradas e saídas ficam juntas, com a coluna Tipo e o filtro Todas | Entradas | Saídas.
+  // O modelo vem do caminho (NF-e | NFS-e | CT-e); entradas e saídas ficam juntas, com a coluna Tipo e o filtro Todas | Entradas | Saídas
+  // (no CT-e também Outros: o cliente é remetente, destinatário, expedidor ou recebedor, sem pagar o frete).
   const pastaModelo = MODELOS[slugModelo] || MODELOS['nf-e']
   const [params, setParams] = useSearchParams()
   const nome = useNomeDoCliente(cnpj)
@@ -38,7 +40,8 @@ export default function Mes() {
   const nomeDoMes = NOMES_DOS_MESES[Number(mes) - 1] || mes
 
   const modelo = pastaModelo.valor
-  const tipo = ['entrada', 'saida'].includes(params.get('tipo')) ? params.get('tipo') : ''
+  const cte = modelo === 'cte'
+  const tipo = (cte ? ['entrada', 'saida', 'outro'] : ['entrada', 'saida']).includes(params.get('tipo')) ? params.get('tipo') : ''
   const status = FILTRO_DA_SITUACAO[params.get('status')] ? params.get('status') : ''
   const busca = (params.get('busca') || '').trim()
   const ordem = params.get('ordem') || ORDEM_PADRAO
@@ -127,7 +130,7 @@ export default function Mes() {
       else selecao.marcar(r.ids)
     })
 
-  // incluir: o que baixar das marcadas (xml, danfse, excel, pdf), escolhido no menu do botão.
+  // incluir: o que baixar das marcadas (xml, danfse, dacte, excel, pdf), escolhido no menu do botão.
   const baixarSelecionados = (incluir) => {
     if (selecao.tamanho > LIMITE_ZIP) return setErro(`${AVISO_LIMITE}. Há ${inteiro(selecao.tamanho)} marcadas.`)
     executar('zip', () => api.baixar('/api/notas/zip', { ids: [...selecao.ids], incluir }))
@@ -141,15 +144,16 @@ export default function Mes() {
     })
 
   const limite = exibido?.limiteTentativas
-  // Na NFS-e quem emite é o prestador e quem recebe é o tomador.
+  // Na NFS-e quem emite é o prestador e quem recebe é o tomador; no CT-e, a transportadora e o tomador do frete.
+  // No CT-e os títulos são mais curtos para a tabela caber sem rolar para o lado.
   const quemEmite = modelo === 'nfse' ? 'Prestador' : 'Emitente'
-  const quemRecebe = modelo === 'nfse' ? 'Tomador' : 'Destinatário'
+  const quemRecebe = modelo === 'nfse' || cte ? 'Tomador' : 'Destinatário'
   const colunas = [
-    { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{n.tipo === 'saida' ? 'Saída' : 'Entrada'}</span> },
+    { chave: 'tipo', titulo: 'Tipo', ordem: 'tipo', render: (n) => <span className="tipo-nota">{ROTULO_DO_TIPO[n.tipo] || 'Entrada'}</span> },
     { chave: 'numero', titulo: 'Número', ordem: 'numero', classe: 'mono', render: (n) => <Link to={`/notas/${cnpj}/nota/${n.id}`}>{n.numero || '—'}</Link> },
     { chave: 'emissao', titulo: 'Emissão', ordem: 'emissao', classe: 'sem-quebra', render: (n) => data(n.data_emissao) },
-    { chave: 'emitente_cnpj', titulo: `CNPJ ${quemEmite}`, ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
-    { chave: 'emitente_nome', titulo: `Nome ${quemEmite}`, ordem: 'emitente_nome', classe: 'nome', render: (n) => n.emitente_nome || '—' },
+    { chave: 'emitente_cnpj', titulo: cte ? 'CNPJ Transp.' : `CNPJ ${quemEmite}`, ordem: 'emitente_cnpj', classe: 'mono sem-quebra', render: (n) => formatarCnpj(n.emitente_cnpj) },
+    { chave: 'emitente_nome', titulo: cte ? 'Transportadora' : `Nome ${quemEmite}`, ordem: 'emitente_nome', classe: 'nome', render: (n) => n.emitente_nome || '—' },
     {
       chave: 'destinatario_cnpj',
       titulo: `CNPJ ${quemRecebe}`,
@@ -157,7 +161,7 @@ export default function Mes() {
       classe: 'mono sem-quebra',
       render: (n) => documento(n.destinatario_cnpj) || '—',
     },
-    { chave: 'valor', titulo: 'Valor', ordem: 'valor', classe: 'num sem-quebra', render: (n) => dinheiro(n.valor_total) },
+    { chave: 'valor', titulo: cte ? 'Valor do frete' : 'Valor', ordem: 'valor', classe: 'num sem-quebra', render: (n) => dinheiro(n.valor_total) },
     { chave: 'situacao', titulo: 'Situação', classe: 'sem-quebra', render: (n) => <SituacaoNota nota={n} limite={limite} /> },
     {
       chave: 'acoes',
@@ -167,7 +171,8 @@ export default function Mes() {
     },
   ]
 
-  const contagem = exibido?.contagemTipo || { entradas: 0, saidas: 0 }
+  const contagem = exibido?.contagemTipo || { entradas: 0, saidas: 0, outros: 0 }
+  const outros = cte ? contagem.outros || 0 : 0
   const filtrado = !!(tipo || status || busca)
 
   let conteudo
@@ -227,9 +232,10 @@ export default function Mes() {
           valor={tipo}
           onChange={(v) => mudar({ tipo: v })}
           opcoes={[
-            { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas)})` },
+            { valor: '', rotulo: `Todas (${inteiro(contagem.entradas + contagem.saidas + outros)})` },
             { valor: 'entrada', rotulo: `Entradas (${inteiro(contagem.entradas)})` },
             { valor: 'saida', rotulo: `Saídas (${inteiro(contagem.saidas)})` },
+            ...(cte ? [{ valor: 'outro', rotulo: `Outros (${inteiro(outros)})` }] : []),
           ]}
         />
         <div className="filtros-notas">

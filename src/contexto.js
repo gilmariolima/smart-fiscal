@@ -7,6 +7,7 @@ const { criarLogger } = require('./logger')
 const { abrirBanco } = require('./db')
 const { criarFabricaSefaz } = require('./sefaz/client')
 const { criarFabricaAdn } = require('./sefaz/adn')
+const { criarFabricaCte } = require('./sefaz/cte')
 const { criarServicoClientes } = require('./services/clientes')
 const { criarServicoCiclo } = require('./services/ciclo')
 const { criarServicoResumo } = require('./services/resumo')
@@ -19,7 +20,7 @@ const { criarServicoPastas } = require('./services/pastas')
 const { migrarPastas } = require('./services/migracaoPastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
-function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, agora, verificarAmbiente: verificar = true } = {}) {
+function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, agora, verificarAmbiente: verificar = true } = {}) {
   const log = logger || criarLogger({ pasta: config.pastaLogs, nivelConsole })
   const banco = db || abrirBanco(config.caminhoBanco)
   if (verificar) {
@@ -30,7 +31,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
       throw e
     }
   }
-  const deps = { db: banco, config, logger: log, fabricaSefaz: fabricaSefaz || criarFabricaSefaz(config), fabricaAdn: fabricaAdn || criarFabricaAdn(config) }
+  const deps = { db: banco, config, logger: log, fabricaSefaz: fabricaSefaz || criarFabricaSefaz(config), fabricaAdn: fabricaAdn || criarFabricaAdn(config), fabricaCte: fabricaCte || criarFabricaCte(config) }
   if (agora) deps.agora = agora
   // Antes dos outros serviços: aplica as pastas escolhidas na tela Pastas.
   const pastas = criarServicoPastas(deps)

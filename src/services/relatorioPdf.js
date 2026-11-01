@@ -6,7 +6,7 @@
 // (as canceladas não entram no total).
 
 const PDFDocument = require('pdfkit')
-const { COLUNAS_NFE, COLUNAS_NFSE, linhaNfe, linhaNfse } = require('./planilhaMes')
+const { COLUNAS_NFE, COLUNAS_NFSE, COLUNAS_CTE, linhaNfe, linhaNfse, linhaCte } = require('./planilhaMes')
 
 const MARGEM = 28
 const NORMAL = 'Helvetica'
@@ -36,6 +36,17 @@ const MODELOS = {
     dinheiro: new Set(['Valor do serviço', 'ISS', 'IRRF', 'CSLL', 'INSS', 'PIS', 'COFINS', 'Total retido', 'Valor líquido']),
     letra: 5.5,
   },
+  cte: {
+    rotulo: 'CT-e',
+    colunas: COLUNAS_CTE,
+    linha: (n, lerXml) => linhaCte(n, lerXml),
+    pesos: {
+      Número: 4.5, Série: 3, Emissão: 5.5, 'CNPJ emitente': 8.5, Emitente: 9, 'CNPJ tomador': 8.5, Tomador: 9, Remetente: 9, Destinatário: 9, Origem: 7, Destino: 7,
+      CFOP: 3.5, 'Valor do frete': 6, 'Valor da carga': 6, Situação: 5.5, Cancelada: 5, Chave: 14,
+    },
+    dinheiro: new Set(['Valor do frete', 'Valor da carga']),
+    letra: 5.5,
+  },
 }
 
 const dinheiro = (v) => (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -51,7 +62,7 @@ function documento(d) {
  * @param {string|null} p.competencia 'AAAA-MM' (null: notas de meses diferentes)
  * @param {object[]} p.notas linhas da tabela `notas`
  * @param {(nota: object) => string|null} p.lerXml XML da nota ou null
- * @param {'nfe'|'nfse'} [p.modelo] só esse modelo; sem ele, uma parte por modelo que tiver notas (NF-e se não houver nenhuma)
+ * @param {'nfe'|'nfse'|'cte'} [p.modelo] só esse modelo; sem ele, uma parte por modelo que tiver notas (NF-e se não houver nenhuma)
  * @returns {Promise<Buffer>}
  */
 function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo }) {
@@ -65,8 +76,8 @@ function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo }) {
   // Notas de meses diferentes (seleção livre) não têm um mês só no título.
   const [ano, mes] = (competencia || '').split('-')
   const periodo = competencia ? `${MESES[Number(mes) - 1] || mes} de ${ano}` : 'notas selecionadas'
-  const doModelo = (n, m) => (n.modelo === 'nfse') === (m === 'nfse')
-  const modelos = modelo ? [modelo] : ['nfe', 'nfse'].filter((m) => notas.some((n) => doModelo(n, m)))
+  const doModelo = (n, m) => (n.modelo || 'nfe') === m
+  const modelos = modelo ? [modelo] : ['nfe', 'nfse', 'cte'].filter((m) => notas.some((n) => doModelo(n, m)))
 
   function cabecalho(rotulo) {
     doc.font(NEGRITO).fontSize(14).fillColor('#101828').text(`Relatório de ${rotulo} · ${periodo}`, MARGEM, MARGEM)
@@ -137,7 +148,8 @@ function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo }) {
     if (i > 0) doc.addPage()
     cabecalho(MODELOS[m].rotulo)
     const daquele = notas.filter((n) => doModelo(n, m))
-    secao(m, 'Entradas', daquele.filter((n) => n.tipo !== 'saida'))
+    // No CT-e, notas "outro" ficam fora das duas seções.
+    secao(m, 'Entradas', daquele.filter((n) => (m === 'cte' ? n.tipo === 'entrada' : n.tipo !== 'saida')))
     secao(m, 'Saídas', daquele.filter((n) => n.tipo === 'saida'))
   })
 

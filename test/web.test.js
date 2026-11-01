@@ -515,7 +515,7 @@ test('notas: filtro por tipo e contraparte acha o destinatário', async (t) => {
   assert.equal((await pedir('/api/notas?contraparte=98.765.432%2F0001-99')).corpo.total, 1, 'busca pelo CNPJ do destinatário')
   assert.equal((await pedir('/api/notas?emitente=gama')).corpo.total, 1, 'emitente= continua como apelido')
   assert.equal((await pedir('/api/notas?tipo=saida&contraparte=gama')).corpo.total, 0)
-  const ruim = await pedir('/api/notas?tipo=outro')
+  const ruim = await pedir('/api/notas?tipo=xx')
   assert.equal(ruim.status, 400)
   assert.equal(ruim.corpo.erro, 'Tipo inválido.')
 })
@@ -814,8 +814,8 @@ test('contagemTipo ignora o filtro de tipo e respeita os outros', async (t) => {
   ctx.db.prepare("UPDATE notas SET competencia = '2026-09' WHERE id = ?").run(outraComp)
   const r = (await pedir('/api/notas?tipo=saida&competencia=2026-10')).corpo
   assert.equal(r.total, 1)
-  assert.deepEqual(r.contagemTipo, { entradas: 2, saidas: 1 })
-  assert.deepEqual((await pedir('/api/notas')).corpo.contagemTipo, { entradas: 3, saidas: 1 })
+  assert.deepEqual(r.contagemTipo, { entradas: 2, saidas: 1, outros: 0 })
+  assert.deepEqual((await pedir('/api/notas')).corpo.contagemTipo, { entradas: 3, saidas: 1, outros: 0 })
 })
 
 // ---------- ZIP das notas selecionadas ----------
@@ -931,6 +931,25 @@ test('XML + eventos: ZIP com a nota e os eventos que têm arquivo', async (t) =>
   assert.equal(zip.get(`${c}-evento-110111-1.xml`).toString(), '<cancelamento/>')
 })
 
+test('XML + eventos: CT-e baixa como <chave>-cte, solto e no ZIP', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
+  const c = nota44(2)
+  const n = inserirNota(ctx.db, { cliente_id: id, chave: c, status: 'completa' })
+  const rel = gravarXml(ctx, `${CNPJ_MOCK_OK}_Exemplo/2026/10/CT-e/Entradas/${c}-cte.xml`, '<cteProc/>')
+  ctx.db.prepare("UPDATE notas SET modelo = 'cte', caminho_xml = ? WHERE id = ?").run(rel, n)
+
+  const solto = await pedir(`/api/notas/${n}/xml-eventos`)
+  assert.equal(solto.status, 200)
+  assert.match(solto.headers.get('content-disposition'), new RegExp(`attachment; filename="${c}-cte.xml"`))
+
+  const cancel = gravarXml(ctx, `${CNPJ_MOCK_OK}_Exemplo/2026/10/CT-e/Entradas/Eventos/${c}-evento-110111-1.xml`, '<cancelamento/>')
+  ctx.db.prepare('INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, ?, ?, ?)').run(c, '110111', '1', cancel)
+  const r = await pedir(`/api/notas/${n}/xml-eventos`)
+  assert.match(r.headers.get('content-disposition'), new RegExp(`attachment; filename="${c}-cte-eventos.zip"`))
+  assert.deepEqual([...lerZip(r.corpo).keys()].sort(), [`${c}-cte.xml`, `${c}-evento-110111-1.xml`])
+})
+
 test('XML + eventos: nota sem XML → 404; id inválido → 404', async (t) => {
   const { ctx, pedir } = await montar(t)
   const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
@@ -968,7 +987,7 @@ test('notas: filtro por modelo e contagens cruzadas com o tipo', async (t) => {
   const so = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse`)).corpo
   assert.equal(so.total, 3)
   assert.ok(so.notas.every((n) => n.modelo === 'nfse'))
-  assert.deepEqual(so.contagemTipo, { entradas: 2, saidas: 1 }, 'contagem por tipo segue o modelo escolhido')
+  assert.deepEqual(so.contagemTipo, { entradas: 2, saidas: 1, outros: 0 }, 'contagem por tipo segue o modelo escolhido')
   const saidas = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&tipo=saida`)).corpo
   assert.equal(saidas.contagemModelo.nfse, 1, 'contagem por modelo segue o tipo escolhido')
   assert.equal((await pedir('/api/notas?modelo=x')).status, 400)
@@ -1029,14 +1048,14 @@ test('meses do cliente por modelo: NF-e e NFS-e separadas; modelo inválido → 
   assert.equal(nfse, 3)
   assert.ok(nfe > 0)
   assert.equal(nfe + nfse, todas)
-  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=cte`)).status, 400)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=mdfe`)).status, 400)
 })
 
 test('notas: somenteContagem devolve só as contagens', async (t) => {
   const { ctx, pedir } = await montar(t, {}, { adn: criarAdnMock() })
   await ctx.ciclo.executarCiclo()
   const r = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=nfse&somenteContagem=1`)).corpo
-  assert.deepEqual(r, { contagemTipo: { entradas: 2, saidas: 1 }, contagemModelo: r.contagemModelo })
+  assert.deepEqual(r, { contagemTipo: { entradas: 2, saidas: 1, outros: 0 }, contagemModelo: r.contagemModelo })
   assert.equal(r.contagemModelo.nfse, 3)
 })
 
@@ -1142,11 +1161,109 @@ test('Baixar selecionados → Arquivos DANFE: PDF de cada NF-e ao lado do XML, n
 test('busca automática por cliente: liga e desliga por tipo; /api/clientes mostra a escolha', async (t) => {
   const { pedir } = await montar(t)
   const lista = async () => (await pedir('/api/clientes')).corpo.clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
-  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: true })
+  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: true, cte: true })
   const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'nfse', ligado: false } })
   assert.equal(r.status, 200)
-  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: false })
-  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'cte', ligado: false } })).status, 400)
+  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: false, cte: true })
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'mdfe', ligado: false } })).status, 400)
+  const rc = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'cte', ligado: false } })
+  assert.equal(rc.status, 200)
+  assert.deepEqual((await lista()).automatica, { nfe: true, nfse: false, cte: false })
   assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/automatica`, { method: 'POST', body: { modelo: 'nfe' } })).status, 400)
   assert.equal((await pedir('/api/clientes/99999999000199/automatica', { method: 'POST', body: { modelo: 'nfe', ligado: true } })).status, 404)
+})
+
+// Notas de CT-e direto no banco: 1 entrada, 1 saída e 2 outros (um deles num mês só de Outros).
+function cteNoBanco(ctx) {
+  const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
+  const chaves = inserirNotas(ctx.db, id, 4, { status: 'completa', inicio: 500 })
+  const tipos = ['entrada', 'saida', 'outro', 'outro']
+  const competencias = ['2026-10', '2026-10', '2026-10', '2026-07']
+  chaves.forEach((chave, i) => ctx.db.prepare("UPDATE notas SET modelo = 'cte', tipo = ?, competencia = ?, caminho_xml = 'x.xml' WHERE chave = ?").run(tipos[i], competencias[i], chave))
+  return chaves
+}
+
+test('CT-e na API: /api/clientes traz o bloco cte e a busca automática; captura aceita modelos [cte]', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const c = (await pedir('/api/clientes')).corpo.clientes.find((x) => x.cnpj === CNPJ_MOCK_OK)
+  assert.equal(c.automatica.cte, true)
+  assert.deepEqual(c.cte, { ultimoRecebido: null, ultimaConsulta: null, proximaConsulta: null, bloqueadoAte: null, ultimoErro: null })
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [CNPJ_MOCK_OK], modelos: ['mdfe'] } })).status, 400)
+  const r = await pedir('/api/captura', { method: 'POST', body: { cnpjs: [CNPJ_MOCK_OK], modelos: ['cte'] } })
+  assert.equal(r.status, 202)
+  for (let i = 0; i < 100 && (await pedir('/api/clientes')).corpo.capturandoAgora; i++) await new Promise((x) => setTimeout(x, 20))
+  const depois = (await pedir('/api/clientes')).corpo.clientes.find((x) => x.cnpj === CNPJ_MOCK_OK)
+  assert.ok(depois.cte.ultimaConsulta, 'o CT-e foi consultado')
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM execucoes WHERE tipo = 'captura'").get().n, 0, 'sem consulta de NF-e')
+})
+
+test('CT-e na API: filtro tipo=outro e contagemTipo com outros', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  cteNoBanco(ctx)
+  const lista = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=cte&tipo=outro`)).corpo
+  assert.equal(lista.notas.length, 2)
+  assert.ok(lista.notas.every((n) => n.tipo === 'outro' && n.modelo === 'cte'))
+  const cont = (await pedir(`/api/notas?cnpj=${CNPJ_MOCK_OK}&modelo=cte&somenteContagem=1&status=com_xml`)).corpo
+  assert.deepEqual(cont.contagemTipo, { entradas: 1, saidas: 1, outros: 2 })
+  assert.equal(cont.contagemModelo.cte, 4)
+  assert.equal((await pedir('/api/notas?tipo=xx')).status, 400)
+})
+
+test('CT-e na API: meses listam mês só de Outros, sem contá-los em entradas e saídas', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  assert.deepEqual((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=cte`)).corpo, [])
+  cteNoBanco(ctx)
+  const anos = (await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=cte`)).corpo
+  assert.deepEqual(anos, [{ ano: 2026, entradas: 1, saidas: 1, meses: [{ mes: 10, entradas: 1, saidas: 1 }, { mes: 7, entradas: 0, saidas: 0 }] }])
+})
+
+// CT-e com XML real no disco: a primeira nota (entrada) ganha chave válida e o cteProc fictício.
+function cteComXml(ctx) {
+  const chaves = cteNoBanco(ctx)
+  const { chaveCte, cteProc, TRANSP } = require('./apoio/cte')
+  const chave = chaveCte(TRANSP, 7)
+  ctx.db.prepare('UPDATE notas SET chave = ?, caminho_xml = ? WHERE chave = ?').run(chave, `${CNPJ_MOCK_OK}_Exemplo/CT-e/${chave}-cte.xml`, chaves[0])
+  gravarXml(ctx, `${CNPJ_MOCK_OK}_Exemplo/CT-e/${chave}-cte.xml`, cteProc({ chave }))
+  return { id: ctx.db.prepare('SELECT id FROM notas WHERE chave = ?').get(chave).id, chave }
+}
+
+test('CT-e: ZIP com DACTE, relatório com nome CT-e, PDF avulso e detalhe', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { id, chave } = cteComXml(ctx)
+  const zip = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [id], incluir: ['xml', 'dacte'] } })
+  assert.equal(zip.status, 200)
+  const arqs = lerZip(zip.corpo)
+  assert.ok(arqs.get(`CT-e/Entradas/${chave}-cte.xml`))
+  assert.equal(arqs.get(`CT-e/Entradas/${chave}-cte.pdf`).subarray(0, 5).toString(), '%PDF-')
+
+  const rel = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [id], incluir: ['pdf'] } })
+  assert.equal(rel.status, 200)
+  assert.match(rel.headers.get('content-disposition'), /filename="Exemplo_2026-10_CT-e\.pdf"/)
+  const xls = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [id], incluir: ['excel'] } })
+  assert.match(xls.headers.get('content-disposition'), /filename="Exemplo_2026-10_CT-e\.xlsx"/)
+  assert.equal((await pedir('/api/exportacoes/Exemplo_2026-10_CT-e.pdf')).status, 404, 'nome passa no padrão (404 = arquivo ausente)')
+
+  const pdf = await pedir(`/api/notas/${id}/pdf`)
+  assert.equal(pdf.status, 200)
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf')
+  assert.equal(pdf.corpo.subarray(0, 5).toString(), '%PDF-')
+
+  const det = (await pedir(`/api/notas/${id}/detalhe`)).corpo
+  assert.equal(det.nota.modelo, 'cte')
+  assert.ok(det.cte.tomador.nome)
+  assert.equal(det.nfe, null)
+  assert.equal(det.erroXml, null)
+})
+
+test('seleção mista: planilha e relatório trazem NF-e e CT-e (sem Outros)', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { id } = cteComXml(ctx)
+  const cli = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id
+  const nfe = inserirNota(ctx.db, { cliente_id: cli, chave: nota44(9001), tipo: 'entrada', status: 'completa', competencia: '2026-10' })
+  const r = await pedir('/api/notas/zip', { method: 'POST', body: { ids: [id, nfe], incluir: ['excel', 'pdf'] } })
+  assert.equal(r.status, 200)
+  const arqs = lerZip(r.corpo)
+  const wb = lerZip(arqs.get('notas.xlsx')).get('xl/workbook.xml').toString()
+  assert.match(wb, /name="CT-e"/)
+  assert.match(wb, /name="NF-e"/)
 })

@@ -22,7 +22,13 @@ CREATE TABLE IF NOT EXISTS clientes (
   nfse_ultimo_erro TEXT,
   tambem_cliente INTEGER NOT NULL DEFAULT 0, -- escritório que também puxa as próprias notas, como cliente
   auto_nfe INTEGER NOT NULL DEFAULT 1, -- entra na busca automática de NF-e (0 = só pelo botão)
-  auto_nfse INTEGER NOT NULL DEFAULT 1 -- entra na busca automática de NFS-e
+  auto_nfse INTEGER NOT NULL DEFAULT 1, -- entra na busca automática de NFS-e
+  cte_ult_nsu TEXT NOT NULL DEFAULT '0', -- NSU da distribuição de CT-e, separado do da NF-e
+  cte_proxima_consulta TEXT,
+  cte_ultima_consulta TEXT,
+  cte_ultimo_erro TEXT,
+  cte_bloqueado_ate TEXT,              -- ISO; respeita cStat 656 do CT-e
+  auto_cte INTEGER NOT NULL DEFAULT 0  -- entra na busca automática de CT-e (cliente novo: 1, gravado no cadastro)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_um_escritorio ON clientes(papel) WHERE papel = 'escritorio';
 
@@ -31,7 +37,7 @@ CREATE TABLE IF NOT EXISTS notas (
   cliente_id INTEGER NOT NULL REFERENCES clientes(id),
   chave TEXT NOT NULL,
   tipo TEXT NOT NULL DEFAULT 'entrada', -- entrada | saida
-  modelo TEXT NOT NULL DEFAULT 'nfe',   -- nfe | nfse
+  modelo TEXT NOT NULL DEFAULT 'nfe',   -- nfe | nfse | cte
   nsu TEXT,
   emitente_cnpj TEXT,
   emitente_nome TEXT,

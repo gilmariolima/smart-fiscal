@@ -11,7 +11,8 @@ const DIAS_ALERTA_CERT = 30
 // Colunas seguras para exibir: nunca inclui cert_senha_enc.
 const COLUNAS_PUBLICAS = `id, cnpj, razao_social, apelido, uf, cert_arquivo, cert_validade, ativo, papel, ult_nsu, max_nsu,
   proxima_consulta, bloqueado_ate, ultima_consulta, ultimo_erro, criado_em,
-  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro, tambem_cliente, auto_nfe, auto_nfse`
+  nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro, tambem_cliente, auto_nfe, auto_nfse,
+  cte_ult_nsu, cte_proxima_consulta, cte_ultima_consulta, cte_ultimo_erro, cte_bloqueado_ate, auto_cte`
 
 // Linhas que têm notas próprias: os clientes e o escritório quando ele também é cliente.
 const DA_CARTEIRA = "(papel = 'cliente' OR tambem_cliente = 1)"
@@ -43,14 +44,15 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     porCnpj: db.prepare(`SELECT ${COLUNAS_PUBLICAS} FROM clientes WHERE cnpj = ?`),
     listar: db.prepare(`SELECT ${COLUNAS_PUBLICAS} FROM clientes ORDER BY razao_social`),
     escritorio: db.prepare(`SELECT ${COLUNAS_PUBLICAS} FROM clientes WHERE papel = 'escritorio'`),
-    inserir: db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, papel, cert_arquivo, cert_senha_enc, cert_validade)
-      VALUES (@cnpj, @razao_social, @apelido, @uf, @papel, @cert_arquivo, @cert_senha_enc, @cert_validade)`),
+    inserir: db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, papel, cert_arquivo, cert_senha_enc, cert_validade, auto_cte)
+      VALUES (@cnpj, @razao_social, @apelido, @uf, @papel, @cert_arquivo, @cert_senha_enc, @cert_validade, 1)`), // cliente novo já busca CT-e
     trocarCert: db.prepare(`UPDATE clientes SET cert_arquivo = @cert_arquivo, cert_senha_enc = @cert_senha_enc,
       cert_validade = @cert_validade, ultimo_erro = NULL WHERE cnpj = @cnpj`),
     ativo: db.prepare('UPDATE clientes SET ativo = ? WHERE cnpj = ?'),
     tambemCliente: db.prepare("UPDATE clientes SET tambem_cliente = ? WHERE cnpj = ? AND papel = 'escritorio'"),
     autoNfe: db.prepare('UPDATE clientes SET auto_nfe = ? WHERE cnpj = ?'),
     autoNfse: db.prepare('UPDATE clientes SET auto_nfse = ? WHERE cnpj = ?'),
+    autoCte: db.prepare('UPDATE clientes SET auto_cte = ? WHERE cnpj = ?'),
     dados: db.prepare('UPDATE clientes SET razao_social = @razao_social, uf = @uf WHERE id = @id'),
     notasDe: db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?'),
     apagarExecucoes: db.prepare('DELETE FROM execucoes WHERE cliente_id = ?'),
@@ -198,11 +200,12 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     return sql.porCnpj.get(c)
   }
 
-  /** Liga ou desliga o cliente na busca automática de um tipo de nota ('nfe' | 'nfse'); o botão Capturar continua valendo. */
+  /** Liga ou desliga o cliente na busca automática de um tipo de nota ('nfe' | 'nfse' | 'cte'); o botão Capturar continua valendo. */
   function definirAutomatica(cnpj, modelo, ligado) {
     const c = somenteDigitos(cnpj)
-    if (modelo !== 'nfe' && modelo !== 'nfse') throw new Error(`Modelo inválido: ${modelo}. Use nfe ou nfse.`)
-    if (!(modelo === 'nfe' ? sql.autoNfe : sql.autoNfse).run(ligado ? 1 : 0, c).changes) throw new Error(`CNPJ ${c} não cadastrado.`)
+    const alvo = { nfe: sql.autoNfe, nfse: sql.autoNfse, cte: sql.autoCte }[modelo]
+    if (!alvo) throw new Error(`Modelo inválido: ${modelo}. Use nfe, nfse ou cte.`)
+    if (!alvo.run(ligado ? 1 : 0, c).changes) throw new Error(`CNPJ ${c} não cadastrado.`)
     logger.info(ligado ? 'Cliente na busca automática' : 'Cliente fora da busca automática', { cnpj: c, modelo })
     return sql.porCnpj.get(c)
   }

@@ -113,6 +113,22 @@ test('banco antigo ganha modelo e colunas da NFS-e', () => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+test('banco antigo ganha as colunas do CT-e', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-db-'))
+  const arq = path.join(dir, 'nfe.db')
+  const antigo = new Database(arq)
+  antigo.exec(DDL_V0)
+  novoCliente(antigo)
+  antigo.close()
+
+  abrirBanco(arq).close()
+  const db = abrirBanco(arq)
+  const c = db.prepare('SELECT cte_ult_nsu, cte_proxima_consulta, cte_ultima_consulta, cte_ultimo_erro, cte_bloqueado_ate, auto_cte FROM clientes').get()
+  assert.deepEqual(c, { cte_ult_nsu: '0', cte_proxima_consulta: null, cte_ultima_consulta: null, cte_ultimo_erro: null, cte_bloqueado_ate: null, auto_cte: 0 }, 'cliente antigo não começa a buscar CT-e sozinho')
+  db.close()
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test('chave da nota é única por cliente', () => {
   const db = abrirBanco(':memory:')
   const id = novoCliente(db)
