@@ -3,7 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { dadosCte, papelDoCliente, dadosEventoCte } = require('../src/services/extracaoCte')
-const { cteProc, procEventoCte, chaveCte, TRANSP, REM, DEST, EXPED, RECEB } = require('./apoio/cte')
+const { cteProc, procEventoCte, chaveCte, cteAquaviario, TRANSP, REM, DEST, EXPED, RECEB } = require('./apoio/cte')
 const { nfeProc, item } = require('./apoio/nfe')
 
 const NFE1 = '42261011111111000191550010000000011000000011'
@@ -144,3 +144,13 @@ test('dadosCte recusa XML que não é CT-e', () => {
   assert.throws(() => dadosCte(nfeProc({ det: item(1) })), /não é um CT-e/)
   assert.throws(() => dadosCte('<a/>'), /não é um CT-e/)
 })
+
+test('dadosCte aquaviário: NF-e do contêiner, CT-e anterior, navio e observações do contribuinte', () => {
+  const { xml, nfe, anterior } = cteAquaviario()
+  const d = dadosCte(xml)
+  assert.deepEqual(d.documentos, [{ tipo: 'nfe', chave: nfe }, { tipo: 'cte', chave: anterior }])
+  assert.deepEqual(d.aquaviario, { navio: 'NAVIO EXEMPLO', viagem: '641', conteineres: ['ABCU1234567'] })
+  assert.match(d.observacoes, /Observacao do transporte/)
+  assert.match(d.observacoes, /Booking: 6AIBK914N/)
+})
+

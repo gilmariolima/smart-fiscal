@@ -1714,6 +1714,106 @@ tr.editavel:hover .botao-icone {
   box-shadow: 0 0 0 1px var(--cor);
 }
 
+/* Notas: um card por tipo com o total grande e "Acessar"; fundo levemente tingido na cor do tipo. */
+.cards-notas {
+  list-style: none;
+  margin: 8px 0 22px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.card-nota {
+  --cor: var(--azul);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 18px;
+  color: var(--texto);
+  text-decoration: none;
+  background: color-mix(in srgb, var(--cor) 5%, white);
+  border: 1px solid color-mix(in srgb, var(--cor) 22%, white);
+  border-radius: var(--raio);
+}
+
+a.card-nota:hover,
+a.card-nota:focus-visible {
+  border-color: var(--cor);
+}
+
+.card-nota.desativado {
+  opacity: 0.6;
+}
+
+.card-nota-topo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.card-nota-topo > i {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  color: #fff;
+  background: var(--cor);
+  border-radius: 8px;
+}
+
+.card-nota-topo strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--titulo);
+}
+
+.card-nota-rotulo {
+  font-size: 13px;
+  color: var(--apagado);
+}
+
+.card-nota-numero {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--titulo);
+}
+
+.card-nota-detalhe {
+  min-height: 1.4em;
+  font-size: 13px;
+  color: var(--apagado);
+}
+
+.card-nota-acessar {
+  margin-top: auto;
+  padding-top: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cor);
+}
+
+.card-nota-acessar i {
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+@media (max-width: 1099px) {
+  .cards-notas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 599px) {
+  .cards-notas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .card-roxo {
   --cor: #6941c6;
 }

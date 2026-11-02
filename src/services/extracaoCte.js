@@ -59,13 +59,41 @@ function icmsDe(inf) {
   }
 }
 
-function documentosDe(inf) {
-  const doc = pegar(inf, 'infCTeNorm.infDoc') || {}
+function docsDe(doc = {}) {
   return [
     ...lista(doc.infNFe).map((d) => ({ tipo: 'nfe', chave: textoEm(d, 'chave') })),
     ...lista(doc.infNF).map((d) => ({ tipo: 'nf', numero: textoEm(d, 'nDoc') })),
     ...lista(doc.infOutros).map((d) => ({ tipo: 'outro', numero: textoEm(d, 'nDoc') || textoEm(d, 'descOutros') })),
   ]
+}
+
+// Documentos originários: infDoc, os de cada contêiner do aquaviário e os CT-e anteriores (docAnt).
+function documentosDe(inf) {
+  const norm = pegar(inf, 'infCTeNorm') || {}
+  const conteineres = lista(pegar(norm, 'infModal.aquav.detCont'))
+  const anteriores = lista(pegar(norm, 'docAnt.emiDocAnt')).flatMap((e) =>
+    lista(e.idDocAnt).flatMap((id) => lista(id.idDocAntEle).map((el) => ({ tipo: 'cte', chave: textoEm(el, 'chCTe') }))),
+  )
+  const todos = [...docsDe(norm.infDoc), ...conteineres.flatMap((c) => docsDe(c.infDoc)), ...anteriores]
+  const vistos = new Set()
+  return todos.filter((d) => {
+    const id = `${d.tipo}:${d.chave || d.numero}`
+    if (vistos.has(id)) return false
+    vistos.add(id)
+    return true
+  })
+}
+
+function aquaviarioDe(inf) {
+  const aq = pegar(inf, 'infCTeNorm.infModal.aquav')
+  if (!aq) return null
+  return { navio: textoEm(aq, 'xNavio'), viagem: textoEm(aq, 'nViag'), conteineres: lista(aq.detCont).map((c) => textoEm(c, 'nCont')).filter(Boolean) }
+}
+
+// xObs seguido das observações do contribuinte (ObsCont).
+function observacoesDe(inf) {
+  const cont = lista(pegar(inf, 'compl.ObsCont')).map((o) => textoEm(o, 'xTexto')).filter(Boolean)
+  return [textoEm(inf, 'compl.xObs'), cont.join(' ')].filter(Boolean).join(' / ') || null
 }
 
 function dadosCte(xml) {
@@ -116,8 +144,9 @@ function dadosCte(xml) {
       })),
     },
     documentos: documentosDe(inf),
-    observacoes: textoEm(inf, 'compl.xObs'),
+    observacoes: observacoesDe(inf),
     rntrc: textoEm(inf, 'infCTeNorm.infModal.rodo.RNTRC'),
+    aquaviario: aquaviarioDe(inf),
     protocolo: prot ? { numero: textoEm(prot, 'nProt'), data: textoEm(prot, 'dhRecbto'), cStat: textoEm(prot, 'cStat') } : null,
     ambiente: textoEm(ide, 'tpAmb') === '2' ? 'homologacao' : 'producao',
   }

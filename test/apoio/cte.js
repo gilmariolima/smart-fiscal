@@ -81,4 +81,17 @@ function procEventoCte({ chave, tpEvento = '110111', nSeq = '1' } = {}) {
   return `<?xml version="1.0" encoding="UTF-8"?><procEventoCTe xmlns="${NS}" versao="4.00"><eventoCTe versao="4.00"><infEvento Id="ID${tpEvento}${chave}${pad(nSeq, 2)}"><cOrgao>42</cOrgao><tpAmb>1</tpAmb><CNPJ>${TRANSP}</CNPJ><chCTe>${chave}</chCTe><dhEvento>2026-10-09T09:00:00-03:00</dhEvento><tpEvento>${tpEvento}</tpEvento><nSeqEvento>${nSeq}</nSeqEvento><detEvento versaoEvento="4.00"><evCancCTe><descEvento>${desc}</descEvento><nProt>342260000000001</nProt><xJust>Justificativa de teste do evento</xJust></evCancCTe></detEvento></infEvento></eventoCTe><retEventoCTe versao="4.00"><infEvento><tpAmb>1</tpAmb><cStat>135</cStat><xMotivo>Evento registrado e vinculado a CT-e</xMotivo><chCTe>${chave}</chCTe><tpEvento>${tpEvento}</tpEvento><nSeqEvento>${nSeq}</nSeqEvento><dhRegEvento>2026-10-09T09:00:05-03:00</dhRegEvento><nProt>942260000000001</nProt></infEvento></retEventoCTe></procEventoCTe>`
 }
 
-module.exports = { NS, TRANSP, REM, DEST, EXPED, RECEB, chaveCte, cteProc, procEventoCte }
+// CT-e aquaviário: a NF-e vem dentro do contêiner e há CT-e anterior (multimodal).
+function cteAquaviario() {
+  const nfe = chaveCte(REM, 7).replace(/^(\d{20})57/, '$155')
+  const anterior = chaveCte(TRANSP, 8)
+  const xml = cteProc({ chave: chaveCte(TRANSP, 9), nfes: [] })
+    .replace('<modal>01</modal>', '<modal>03</modal>')
+    .replace(/<infModal versaoModal="4.00">[\s\S]*?<\/infModal>/,
+      `<docAnt><emiDocAnt><CNPJ>${TRANSP}</CNPJ><xNome>TRANSPORTADORA EXEMPLO</xNome><idDocAnt><idDocAntEle><chCTe>${anterior}</chCTe></idDocAntEle></idDocAnt></emiDocAnt></docAnt>` +
+      `<infModal versaoModal="4.00"><aquav><vPrest>100.00</vPrest><xNavio>NAVIO EXEMPLO</xNavio><nViag>641</nViag><direc>N</direc><detCont><nCont>ABCU1234567</nCont><infDoc><infNFe><chave>${nfe}</chave></infNFe></infDoc></detCont></aquav></infModal>`)
+    .replace('</compl>', '<ObsCont xCampo="Booking"><xTexto>Booking: 6AIBK914N</xTexto></ObsCont></compl>')
+  return { xml, nfe, anterior }
+}
+
+module.exports = { NS, TRANSP, REM, DEST, EXPED, RECEB, chaveCte, cteProc, cteAquaviario, procEventoCte }

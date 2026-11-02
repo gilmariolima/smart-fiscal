@@ -1,13 +1,13 @@
 import { Fragment } from 'react'
 import { Link, useNavigate } from 'react-router'
 
-// Seta "voltar" antes da trilha: página anterior do histórico; aberta direto (sem histórico), sobe um nível.
+// Seta "voltar" antes da trilha: sobe uma pasta (o item anterior da trilha), nunca volta pelos filtros da tela.
 function Voltar({ partes }) {
   const navegar = useNavigate()
   const acima = [...partes.slice(0, -1)].reverse().find((p) => p.para)
   function voltar() {
-    if ((window.history.state?.idx ?? 0) > 0) navegar(-1)
-    else if (acima) navegar(acima.para)
+    if (acima) navegar(acima.para)
+    else navegar(-1)
   }
   return (
     <button type="button" className="trilha-voltar" onClick={voltar} aria-label="Voltar" title="Voltar">

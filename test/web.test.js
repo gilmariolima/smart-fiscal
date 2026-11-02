@@ -337,8 +337,8 @@ test('meses do cliente agrupados por ano, do mais recente ao mais antigo; só no
   const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses`)
   assert.equal(r.status, 200)
   assert.deepEqual(r.corpo, [
-    { ano: 2026, entradas: 3, saidas: 1, meses: [{ mes: 10, entradas: 2, saidas: 1 }, { mes: 8, entradas: 1, saidas: 0 }] },
-    { ano: 2025, entradas: 1, saidas: 0, meses: [{ mes: 12, entradas: 1, saidas: 0 }] },
+    { ano: 2026, entradas: 3, saidas: 1, outros: 0, meses: [{ mes: 10, entradas: 2, saidas: 1, outros: 0 }, { mes: 8, entradas: 1, saidas: 0, outros: 0 }] },
+    { ano: 2025, entradas: 1, saidas: 0, outros: 0, meses: [{ mes: 12, entradas: 1, saidas: 0, outros: 0 }] },
   ])
 })
 
@@ -1209,12 +1209,14 @@ test('CT-e na API: filtro tipo=outro e contagemTipo com outros', async (t) => {
   assert.equal((await pedir('/api/notas?tipo=xx')).status, 400)
 })
 
-test('CT-e na API: meses listam mês só de Outros, sem contá-los em entradas e saídas', async (t) => {
+test('CT-e na API: anos e meses contam entradas, saídas e outros', async (t) => {
   const { ctx, pedir } = await montar(t)
   assert.deepEqual((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=cte`)).corpo, [])
   cteNoBanco(ctx)
   const anos = (await pedir(`/api/clientes/${CNPJ_MOCK_OK}/meses?modelo=cte`)).corpo
-  assert.deepEqual(anos, [{ ano: 2026, entradas: 1, saidas: 1, meses: [{ mes: 10, entradas: 1, saidas: 1 }, { mes: 7, entradas: 0, saidas: 0 }] }])
+  assert.deepEqual(anos, [
+    { ano: 2026, entradas: 1, saidas: 1, outros: 2, meses: [{ mes: 10, entradas: 1, saidas: 1, outros: 1 }, { mes: 7, entradas: 0, saidas: 0, outros: 1 }] },
+  ])
 })
 
 // CT-e com XML real no disco: a primeira nota (entrada) ganha chave válida e o cteProc fictício.

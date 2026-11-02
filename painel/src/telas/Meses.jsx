@@ -13,6 +13,8 @@ export default function Meses() {
   const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses?modelo=${modelo?.valor || 'nfe'}`, [cnpj, slug])
   const grupo = (dados || []).find((a) => String(a.ano) === ano)
   const meses = grupo?.meses || []
+  // Outros (CT-e em que o cliente não é tomador nem emitente) só existem no CT-e.
+  const comOutros = modelo?.valor === 'cte'
   if (!modelo) return <Navigate to={`/notas/${cnpj}`} replace />
 
   let conteudo
@@ -32,6 +34,11 @@ export default function Meses() {
                 <th scope="col" className="num">
                   Saídas
                 </th>
+                {comOutros && (
+                  <th scope="col" className="num">
+                    Outros
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -42,6 +49,7 @@ export default function Meses() {
                   </td>
                   <td className="num">{inteiro(m.entradas)}</td>
                   <td className="num">{inteiro(m.saidas)}</td>
+                  {comOutros && <td className="num">{inteiro(m.outros)}</td>}
                 </tr>
               ))}
             </tbody>

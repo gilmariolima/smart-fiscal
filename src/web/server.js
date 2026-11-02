@@ -151,7 +151,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     competencias: db.prepare('SELECT DISTINCT competencia FROM notas WHERE competencia IS NOT NULL ORDER BY competencia DESC'),
     // Anos e meses das pastas: só notas com XML, como a lista do mês (as sem XML ficam em "XMLs não baixados").
     mesesDoCliente: db.prepare(`SELECT competencia,
-        SUM(tipo = 'entrada') entradas, SUM(tipo = 'saida') saidas
+        SUM(tipo = 'entrada') entradas, SUM(tipo = 'saida') saidas, SUM(tipo = 'outro') outros
       FROM notas WHERE cliente_id = @cliente AND competencia IS NOT NULL AND (@modelo IS NULL OR modelo = @modelo) AND status = 'completa'
       GROUP BY competencia ORDER BY competencia DESC`),
     saidasDoMes: db.prepare("SELECT COUNT(*) n FROM notas WHERE tipo = 'saida' AND competencia = ?"),
@@ -278,10 +278,11 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     for (const m of sql.mesesDoCliente.all({ cliente: cliente.id, modelo })) {
       const ano = Number(m.competencia.slice(0, 4))
       let grupo = anos[anos.length - 1]
-      if (!grupo || grupo.ano !== ano) anos.push((grupo = { ano, entradas: 0, saidas: 0, meses: [] }))
+      if (!grupo || grupo.ano !== ano) anos.push((grupo = { ano, entradas: 0, saidas: 0, outros: 0, meses: [] }))
       grupo.entradas += m.entradas
       grupo.saidas += m.saidas
-      grupo.meses.push({ mes: Number(m.competencia.slice(5, 7)), entradas: m.entradas, saidas: m.saidas })
+      grupo.outros += m.outros
+      grupo.meses.push({ mes: Number(m.competencia.slice(5, 7)), entradas: m.entradas, saidas: m.saidas, outros: m.outros })
     }
     res.json(anos)
   })

@@ -173,8 +173,8 @@ function gerarDacte(xml, { situacao = 'autorizado' } = {}) {
   function participantes(y) {
     y = partes2(y, ['REMETENTE', d.remetente], ['DESTINATÁRIO', d.destinatario])
     if (d.expedidor || d.recebedor) y = partes2(y, ['EXPEDIDOR', d.expedidor], ['RECEBEDOR', d.recebedor])
-    parte(M, y, W, 'TOMADOR DO SERVIÇO', d.tomador, 42)
-    return y + 42
+    parte(M, y, W, 'TOMADOR DO SERVIÇO', d.tomador, 50)
+    return y + 50
   }
 
   function carga(y) {
@@ -210,7 +210,7 @@ function gerarDacte(xml, { situacao = 'autorizado' } = {}) {
     for (let i = inicio; i < fim; i++) {
       const dc = d.documentos[i]
       const k = i - inicio
-      const texto = dc.tipo === 'nfe' ? `NF-e ${dc.chave || ''}` : dc.tipo === 'nf' ? `NF ${dc.numero || ''}` : `Outro ${dc.numero || ''}`
+      const texto = dc.tipo === 'nfe' ? `NF-e ${dc.chave || ''}` : dc.tipo === 'cte' ? `CT-e ${dc.chave || ''}` : dc.tipo === 'nf' ? `NF ${dc.numero || ''}` : `Outro ${dc.numero || ''}`
       escrever(texto, M + Math.floor(k / porColuna) * w, topo + 2 + (k % porColuna) * LIN, w, { tamanho: 6 })
     }
     return fim
@@ -224,8 +224,13 @@ function gerarDacte(xml, { situacao = 'autorizado' } = {}) {
     escrever('OBSERVAÇÕES', M, y + 1.5, W - wRod, { tamanho: 5 })
     doc.font(NORMAL).fontSize(6).fillColor('#000').text(d.observacoes || '', M + 2, y + 9, { width: W - wRod - 4, height: h - 11, ellipsis: true })
     caixa(M + W - wRod, y, wRod, h)
-    escrever('DADOS ESPECÍFICOS DO MODAL RODOVIÁRIO', M + W - wRod, y + 1.5, wRod, { tamanho: 5 })
-    escrever(d.rntrc ? `RNTRC: ${d.rntrc}` : '', M + W - wRod, y + 11, wRod, { tamanho: 7 })
+    const nomeModal = (MODAIS[d.modal] || 'Rodoviário').toUpperCase()
+    escrever(`DADOS ESPECÍFICOS DO MODAL ${nomeModal}`, M + W - wRod, y + 1.5, wRod, { tamanho: 5 })
+    const aq = d.aquaviario
+    const dadosModal = aq
+      ? [aq.navio && `Navio: ${aq.navio}`, aq.viagem && `Viagem: ${aq.viagem}`, aq.conteineres.length && `Contêiner: ${aq.conteineres.join(', ')}`]
+      : [d.rntrc && `RNTRC: ${d.rntrc}`]
+    dadosModal.filter(Boolean).forEach((t, i) => escrever(t, M + W - wRod, y + 11 + i * 9, wRod, { tamanho: 7 }))
   }
 
   function marcaDagua() {

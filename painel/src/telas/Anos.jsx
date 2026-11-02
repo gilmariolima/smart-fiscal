@@ -12,6 +12,8 @@ export default function Anos() {
   const nome = useNomeDoCliente(cnpj)
   const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses?modelo=${modelo?.valor || 'nfe'}`, [cnpj, slug])
   const anos = dados || []
+  // Outros (CT-e em que o cliente não é tomador nem emitente) só existem no CT-e.
+  const comOutros = modelo?.valor === 'cte'
   if (!modelo) return <Navigate to={`/notas/${cnpj}`} replace />
 
   let conteudo
@@ -31,6 +33,11 @@ export default function Anos() {
                 <th scope="col" className="num">
                   Saídas
                 </th>
+                {comOutros && (
+                  <th scope="col" className="num">
+                    Outros
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -41,6 +48,7 @@ export default function Anos() {
                   </td>
                   <td className="num">{inteiro(a.entradas)}</td>
                   <td className="num">{inteiro(a.saidas)}</td>
+                  {comOutros && <td className="num">{inteiro(a.outros)}</td>}
                 </tr>
               ))}
             </tbody>
