@@ -327,7 +327,7 @@ class Relatorio(Base):
                           "         X55 ITEM SEM NCM        UN       2,000       10,0000         20,00\n")
         res = self.gerar(arquivo("rel_sem_ncm.txt", rel))
         h = self.h010(res)
-        self.assertEqual(h["X55"][3:6], ["2,000", "10,000000", "20,00"])
+        self.assertEqual(h["SEMCOD0002"][3:6], ["2,000", "10,000000", "20,00"])
         self.assertEqual(res.total, Decimal("1520.00"))
 
     def test_linha_com_tres_numeros_que_nao_casa_vira_pendencia(self):
@@ -341,58 +341,38 @@ class Relatorio(Base):
         rel = self.CAB + ("94036000 U3424 CADEIRA PRETA     UN      10,000      150,0000      1.500,00\n"
                           "         TOTAL DO GRUPO          UN      10,000      150,0000      1.500,00\n")
         res = self.gerar(arquivo("rel_total.txt", rel))
-        self.assertEqual(list(self.h010(res)), ["U3424"])
+        self.assertEqual([c[2] for c in self.reg(res, "0200")], ["U3424 CADEIRA PRETA"])
         # mas um produto com "TOTAL" no nome continua sendo item
         rel = self.CAB + "         TOTAL FLEX 1L           UN       1,000       30,0000         30,00\n"
         self.assertEqual(self.reg(self.gerar(arquivo("rel_total2.txt", rel)), "0200")[0][2], "TOTAL FLEX 1L")
 
-    def test_codigo_com_espaco_vira_um_aviso_so(self):
-        # Num relatório em que quase todo código tem espaço ("U0464 013/20MM"), um aviso por item
-        # escondia os que precisam de conferência: agora vai um aviso do arquivo
-        rel = self.CAB + ("91139000 U0464 013/20MM ADONE METAL  UN   1,000   10,0000   10,00\n"
-                          "91139000 X100 50 CADEIRAS           UN   1,000   10,0000   10,00\n")
-        res = self.gerar(arquivo("rel_cod.txt", rel))
-        self.assertEqual(sorted(self.h010(res)), ["U0464 013/20MM", "X100 50"])
-        self.assertFalse(self.pend(res, "separado da descrição", "item"))
-        avisos = self.pend(res, "2 código(s) com espaço", "arquivo")
-        self.assertEqual(len(avisos), 1)
-        self.assertIn("U0464 013/20MM", avisos[0][2])
+    def test_linha_toda_e_descricao(self):
+        # O relatório não tem coluna de código: nada da linha vira código por suposição
+        rel = self.CAB + ("91139000 PU11295JS/04 PULS. EM BORR. HIGH SCORE  UN   3,000   27,9700   83,91\n"
+                          "91139000 U0464 013/20MM ADONE METAL          UN   1,000    2,8600    2,86\n")
+        res = self.gerar(arquivo("rel_desc.txt", rel))
+        self.assertEqual([c[1:3] for c in self.reg(res, "0200")],
+                         [["SEMCOD0001", "PU11295JS/04 PULS. EM BORR. HIGH SCORE"], ["SEMCOD0002", "U0464 013/20MM ADONE METAL"]])
+        self.assertFalse(self.pend(res, "sem código", "item"))  # um aviso só, no arquivo
+        self.assertEqual(len(self.pend(res, "não tem coluna de código", "arquivo")), 1)
 
-    def test_separacao_do_codigo_em_linhas_reais(self):
-        casos = {
-            # "P/" de "para" é descrição, mesmo com barra
-            "PU11599JS/02 PULS.P/REL. PHALANX": ("PU11599JS/02", "PULS.P/REL. PHALANX", False),
-            "CO13595JSB/13 2H COROA P/ REL. POLICE": ("CO13595JSB/13 2H", "COROA P/ REL. POLICE", False),
-            # código grudado numa palavra no próprio relatório: separa, mas avisa no item
-            "CX2038GSG/01CAIXA P/ REL. GARRIDO &": ("CX2038GSG/01CAIXA", "P/ REL. GARRIDO &", True),
-            "WM1 0301BRINCOS MISS SIXTY": ("WM1 0301BRINCOS", "MISS SIXTY", True),
-            # sem número: o código vem antes do " - " (suposição, avisada no item)
-            "BIP LITE BLACK - SMARTWATCH AMAZFIT": ("BIP LITE BLACK", "SMARTWATCH AMAZFIT", True),
-            "GG 699 - EXPOSITOR INDIVIDUAL": ("GG 699", "EXPOSITOR INDIVIDUAL", True),
-            # termo curto com hífen
-            "MW-CX CAIXA EM ACO P/ RELOGIO": ("MW-CX", "CAIXA EM ACO P/ RELOGIO", False),
-            # os casos que já funcionavam continuam iguais
-            "5095 - EXPOSITOR 6 BALDAS": ("5095", "EXPOSITOR 6 BALDAS", False),
-            "5102- ISOTONIC DRINK": ("5102", "ISOTONIC DRINK", False),
-            "BG 99100-003-A EXP MEDIO EM PLASTICO P/": ("BG 99100-003-A", "EXP MEDIO EM PLASTICO P/", False),
-            "GC 1999885 EXPOSITOR EM MADEIRA": ("GC 1999885", "EXPOSITOR EM MADEIRA", False),
-            "PA12173JSBNR/65 PARAFUSO": ("PA12173JSBNR/65", "PARAFUSO", False),
-            # sem pista segura: continua sem código (vira SEMCOD com pendência)
-            "KIT 2 PEÇAS": ("", "KIT 2 PEÇAS", False),
-            "IPM 80 ESTOJO EM MADEIRA": ("", "IPM 80 ESTOJO EM MADEIRA", False),
-            "SQUEEZE BRANCA 790ML": ("", "SQUEEZE BRANCA 790ML", False),
-            "UMA DESCRICAO MUITO COMPRIDA DE PRODUTO - COM TRACO": ("", "UMA DESCRICAO MUITO COMPRIDA DE PRODUTO - COM TRACO", False),
-        }
-        for linha, esperado in casos.items():
-            with self.subTest(linha):
-                self.assertEqual(gs.separar_codigo(linha), esperado)
+    def test_codigo_vem_da_planilha_pela_descricao(self):
+        rel = self.CAB + ("91139000 PU11295JS/04 PULS. EM BORR. HIGH SCORE  UN   3,000   27,9700   83,91\n"
+                          "91139000 U0464 013/20MM ADONE METAL          UN   1,000    2,8600    2,86\n"
+                          "91139000 SQUEEZE BRANCA 790ML                UN   2,000    7,0000   14,00\n")
+        cad = arquivo("cad_desc.csv", "Codigo;Descricao\n1001642;PU11295JS/04 PULS. EM BORR. HIGH SCORE\n"
+                                      "U0464;013/20MM ADONE METAL\n")
+        res = self.gerar(arquivo("rel_desc2.txt", rel), cad)
+        self.assertEqual({c[1]: c[2] for c in self.reg(res, "0200")},
+                         {"1001642": "PU11295JS/04 PULS. EM BORR. HIGH SCORE",  # pela descrição
+                          "U0464": "013/20MM ADONE METAL",  # código + descrição do cadastro
+                          "SEMCOD0001": "SQUEEZE BRANCA 790ML"})  # não está na planilha
 
-    def test_codigo_antes_do_traco_vai_para_as_pendencias(self):
-        rel = self.CAB + "85176277 BIP LITE BLACK - SMARTWATCH  UN   1,000   10,0000   10,00\n"
-        res = self.gerar(arquivo("rel_traco.txt", rel))
-        self.assertEqual(list(self.h010(res)), ["BIP LITE BLACK"])
-        self.assertEqual(self.reg(res, "0200")[0][2], "SMARTWATCH")
-        self.assertTrue(any(c == "BIP LITE BLACK" and "confira" in m for t, c, m in res.pendencias if t == "item"))
+    def test_comeco_da_linha_so_e_codigo_se_estiver_no_cadastro(self):
+        rel = self.CAB + "00 C10 CANETA AZUL  UN  100,000  1,2000  120,00\n         X9 LAPIS  UN  1,000  1,0000  1,00\n"
+        cad = arquivo("cad_c10.csv", "Codigo;Descricao;NCM\nC10;CANETA ESFEROGRAFICA AZUL;96081000\n")
+        res = self.gerar(arquivo("rel_c10.txt", rel), cad)
+        self.assertEqual([c[1:3] for c in self.reg(res, "0200")], [["C10", "CANETA AZUL"], ["SEMCOD0001", "X9 LAPIS"]])
 
 
 class Sped(Base):
@@ -723,23 +703,18 @@ class Rodada2(Base):
     def test_descricao_cortada_no_relatorio(self):
         linhas = "".join(f"9113{n:04d} X{n:03d} PULSEIRA COURO TRABALHADO GENUI  UN   1,000   1,0000   1,00\n" for n in range(4))
         f = gs.ler_arquivo(arquivo("cortado.txt", self.CAB + linhas))
-        self.assertTrue(any("4 item(ns) com código e descrição no limite de 36 caracteres" in a for a in f.avisos))
+        self.assertTrue(any("4 item(ns) com a descrição no limite de 36 caracteres" in a for a in f.avisos))
         # junto com um cadastro, vale a descrição completa
         cad = arquivo("cad_cortado.csv", "Codigo;Descricao\nX000;PULSEIRA COURO TRABALHADO GENUINO MARROM\n")
         res = self.gerar(arquivo("cortado2.txt", self.CAB + linhas), cad)
         self.assertEqual(self.reg(res, "0200")[0][2], "PULSEIRA COURO TRABALHADO GENUINO MARROM")
 
-    def test_codigo_do_traco_com_varias_descricoes(self):
-        rel = self.CAB + ("85176277 RUN PRO BLUE - SMARTWATCH AURORA  UN   1,000   10,0000   10,00\n"
-                          "85176277 RUN PRO BLUE - SMARTWATCH CRONOS  UN   1,000   10,0000   10,00\n")
-        res = self.gerar(arquivo("traco2.txt", rel))
-        self.assertTrue(self.pend(res, "\"RUN PRO BLUE\" aparece com 2 descrições diferentes", "arquivo"))
-
     def test_pendencia_nao_se_repete_quando_linhas_somam(self):
         rel = self.CAB + ("85176277 ZEN LITE - SMARTWATCH TEMPUS  UN   1,000   10,0000   10,00\n"
                           "85176277 ZEN LITE - SMARTWATCH TEMPUS  UN   2,000   10,0000   20,00\n")
         res = self.gerar(arquivo("soma.txt", rel))
-        msgs = [m for t, c, m in res.pendencias if c == "ZEN LITE"]
+        self.assertEqual(self.h010(res)["SEMCOD0001"][3], "3,000")  # a mesma linha é o mesmo produto
+        msgs = [m for t, c, m in res.pendencias if c == "SEMCOD0001"]
         self.assertEqual(len(msgs), len(set(msgs)))
 
     def test_arquivo_sem_nenhuma_descricao_cada_item_fica_com_pendencia(self):

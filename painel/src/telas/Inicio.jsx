@@ -18,13 +18,13 @@ function pendentesDeCiencia(resumo) {
 }
 
 const ATALHOS = [
-  { para: '/notas', icone: 'notas', cor: 'azul', titulo: 'Notas', texto: 'Por tipo de nota, cliente, ano e mês' },
-  { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e situação da captura' },
-  { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar empresa com o certificado A1', soNoPc: true },
-  { para: '/notas/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Notas aguardando a ciência do cliente' },
-  { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Histórico de consultas e downloads' },
-  { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado para as notas de saída', soNoPc: true },
-  { para: '/capturar', icone: 'capturar', cor: 'ciano', titulo: 'Capturar', texto: 'Buscar NF-e e NFS-e dos clientes' },
+  { para: '/notas', icone: 'notas', cor: 'azul', titulo: 'Notas', texto: 'NF-e, NFS-e e CT-e' },
+  { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e captura' },
+  { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar com o A1', soNoPc: true },
+  { para: '/notas/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Aguardando a ciência' },
+  { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Consultas e downloads' },
+  { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado das saídas', soNoPc: true },
+  { para: '/capturar', icone: 'capturar', cor: 'ciano', titulo: 'Capturar', texto: 'Buscar notas agora' },
 ]
 
 // Último quadro dos atalhos: barra com os certificados A1 no prazo, a vencer em 30 dias e vencidos.
@@ -58,22 +58,27 @@ function QuadroCertificados({ certificados: c }) {
   )
 }
 
-function Atalhos({ cadastroLiberado, certificados }) {
+function Atalhos({ resumo }) {
+  const atalhos = ATALHOS.filter((a) => resumo.cadastroLiberado || !a.soNoPc)
+  // O quadro dos certificados ocupa a sobra da última linha, para a grade não ficar com buraco
+  const total = atalhos.length + 1
+  const largo = [total % 3 === 2 && 'quadro-largo-3', total % 2 === 1 && 'quadro-largo-2'].filter(Boolean).join(' ')
   return (
     <ul className="atalhos">
-      {ATALHOS.filter((a) => cadastroLiberado || !a.soNoPc).map((a) => (
+      {atalhos.map((a) => (
         <li key={a.para}>
           <Link to={a.para} className={`atalho atalho-${a.cor}`}>
             <Icone nome={a.icone} />
-            <span>
-              <strong>{a.titulo}</strong>
-              <small>{a.texto}</small>
+            <span className="atalho-seta" aria-hidden="true">
+              <Icone nome="seta" />
             </span>
+            <strong>{a.titulo}</strong>
+            <small>{a.texto}</small>
           </Link>
         </li>
       ))}
-      <li>
-        <QuadroCertificados certificados={certificados} />
+      <li className={largo || undefined}>
+        <QuadroCertificados certificados={resumo.certificados} />
       </li>
     </ul>
   )
@@ -116,7 +121,7 @@ export default function Inicio() {
   return (
     <Pagina titulo="Início" subtitulo={subtitulo(resumo)} acoes={resumo.capturaEmAndamento && <Etiqueta cor="ambar">Capturando…</Etiqueta>}>
       <div className="inicio-corpo">
-        <Atalhos cadastroLiberado={resumo.cadastroLiberado} certificados={resumo.certificados} />
+        <Atalhos resumo={resumo} />
       </div>
 
       <AvisoCertificados lista={resumo.certificadosVencendo} />

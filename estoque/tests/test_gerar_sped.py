@@ -274,7 +274,7 @@ class Painel(unittest.TestCase):
         self.assertEqual((r["resumo"]["itens"], r["resumo"]["total"]), (2, "6101,00"))
         status, corpo = self.pedir("GET", f"/baixar/{r['dominio']}")
         self.assertEqual(status, 200)
-        self.assertIn(b"TV5500;TELEVISOR 55 POL;PC;85287200;;;2;2300,5;4601;0", corpo)
+        self.assertIn(b"SEMCOD0002;TV5500 TELEVISOR 55 POL;PC;85287200;;;2;2300,5;4601;0", corpo)
         status, _ = self.pedir("GET", "/api/gerados")
         self.assertEqual(status, 200)
 

@@ -13,6 +13,7 @@ Leiaute: Guia Prático EFD ICMS/IPI 3.2.2 (leiaute 019 em 2025, 020 em 2026).
 """
 
 import argparse
+import bisect
 import calendar
 import collections
 import csv
@@ -336,48 +337,16 @@ RE_LINHA_INV = re.compile(
 )
 # Fim de linha com três números do relatório: tem cara de item mesmo quando o resto não casa
 RE_TRES_NUMEROS = re.compile(r"(-?[\d.]+,\d+\s+){2}-?[\d.]+,\d+\s*$")
-# "P/" de "para" na descrição ("P/ RELOGIO", "PULS.P/REL."): tem barra, mas não é código
-RE_PARA = re.compile(r"(?<![A-Z0-9])P/", re.I)
 # Texto que é só um rótulo de total ("TOTAL:", "TOTAL DO GRUPO", "A TRANSPORTAR"), não um produto
 RE_TOTAL_REL = re.compile(r"((SUB-?\s*)?TOTA(L|IS)(\s+(DO|DA|DE|DOS|DAS|GERAL)\b.*)?|A TRANSPORTAR|TRANSPORTE)\s*:?")
 
 
-def separar_codigo(txt):
-    """No relatório o código e a descrição vêm juntos ("U3424 696 041/22M LEXUS ...").
-    O código são os primeiros termos que têm número ou barra; um prefixo curto só de
-    letras entra quando o termo seguinte parece código ("CO 11420JS/02", "BG 99100-003-A",
-    "GC 1999885"), mas não num "KIT 2 PEÇAS". O "-" que separa código e descrição
-    ("5095 - EXPOSITOR", "5102- ISOTONIC") não fica em nenhum dos dois.
-
-    O "P/" de "para" é descrição, mesmo tendo barra ("PULS.P/REL.", "CAIXA P/"). Sem número no
-    começo, o código é o que vem antes de " - " ("BIP LITE BLACK - SMARTWATCH") ou um termo com
-    hífen curto ("MW-CX CAIXA EM ACO").
-
-    Devolve (código, descrição, duvidoso): duvidoso quando o código pode ter levado parte da
-    descrição (veio do " - " ou tem uma palavra comprida, como "01CAIXA"), e aí vai para as pendências."""
-    termos = txt.split()
-    tem_cod = lambda t: bool(re.search(r"[\d/]", t)) and not RE_PARA.search(t)
-    n = 0
-    if len(termos) > 1 and re.fullmatch(r"[A-Z]{1,3}", termos[0]) and tem_cod(termos[1]) and len(termos[1]) >= 4:
-        n = 2
-    elif termos and re.fullmatch(r"[A-Z]{1,4}-[A-Z0-9]{1,4}", termos[0]):
-        n = 1
-    while n < len(termos) - 1 and tem_cod(termos[n]):
-        n += 1
-    if n == 0 and (m := re.match(r"(\S+(?: \S+){0,3}) [-–] (\S.*)", " ".join(termos))) and len(m[1]) <= 25:
-        return m[1], m[2], True
-    codigo = " ".join(termos[:n]).rstrip("-–").rstrip()
-    descricao = " ".join(termos[n:]).lstrip("-–").lstrip()
-    partes = codigo.split()
-    duvidoso = any(re.search(r"\d[A-Z]{5,}$", t) for t in partes) or any(re.search(r"[A-Z]{5,}", t) for t in partes[1:])
-    return codigo, descricao, duvidoso
-
-
 def ler_relatorio_inventario(caminho, conteudo):
+    """O relatório não tem coluna de código: o texto antes da unidade ("PU11295JS/04 PULS. EM
+    BORR.") é todo descrição. O código vem de um cadastro juntado (achado pela descrição) ou
+    é gerado (SEMCOD0001...), com um aviso só para o arquivo."""
     itens, empresa, data_inv, total, nao_lidas = [], {}, None, None, []
-    com_espaco = []  # códigos de mais de um termo separados com segurança: um aviso só, no arquivo
-    tamanhos = []  # tamanho do campo código + descrição de cada item (o sistema corta num limite)
-    duvidosos = collections.defaultdict(set)  # código separado por suposição -> descrições em que aparece
+    tamanhos = []  # tamanho da descrição de cada item (o sistema corta num limite)
     for linha in conteudo.splitlines():
         m = RE_LINHA_INV.match(linha)
         if m and RE_TOTAL_REL.fullmatch(sem_acento(m["texto"]).strip()):
@@ -385,19 +354,12 @@ def ler_relatorio_inventario(caminho, conteudo):
         elif not m and (re.match(r"^\d{2,8}\s+\S", linha) or RE_TRES_NUMEROS.search(linha)):
             nao_lidas.append(texto(linha))
         if m:
-            codigo, descr, duvidoso = separar_codigo(m["texto"])
-            it = Item(
-                codigo=codigo, descricao=descr or m["texto"], unidade=m["un"], ncm=m["ncm"] or "",
+            itens.append(Item(
+                codigo="", descricao=texto(m["texto"]), unidade=m["un"], ncm=m["ncm"] or "",
                 qtd=num(m["qtd"], br=True), vl_unit=num(m["unit"], br=True), vl_item=num(m["total"], br=True),
                 origem=texto(m["texto"]),
-            )
+            ))
             tamanhos.append((len(m["texto"].strip()), texto(m["texto"])))
-            if duvidoso:  # o código pode ter levado parte da descrição: o contador confere este
-                it.pendencias.append(f"código \"{codigo}\" separado da descrição pelo app (linha \"{texto(m['texto'])}\"): confira")
-                duvidosos[codigo].add(texto(descr))
-            elif " " in codigo:
-                com_espaco.append(codigo)
-            itens.append(it)
             continue
         # Cabeçalho: o relatório sai em maiúsculas ou não, conforme o sistema do cliente
         if "nome" not in empresa and (m := re.match(r"\s*Firma\b[^:]*:\s*(.+)", linha, re.I)):
@@ -412,22 +374,19 @@ def ler_relatorio_inventario(caminho, conteudo):
         elif re.match(r"\s*Total\s*:", linha, re.I):
             total = num(linha.split(":", 1)[1], br=True)
     avisos = []
-    if com_espaco:
-        avisos.append(f"{len(com_espaco)} código(s) com espaço separados da descrição pelos termos com número ou barra "
-                      f"(ex.: {', '.join(com_espaco[:3])}): confira a coluna Código na lista de itens")
-    # O sistema corta código + descrição num tamanho fixo: muitas linhas exatamente no maior
+    if itens:
+        avisos.append(f"o relatório não tem coluna de código: os {len(itens)} itens entram com a linha toda como descrição "
+                      "e código gerado (SEMCOD0001...). Para usar o código do cliente, junte um cadastro ou planilha "
+                      "com coluna de código e a mesma descrição")
+    # O sistema corta a descrição num tamanho fixo: muitas linhas exatamente no maior
     # tamanho são descrições cortadas ("GAIVOTA COURO TRABALHA")
     if tamanhos:
         limite = max(t for t, _ in tamanhos)
         cortadas = [txt for t, txt in tamanhos if t == limite]
         # 3 ou mais e pelo menos 5% dos itens: com poucos, o mesmo tamanho pode ser coincidência
         if limite <= 60 and len(cortadas) >= 3 and len(cortadas) >= len(tamanhos) * 0.05:
-            avisos.append(f"{len(cortadas)} item(ns) com código e descrição no limite de {limite} caracteres do relatório: "
+            avisos.append(f"{len(cortadas)} item(ns) com a descrição no limite de {limite} caracteres do relatório: "
                           f"a descrição pode ter sido cortada (ex.: \"{cortadas[0]}\"). Junte um cadastro com a descrição completa")
-    for codigo, descricoes in duvidosos.items():
-        if len(descricoes) > 1:
-            avisos.append(f"\"{codigo}\" aparece com {len(descricoes)} descrições diferentes: talvez não seja código, e sim parte "
-                          f"do nome do produto; os itens foram separados como {codigo}-2, {codigo}-3...")
     return Fonte(caminho, "Relatório de inventário", itens, empresa, data_inv, total, nao_lidas=nao_lidas, avisos=avisos)
 
 
@@ -1041,6 +1000,33 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
             for c in {it.codigo, *it.aliases}:
                 if c:
                     indice.setdefault(c.upper(), it)
+    # Item sem código (relatório de inventário): acha o produto do cadastro pela descrição, sozinha
+    # ou com o código na frente ("PU11295JS/04 PULS. EM BORR."). Chave com mais de um produto não vale.
+    por_texto = {}
+    for f in extras:
+        for it in [*f.itens, *f.cadastro]:
+            if it.codigo and it.descricao:
+                for t in {texto(it.descricao).upper(), texto(f"{it.codigo} {it.descricao}").upper()}:
+                    por_texto.setdefault(t, set()).add(it.codigo.upper())
+                    por_texto.setdefault(("item", t), it)
+    textos = sorted(t for t in por_texto if isinstance(t, str))
+
+    def achar_pela_descricao(descr):
+        t = texto(descr).upper()
+        if not t:
+            return None
+        if t in por_texto:
+            return por_texto[("item", t)] if len(por_texto[t]) == 1 else None
+        # descrição cortada no relatório: um texto só do cadastro começa com ela
+        i = bisect.bisect_left(textos, t)
+        achados = set()
+        while i < len(textos) and textos[i].startswith(t) and len(achados) < 2:
+            achados |= por_texto[textos[i]]
+            i += 1
+        return por_texto[("item", textos[bisect.bisect_left(textos, t)])] if len(achados) == 1 else None
+
+    gerados = {}  # (descrição, unidade) -> código gerado: a mesma linha repetida é o mesmo produto
+    sem_coluna = principal.tipo == "Relatório de inventário"  # o aviso do arquivo já explica o SEMCOD
     arredondadas, total_errado = [], []
 
     finais, fora, usados = [], [], set()
@@ -1049,6 +1035,18 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
         p = it.pendencias.append
         ref = (indice.get(it.codigo.upper()) if it.codigo else None) or next(
             (indice[a.upper()] for a in it.aliases if a and a.upper() in indice), None)
+        if not ref and not it.codigo and (ref := achar_pela_descricao(it.descricao)):
+            it.codigo = ref.codigo
+            it.descricao = ref.descricao  # sem o código colado na frente; completa se veio cortada
+        elif not ref and not it.codigo and indice:
+            # O começo da linha só é código quando está na coluna de código de um arquivo juntado
+            termos = texto(it.descricao).split()
+            for n in range(min(3, len(termos) - 1), 0, -1):
+                cod = " ".join(termos[:n]).rstrip("-–").rstrip()
+                if cod and (ref := indice.get(cod.upper())):
+                    it.codigo = ref.codigo
+                    it.descricao = " ".join(termos[n:]).lstrip("-–").lstrip()
+                    break
         if ref:
             usados.add(id(ref))
             mesmo_inventario = arquivo_de[id(ref)].caminho not in so_cadastro
@@ -1071,9 +1069,13 @@ def complementar(principal, extras, pendencias, codigos_gerados, participantes=N
                 p(f"valor unitário veio de {ref.origem or 'outro arquivo'}: {fmt(ref.vl_unit, 6)}")
 
         if not it.codigo:
-            codigos_gerados[0] += 1
-            it.codigo = f"SEMCOD{codigos_gerados[0]:04d}"
-            p(f"linha sem código no arquivo, código gerado: \"{it.origem}\"")
+            mesmo = (texto(it.descricao).upper(), texto(it.unidade).upper())
+            if not mesmo[0] or mesmo not in gerados:
+                codigos_gerados[0] += 1
+                gerados[mesmo] = f"SEMCOD{codigos_gerados[0]:04d}"
+            it.codigo = gerados[mesmo]
+            if not sem_coluna:
+                p(f"linha sem código no arquivo, código gerado: \"{it.origem}\"")
         # Tamanhos do leiaute antes de comparar códigos: dois códigos longos que só
         # diferem depois do 60º caractere viram o mesmo código no arquivo
         original = it.codigo

@@ -1520,41 +1520,67 @@ tr.editavel:hover .botao-icone {
   gap: 14px;
 }
 
+.atalhos > .quadro-largo-3 {
+  grid-column: span 2;
+}
+
+/* Card em pé: ícone no alto, seta no canto, título e uma linha curta embaixo. */
 .atalho {
   --cor: var(--azul);
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 14px;
+  flex-direction: column;
+  align-items: flex-start;
   height: 100%;
-  padding: 14px 16px;
+  min-height: 136px;
+  padding: 18px 18px 16px;
   background: var(--fundo);
   border: 1px solid var(--borda);
-  border-radius: var(--raio);
+  border-radius: 12px;
   box-shadow: var(--sombra);
   text-decoration: none;
   color: var(--texto);
-  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .atalho:hover,
 .atalho:focus-visible {
-  border-color: #c7cff7;
-  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.08);
+  border-color: color-mix(in srgb, var(--cor) 40%, white);
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.07);
 }
 
-.atalho .icone {
+.atalho > .icone {
   flex: none;
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   padding: 10px;
-  border-radius: 10px;
+  margin-bottom: auto;
+  border-radius: 12px;
   color: var(--cor);
-  background: color-mix(in srgb, var(--cor) 11%, white);
+  background: color-mix(in srgb, var(--cor) 10%, white);
+}
+
+.atalho-seta {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  color: #c0c6d0;
+}
+
+.atalho-seta .icone {
+  width: 18px;
+  height: 18px;
+}
+
+.atalho:hover .atalho-seta,
+.atalho:focus-visible .atalho-seta {
+  color: var(--cor);
 }
 
 .atalho strong {
   display: block;
-  font-size: 15px;
+  margin-top: 16px;
+  font-size: 15.5px;
   font-weight: 700;
   line-height: 1.3;
   color: var(--titulo);
@@ -1562,8 +1588,9 @@ tr.editavel:hover .botao-icone {
 
 .atalho small {
   display: block;
+  margin-top: 2px;
   color: var(--apagado);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .atalho-azul {
@@ -1600,10 +1627,13 @@ tr.editavel:hover .botao-icone {
 
 /* Quadro dos certificados A1 (último dos atalhos): total, barra empilhada e legenda. */
 .quadro-cert {
-  flex-direction: column;
   align-items: stretch;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.quadro-cert strong {
+  margin-top: 0;
 }
 
 .quadro-cert-topo {
@@ -1613,7 +1643,8 @@ tr.editavel:hover .botao-icone {
 }
 
 .quadro-cert-total {
-  font-size: 18px;
+  font-size: 26px;
+  line-height: 1;
   font-weight: 700;
   color: var(--titulo);
   font-variant-numeric: tabular-nums;
@@ -1960,6 +1991,14 @@ a.card-captura {
   .atalhos {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .atalhos > .quadro-largo-3 {
+    grid-column: auto;
+  }
+
+  .atalhos > .quadro-largo-2 {
+    grid-column: span 2;
+  }
 }
 
 @media (max-width: 899px) {
@@ -1971,6 +2010,10 @@ a.card-captura {
 @media (max-width: 520px) {
   .atalhos {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .atalhos > .quadro-largo-2 {
+    grid-column: auto;
   }
 
   .automacao {

@@ -110,16 +110,17 @@ class FormatoDosArquivosReais(unittest.TestCase):
     """Cópias sintéticas (empresa e produtos inventados) dos arquivos reais de clientes:
     relatório de inventário com código e descrição juntos, .FS da Fortes e Estoque Escriturado."""
 
-    def test_relatorio_codigo_e_descricao_juntos(self):
+    def test_relatorio_sem_coluna_de_codigo(self):
+        # O relatório não tem coluna de código: a linha toda é descrição, e o código é gerado
         res, reg = gerar("relatorio_formato_real.txt", uf="CE", cod_mun="2304400")
-        cad = {c[1]: c[2] for c in reg("0200")}
-        self.assertEqual(cad["5095"], "EXPOSITOR 6 BALDAS")  # sem o "- " na frente
-        self.assertEqual(cad["5102"], "ISOTONIC DRINK MONODOSIS (LIMON)")  # "5102-" sem o traço
-        self.assertEqual(cad["BG 99100-003-A"], "EXP MEDIO EM PLASTICO P/")  # prefixo de letras
-        self.assertEqual(cad["GC 1999885"], "EXPOSITOR EM MADEIRA")
-        self.assertEqual(cad["SEMCOD0001"], "SQUEEZE BRANCA 790ML")  # sem código no relatório
-        # mesmo código com outra descrição: dois itens, o segundo renomeado e avisado
-        self.assertEqual((cad["TI11397JS/61"], cad["TI11397JS/61-2"]), ("TIJA P/ RELOGIO 3H", "TIJA P/ RELOGIO 9H"))
+        cad = {c[2]: c[1] for c in reg("0200")}
+        self.assertEqual(cad["5095 - EXPOSITOR 6 BALDAS"], "SEMCOD0002")
+        self.assertEqual(cad["BG 99100-003-A EXP MEDIO EM PLASTICO P/"], "SEMCOD0004")
+        self.assertTrue(all(c.startswith("SEMCOD") for c in cad.values()))
+        # mesmo começo com outra descrição: dois produtos
+        self.assertNotEqual(cad["TI11397JS/61 TIJA P/ RELOGIO 3H"], cad["TI11397JS/61 TIJA P/ RELOGIO 9H"])
+        self.assertFalse([p for p in res.pendencias if p[0] == "item" and "sem código" in p[2]])
+        self.assertTrue(any(t == "arquivo" and "não tem coluna de código" in m for t, _, m in res.pendencias))
         self.assertEqual(res.emp, {**res.emp, "nome": "COMERCIAL MODELO - FILIAL", "cnpj": "11222333000181", "ie": "061234567"})
         # o total impresso tem 1 centavo a mais que a soma das linhas: vale a soma (H005 = soma dos H010)
         self.assertEqual(res.total, Decimal("40734.74"))

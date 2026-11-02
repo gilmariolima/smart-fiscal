@@ -57,6 +57,7 @@ const DESENHOS = {
       <path d="m7 18.4-.8 3.1 2.3-1.1 2.3 1.1-.8-3.1" />
     </>
   ),
+  seta: <path d="M7 17 17 7M9 7h8v8" />,
 }
 
 export default function Icone({ nome }) {

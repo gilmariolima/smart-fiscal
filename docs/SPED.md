@@ -30,7 +30,7 @@ Os dois saem do mesmo inventário e têm o mesmo total.
 
 O conversor foi conferido com inventários reais (relatórios de inventário de matriz e filial com quase 8 mil itens, um `.FS` da Fortes, Estoque Escriturado e a Planilha Modelo): o total do SPED bateu com o total do relatório, a não ser quando o próprio relatório arredonda o total (aí vale a soma das linhas, que é o que o PVA exige no H005, e a diferença aparece nas pendências). Os casos que esses arquivos mostraram estão em `estoque/tests/arquivos` como cópias sintéticas, sem dados de cliente.
 
-No relatório de inventário o código e a descrição vêm na mesma coluna. O app separa pelos primeiros termos com número ou barra (`2022GSG/03 RELOGIO ...`), aceita um prefixo curto de letras (`BG 99100-003-A`, `GC 1999885`) e tira o traço entre os dois (`5095 - EXPOSITOR`). O "P/" de "para" fica na descrição, mesmo tendo barra (`PU11599JS/02 PULS.P/REL. PHALANX`). Sem número no começo, o código é o que vem antes de " - " (`BIP LITE BLACK - SMARTWATCH`) ou um termo curto com hífen (`MW-CX CAIXA EM ACO`). Códigos com espaço separados com segurança geram um aviso só para o arquivo; vão para as pendências do item os casos duvidosos (código antes do " - ", código grudado numa palavra, como `CX2038GSG/01CAIXA`). Linha sem código vira `SEMCOD0001`... e código repetido com outra descrição vira `<código>-2`: os dois casos também vão para as pendências, para conferir com o cliente.
+O relatório de inventário não tem coluna de código: o texto antes da unidade (`PU11295JS/04 PULS. EM BORR. HIGH SCORE`) entra todo como descrição, e o app não tenta adivinhar um código dentro dele. O código só é usado quando vem de uma coluna de código de verdade: junte uma planilha ou cadastro (planilha com Código e Descrição, Estoque Escriturado, .FS, SPED com 0200) e o app acha cada produto pela descrição (sozinha ou com o código na frente, e também quando a descrição veio cortada no relatório) ou pelo começo da linha, se ele estiver na coluna de código do arquivo juntado. Sem isso, cada produto ganha `SEMCOD0001`, `SEMCOD0002`... (linhas iguais, com a mesma descrição e unidade, são o mesmo produto e somam), com um aviso só para o arquivo. Código repetido com outra descrição vira `<código>-2` e vai para as pendências.
 
 ## Observações fiscais
 
@@ -44,7 +44,7 @@ No relatório de inventário o código e a descrição vêm na mesma coluna. O a
 
 O app nunca muda nem descarta um dado do cliente sem avisar. Vão para as pendências (e para o CSV ao lado do SPED):
 
-- linha sem código (entra como `SEMCOD0001`), linha de relatório que não casa com o formato, linha sem código nem descrição que tem números;
+- linha sem código numa planilha (entra como `SEMCOD0001`), linha de relatório que não casa com o formato, linha sem código nem descrição que tem números;
 - números ambíguos (`1.500` sem nenhum outro número com casas decimais no arquivo) e planilhas que misturam vírgula e ponto decimal;
 - código ou descrição com caractere que o ISO-8859-1 não tem, código cortado em 60 caracteres, unidade cortada em 6;
 - TIPO_ITEM fora da tabela, CEST sem 7 dígitos, NCM sem 8 dígitos, ICMS recuperável maior que o valor do item;
@@ -64,5 +64,5 @@ Código, descrição, NCM, unidade e tipo ficam guardados por CNPJ (`ajustes.jso
 
 ## Vários arquivos juntos
 
-O primeiro arquivo com quantidade e valor é o inventário (a estrela troca qual é); os outros completam descrição, NCM, unidade, tipo e valor pelo código. Um arquivo de **outro estabelecimento** (outro CNPJ, como matriz e filial) ou de **outra data** (o inventário do ano anterior) serve só como cadastro: o app não compara quantidades nem usa valores dele. Para gerar o SPED da matriz e o da filial, converta cada um sozinho.
+O primeiro arquivo com quantidade e valor é o inventário (a estrela troca qual é); os outros completam descrição, NCM, unidade, tipo e valor pelo código (no relatório de inventário, que não tem código, pela descrição). Um arquivo de **outro estabelecimento** (outro CNPJ, como matriz e filial) ou de **outra data** (o inventário do ano anterior) serve só como cadastro: o app não compara quantidades nem usa valores dele. Para gerar o SPED da matriz e o da filial, converta cada um sozinho.
 
