@@ -74,7 +74,8 @@ function linhaCte(n, lerXml) {
   ]
 }
 
-// Abas Entradas e Saídas de um modelo só (no CT-e, notas "outro" não aparecem em nenhuma).
+// Abas Entradas e Saídas de um modelo só; no CT-e também a aba Outros (cliente só remetente, destinatário, expedidor ou recebedor).
+// Só entram as abas com notas; sem nenhuma nota fica a aba Entradas com o cabeçalho (o arquivo precisa de uma aba).
 function porDirecao(notas, modelo, lerXml) {
   const nfse = modelo === 'nfse'
   const cte = modelo === 'cte'
@@ -86,7 +87,9 @@ function porDirecao(notas, modelo, lerXml) {
       .filter((n) => (cte ? n.tipo === direcao : (n.tipo === 'saida' ? 'saida' : 'entrada') === direcao))
       .map((n) => (cte ? linhaCte(n, lerXml) : nfse ? linhaNfse(n, lerXml) : linhaNfe(n))),
   })
-  return montarXlsx([aba('Entradas', 'entrada'), aba('Saídas', 'saida')])
+  const abas = [aba('Entradas', 'entrada'), aba('Saídas', 'saida'), ...(cte ? [aba('Outros', 'outro')] : [])]
+  const comNotas = abas.filter((a) => a.linhas.length)
+  return montarXlsx(comNotas.length ? comNotas : abas.slice(0, 1))
 }
 
 /**

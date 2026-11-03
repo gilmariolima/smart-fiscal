@@ -4,6 +4,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
+const zlib = require('node:zlib')
 const { montarRelatorioPdf } = require('../src/services/relatorioPdf')
 
 const fortaleza = fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml'), 'utf8')
@@ -28,11 +29,27 @@ test('NFS-e lê as retenções do XML; mês sem notas ainda gera o PDF', async (
   assert.equal(paginas(vazio), 1)
 })
 
-test('CT-e: uma página; mês só com outros gera PDF sem erro', async () => {
+// Texto das páginas: abre os streams e junta os trechos hex de cada TJ (fontes padrão em WinAnsi).
+function textoDoPdf(pdf) {
+  const partes = []
+  for (const m of pdf.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+    let conteudo
+    try { conteudo = zlib.inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1') } catch { continue }
+    for (const tj of conteudo.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
+      partes.push([...tj[1].matchAll(/<([0-9a-fA-F]*)>/g)].map((h) => Buffer.from(h[1], 'hex').toString('latin1')).join(''))
+    }
+  }
+  return partes.join('\n')
+}
+
+test('CT-e: uma página com Entradas, Saídas e Outros; mês só com outros gera PDF sem erro', async () => {
   const { cteProc } = require('./apoio/cte')
   const cte = nota(5, { modelo: 'cte', caminho_xml: 'x' })
   const pdf = await montarRelatorioPdf({ cliente, competencia: '2026-10', modelo: 'cte', lerXml: () => cteProc({}), notas: [cte, nota(6, { modelo: 'cte', tipo: 'saida' }), nota(7, { modelo: 'cte', tipo: 'outro' })] })
   assert.equal(paginas(pdf), 1)
+  const texto = textoDoPdf(pdf)
+  for (const s of ['Entradas (1)', 'Saídas (1)', 'Outros (1)']) assert.ok(texto.includes(s), `faltou "${s}"`)
+  assert.ok(!textoDoPdf(await montarRelatorioPdf({ cliente, competencia: '2026-10', modelo: 'nfe', lerXml: () => null, notas: [nota(1)] })).includes('Outros'), 'NF-e sem a seção Outros')
   const outros = await montarRelatorioPdf({ cliente, competencia: '2026-10', modelo: 'cte', lerXml: () => null, notas: [nota(8, { modelo: 'cte', tipo: 'outro' })] })
   assert.equal(outros.subarray(0, 5).toString(), '%PDF-')
 })

@@ -1625,63 +1625,77 @@ tr.editavel:hover .botao-icone {
   --cor: #0e7490;
 }
 
-/* Quadro dos certificados A1 (último dos atalhos): total, barra empilhada e legenda. */
+/* Quadro dos certificados A1 (último dos atalhos): rosca com o total no meio, título e legenda ao lado. */
 .quadro-cert {
-  align-items: stretch;
-  justify-content: center;
-  gap: 10px;
+  --cor: #067647;
+  flex-direction: row;
+  align-items: center;
+  gap: 18px;
 }
 
 .quadro-cert strong {
   margin-top: 0;
 }
 
-.quadro-cert-topo {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+.rosca-cert {
+  flex: none;
+  width: 96px;
+  height: 96px;
 }
 
-.quadro-cert-total {
-  font-size: 26px;
-  line-height: 1;
+.rosca-cert circle {
+  fill: none;
+  stroke-width: 5.5;
+}
+
+.rosca-cert-fundo {
+  stroke: #f2f4f7;
+}
+
+.rosca-cert-total {
+  font-size: 11px;
   font-weight: 700;
-  color: var(--titulo);
+  fill: var(--titulo);
+  text-anchor: middle;
+  dominant-baseline: central;
   font-variant-numeric: tabular-nums;
 }
 
-.barra-cert {
-  display: flex;
-  gap: 2px;
-  height: 8px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #f2f4f7;
+.rosca-cert-verde {
+  stroke: #16a34a;
 }
 
-.barra-cert > span {
-  flex-basis: 0;
+.rosca-cert-ambar {
+  stroke: #f79009;
 }
 
-.barra-cert-verde,
+.rosca-cert-vermelho {
+  stroke: #d92d20;
+}
+
 .legenda-cert .bolinha-verde {
   background: #16a34a;
 }
 
-.barra-cert-ambar,
 .legenda-cert .bolinha-ambar {
   background: #f79009;
 }
 
-.barra-cert-vermelho,
 .legenda-cert .bolinha-vermelho {
   background: #d92d20;
 }
 
+.quadro-cert-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .legenda-cert {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2px 14px;
+  flex-direction: column;
+  gap: 3px;
   font-size: 12.5px;
   color: var(--texto);
 }
@@ -2508,7 +2522,7 @@ a.botao-acoes {
 }
 
 .tabela-captura .col-certificado {
-  width: 110px;
+  width: 150px;
 }
 
 .tabela-captura .col-ultima {

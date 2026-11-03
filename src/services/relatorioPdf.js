@@ -2,7 +2,7 @@
 
 // Relatório do mês em PDF (relatorio.pdf do pacote): os mesmos dados da planilha (abas Entradas e Saídas), no formato PDF.
 // Colunas e linhas vêm de planilhaMes.js, então o que estiver na planilha está aqui, sem cortar texto: célula longa quebra a linha.
-// A4 paisagem; por modelo (NF-e, NFS-e) uma seção Entradas e uma Saídas, cada uma com a tabela e a linha de total
+// A4 paisagem; por modelo uma seção Entradas e uma Saídas (no CT-e também Outros), cada uma com a tabela e a linha de total
 // (as canceladas não entram no total).
 
 const PDFDocument = require('pdfkit')
@@ -148,9 +148,10 @@ function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo }) {
     if (i > 0) doc.addPage()
     cabecalho(MODELOS[m].rotulo)
     const daquele = notas.filter((n) => doModelo(n, m))
-    // No CT-e, notas "outro" ficam fora das duas seções.
+    // No CT-e, notas "outro" (cliente só remetente, destinatário, expedidor ou recebedor) ganham a seção Outros, como na planilha.
     secao(m, 'Entradas', daquele.filter((n) => (m === 'cte' ? n.tipo === 'entrada' : n.tipo !== 'saida')))
     secao(m, 'Saídas', daquele.filter((n) => n.tipo === 'saida'))
+    if (m === 'cte') secao(m, 'Outros', daquele.filter((n) => n.tipo === 'outro'))
   })
 
   // Rodapé com a página em todas as folhas.

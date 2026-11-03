@@ -25,34 +25,69 @@ const ATALHOS = [
   { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Consultas e downloads' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado das saídas', soNoPc: true },
   { para: '/capturar', icone: 'capturar', cor: 'ciano', titulo: 'Capturar', texto: 'Buscar notas agora' },
+  { para: '/sped', icone: 'inventario', cor: 'laranja', titulo: 'Converter inventário', texto: 'Inventário em SPED' },
 ]
 
-// Último quadro dos atalhos: barra com os certificados A1 no prazo, a vencer em 30 dias e vencidos.
+// Último quadro dos atalhos: rosca com os certificados A1 no prazo, a vencer em 30 dias e vencidos.
 const PARTES_CERT = [
   { chave: 'noPrazo', um: 'no prazo', varios: 'no prazo', classe: 'verde' },
   { chave: 'aVencer', um: 'a vencer', varios: 'a vencer', classe: 'ambar' },
   { chave: 'vencidos', um: 'vencido', varios: 'vencidos', classe: 'vermelho' },
 ]
 
+// Raio com circunferência 100: o traço de cada parte é a porcentagem dela.
+const RAIO_ROSCA = 100 / (2 * Math.PI)
+
+function RoscaCertificados({ partes, total }) {
+  const visiveis = partes.filter((p) => p.valor > 0)
+  const folga = visiveis.length > 1 ? 1.5 : 0 // espaço branco entre as partes
+  let inicio = 0
+  return (
+    <svg className="rosca-cert" viewBox="0 0 42 42" aria-hidden="true">
+      <circle className="rosca-cert-fundo" cx="21" cy="21" r={RAIO_ROSCA} />
+      {total > 0 &&
+        visiveis.map((p) => {
+          const parte = (p.valor / total) * 100
+          const traco = (
+            <circle
+              key={p.chave}
+              className={`rosca-cert-${p.classe}`}
+              cx="21"
+              cy="21"
+              r={RAIO_ROSCA}
+              strokeDasharray={`${Math.max(parte - folga, 0.5)} ${100 - Math.max(parte - folga, 0.5)}`}
+              strokeDashoffset={25 - inicio}
+            />
+          )
+          inicio += parte
+          return traco
+        })}
+      <text x="21" y="21" className="rosca-cert-total">
+        {inteiro(total)}
+      </text>
+    </svg>
+  )
+}
+
 function QuadroCertificados({ certificados: c }) {
   const total = c?.total || 0
   const partes = PARTES_CERT.map((p) => ({ ...p, valor: c?.[p.chave] || 0 }))
   return (
-    <Link to="/clientes" className="atalho quadro-cert">
-      <span className="quadro-cert-topo">
+    <Link to="/clientes" className="atalho quadro-cert" aria-label={`Certificados A1: ${inteiro(total)}; ${partes.map((p) => plural(p.valor, p.um, p.varios)).join(', ')}`}>
+      <span className="atalho-seta" aria-hidden="true">
+        <Icone nome="seta" />
+      </span>
+      <RoscaCertificados partes={partes} total={total} />
+      <span className="quadro-cert-texto">
         <strong>Certificados A1</strong>
-        <span className="quadro-cert-total">{inteiro(total)}</span>
-      </span>
-      <span className="barra-cert" role="img" aria-label={partes.map((p) => plural(p.valor, p.um, p.varios)).join(', ')}>
-        {total > 0 && partes.map((p) => p.valor > 0 && <span key={p.chave} className={`barra-cert-${p.classe}`} style={{ flexGrow: p.valor }} />)}
-      </span>
-      <span className="legenda-cert">
-        {partes.map((p) => (
-          <span key={p.chave} className={p.valor ? undefined : 'zerada'}>
-            <i className={`bolinha-${p.classe}`} aria-hidden="true" />
-            {plural(p.valor, p.um, p.varios)}
-          </span>
-        ))}
+        <span className="legenda-cert">
+          {partes.map((p) => (
+            <span key={p.chave} className={p.valor ? undefined : 'zerada'}>
+              <i className={`bolinha-${p.classe}`} aria-hidden="true" />
+              {plural(p.valor, p.um, p.varios)}
+            </span>
+          ))}
+        </span>
       </span>
     </Link>
   )

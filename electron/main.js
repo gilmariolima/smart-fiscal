@@ -345,6 +345,10 @@ async function falhaAoIniciar(erro) {
 
 // ---------- motor do SPED (Python) ----------
 
+// O Windows derruba o motor quando o PC entra em suspensão (código 1073807364): ele é religado sozinho.
+// Mais de 3 quedas em 10 minutos é defeito de verdade: fica o erro na seção.
+const quedasMotor = []
+
 /** Liga o motor do SPED. Sem ele o app continua (as notas não dependem dele); a seção mostra o erro. */
 async function ligarMotorEstoque(dadosEstoque) {
   const dirMotor = pastaMotor({ empacotado: app.isPackaged, recursos: process.resourcesPath, raiz: RAIZ })
@@ -358,8 +362,18 @@ async function ligarMotorEstoque(dadosEstoque) {
     })
     motorEstoque.processo.once('exit', (codigo) => {
       if (saindo) return
-      ctx?.logger.error('O motor do SPED fechou sozinho', { codigo })
+      const agora = Date.now()
+      while (quedasMotor.length && agora - quedasMotor[0] > 10 * 60e3) quedasMotor.shift()
+      quedasMotor.push(agora)
       motorEstoque = { erro: `O motor do SPED fechou sozinho (código ${codigo}). Feche e abra o Smart Fiscal; se continuar, veja o painel.log em ${dadosEstoque}.` }
+      if (quedasMotor.length > 3) {
+        ctx?.logger.error('O motor do SPED fechou sozinho', { codigo })
+        return
+      }
+      ctx?.logger.warn('O motor do SPED fechou sozinho; religando', { codigo })
+      setTimeout(() => {
+        if (!saindo) ligarMotorEstoque(dadosEstoque)
+      }, 2000)
     })
   } catch (e) {
     motorEstoque = { erro: `O motor do SPED não ligou: ${e.message}` }

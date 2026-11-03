@@ -241,7 +241,9 @@ test('"Exportar mês" com a escolha do conteúdo: só XMLs, só Excel, só PDF o
   assert.equal(fs.readFileSync(pdf.arquivo).subarray(0, 5).toString(), '%PDF-')
   const xlsx = await servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfse', incluir: ['excel'] })
   assert.equal(xlsx.nome, `Cliente_1_${competencia}_NFS-e.xlsx`)
-  assert.match(lerZip(fs.readFileSync(xlsx.arquivo)).get('xl/workbook.xml').toString(), /name="Entradas".*name="Saídas"/)
+  // Mês com NFS-e só de entrada: a aba Saídas vazia não entra.
+  assert.match(lerZip(fs.readFileSync(xlsx.arquivo)).get('xl/workbook.xml').toString(), /name="Entradas"/)
+  assert.doesNotMatch(lerZip(fs.readFileSync(xlsx.arquivo)).get('xl/workbook.xml').toString(), /name="Saídas"/)
 
   await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: [] }), /Conteúdo inválido/)
   await assert.rejects(servico.exportar({ cnpj: CNPJ_MOCK_OK, competencia, modelo: 'nfe', incluir: ['exe'] }), /Conteúdo inválido/)
