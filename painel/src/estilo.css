@@ -2179,6 +2179,33 @@ a.botao-acoes {
   fill: #c3c8d4;
 }
 
+.clientes-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 0 0 14px;
+}
+
+.clientes-filtros .busca {
+  flex: 1 1 280px;
+  margin: 0;
+}
+
+.campo-marcar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.campo-marcar input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
 .busca {
   display: flex;
   flex-direction: column;

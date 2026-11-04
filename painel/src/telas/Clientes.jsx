@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import BotaoIcone from '../componentes/BotaoIcone.jsx'
 import Etiqueta from '../componentes/Etiqueta.jsx'
 import SeloCertificado from '../componentes/SeloCertificado.jsx'
+import Segmentado from '../componentes/Segmentado.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useAoTerminarCaptura, useResumo } from '../layout/ResumoProvider.jsx'
 import { api } from '../api.js'
@@ -112,8 +113,8 @@ function Pendencias({ notas: n }) {
 function Acoes({ c, cadastroLiberado, onAtivo, ocupado }) {
   return (
     <span className="acoes-cliente">
-      {cadastroLiberado && <BotaoIcone icone="fa-id-card" dica="Trocar o certificado" to={`/clientes/${c.cnpj}/certificado`} />}
-      {cadastroLiberado && (
+      {cadastroLiberado && <BotaoIcone icone="fa-id-card" dica={c.temCertificado ? 'Trocar o certificado' : 'Adicionar o certificado'} to={`/clientes/${c.cnpj}/certificado`} />}
+      {cadastroLiberado && c.temCertificado && (
         <BotaoIcone
           icone={c.ativo ? 'fa-power-off' : 'fa-rotate-left'}
           dica={c.escritorio ? 'Tirar da lista de clientes' : c.ativo ? 'Desativar (fica fora das capturas)' : 'Reativar (volta a entrar nas capturas)'}
@@ -174,6 +175,7 @@ export default function Clientes() {
   const [aviso, setAviso] = useState(null)
   const [ocupado, setOcupado] = useState(null)
   const [busca, setBusca] = useState('')
+  const [filtro, setFiltro] = useState('')
 
   useAoTerminarCaptura(() => {
     recarregar()
@@ -201,7 +203,9 @@ export default function Clientes() {
   // Busca por nome, razão social ou CNPJ (com ou sem pontuação).
   const termo = busca.trim().toLowerCase()
   const digitos = termo.replace(/\D/g, '')
-  const visiveis = ordenados.filter(
+  const comCertificado = lista.filter((c) => c.temCertificado).length
+  const doFiltro = ordenados.filter((c) => !filtro || c.temCertificado === (filtro === 'com'))
+  const visiveis = doFiltro.filter(
     (c) => !termo || nomeDe(c).toLowerCase().includes(termo) || (c.razaoSocial || '').toLowerCase().includes(termo) || (digitos && c.cnpj.includes(digitos)),
   )
 
@@ -249,7 +253,7 @@ export default function Clientes() {
         )}
       </p>
     )
-  else if (!visiveis.length) conteudo = <p className="vazio">Nenhum cliente encontrado para essa busca.</p>
+  else if (!visiveis.length) conteudo = <p className="vazio">{termo ? 'Nenhum cliente encontrado para essa busca.' : filtro === 'com' ? 'Nenhum cliente com certificado.' : 'Nenhum cliente sem certificado.'}</p>
   else
     conteudo = (
       <div className="tabela-moldura">
@@ -279,7 +283,7 @@ export default function Clientes() {
                   <td className="sem-quebra">
                     <SeloCertificado c={c} />
                   </td>
-                  <td>{c.ativo ? <UltimaCaptura c={c} capturandoAgora={capturandoAgora} fila={fila} /> : '—'}</td>
+                  <td>{c.ativo && c.temCertificado ? <UltimaCaptura c={c} capturandoAgora={capturandoAgora} fila={fila} /> : '—'}</td>
                   <td>
                     <Pendencias notas={c.notas} />
                   </td>
@@ -309,15 +313,27 @@ export default function Clientes() {
       aviso={aviso}
     >
       {!!lista.length && (
-        <div className="busca">
-          <label htmlFor="busca-clientes">Buscar cliente</label>
-          <input
-            id="busca-clientes"
-            type="search"
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Nome ou CNPJ"
-            autoComplete="off"
+        <div className="clientes-filtros">
+          <div className="busca">
+            <label htmlFor="busca-clientes">Buscar cliente</label>
+            <input
+              id="busca-clientes"
+              type="search"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Nome ou CNPJ"
+              autoComplete="off"
+            />
+          </div>
+          <Segmentado
+            rotulo="Certificado"
+            valor={filtro}
+            onChange={setFiltro}
+            opcoes={[
+              { valor: '', rotulo: `Todos (${inteiro(lista.length)})` },
+              { valor: 'com', rotulo: `Com certificado (${inteiro(comCertificado)})` },
+              { valor: 'sem', rotulo: `Sem certificado (${inteiro(lista.length - comCertificado)})` },
+            ]}
           />
         </div>
       )}

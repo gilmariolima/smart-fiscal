@@ -21,12 +21,21 @@ function Recibo({ r, titulo, escritorio, novo }) {
         <dd>{escritorio ? r.razaoSocial : r.apelido || r.razaoSocial}</dd>
         <dt>CNPJ</dt>
         <dd className="mono">{formatarCnpj(r.cnpj)}</dd>
-        <dt>Titular do certificado</dt>
-        <dd>{r.titular || '—'}</dd>
-        <dt>CNPJ do certificado</dt>
-        <dd className="mono">{formatarCnpj(r.cnpjCertificado) || '—'}</dd>
-        <dt>Válido até</dt>
-        <dd>{data(r.validade) || '—'}</dd>
+        {r.semCertificado ? (
+          <>
+            <dt>Certificado</dt>
+            <dd>Sem certificado</dd>
+          </>
+        ) : (
+          <>
+            <dt>Titular do certificado</dt>
+            <dd>{r.titular || '—'}</dd>
+            <dt>CNPJ do certificado</dt>
+            <dd className="mono">{formatarCnpj(r.cnpjCertificado) || '—'}</dd>
+            <dt>Válido até</dt>
+            <dd>{data(r.validade) || '—'}</dd>
+          </>
+        )}
       </dl>
       {!!r.avisos?.length && (
         <ul className="recibo-avisos">
@@ -37,7 +46,9 @@ function Recibo({ r, titulo, escritorio, novo }) {
       )}
       {novo && (
         <p>
-          {escritorio
+          {r.semCertificado
+            ? 'A empresa fica desativada, sem entrar nas capturas. As notas de saída que chegarem pelo escritório ficam nela. Ao adicionar o certificado em Clientes, ela é ativada.'
+            : escritorio
             ? 'O escritório entra na próxima captura e passa a receber as notas de saída em que os clientes o indicarem no autXML.'
             : 'O cliente entra na próxima captura automática. Para consultar agora, marque-o em Clientes e clique em Capturar selecionados.'}
         </p>
@@ -72,18 +83,23 @@ function useEnvioDeCertificado() {
   const [recibo, setRecibo] = useState(null)
   const { recarregar: recarregarResumo } = useResumo()
 
-  async function enviar(evento, montar, validar) {
+  // `semArquivo`: cadastro sem certificado, só com os dados da empresa.
+  async function enviar(evento, montar, validar, semArquivo = false) {
     evento.preventDefault()
     setErro(null)
     setEnviando(true)
     let postEnviado = false
     try {
       validar?.()
-      const f = arquivo.current.files[0]
-      if (!f) throw new Error('Escolha o arquivo do certificado.')
-      const pfx = await arquivoBase64(f)
-      postEnviado = true
-      setRecibo(await montar({ pfx, senha: senha.current.value }))
+      if (semArquivo) {
+        setRecibo(await montar({ semCertificado: true }))
+      } else {
+        const f = arquivo.current.files[0]
+        if (!f) throw new Error('Escolha o arquivo do certificado.')
+        const pfx = await arquivoBase64(f)
+        postEnviado = true
+        setRecibo(await montar({ pfx, senha: senha.current.value }))
+      }
       recarregarResumo()
     } catch (e) {
       setErro(e.message)
@@ -105,6 +121,7 @@ const NOTA_SEGURANCA =
 function FormNovo({ escritorio }) {
   const envio = useEnvioDeCertificado()
   const [campos, setCampos] = useState({ cnpj: '', razao: '', uf: '', apelido: '' })
+  const [semCertificado, setSemCertificado] = useState(false)
   const mudar = (nome) => (e) => setCampos((c) => ({ ...c, [nome]: e.target.value }))
   const cnpj = campos.cnpj.replace(/\D/g, '')
   const titulo = escritorio ? 'Cadastrar escritório' : 'Novo cliente'
@@ -121,12 +138,13 @@ function FormNovo({ escritorio }) {
         if (!campos.razao.trim()) throw new Error('Informe a razão social.')
         if (!campos.uf) throw new Error('Escolha a UF.')
       },
+      semCertificado,
     )
 
   return (
     <Pagina
       titulo={titulo}
-      subtitulo={escritorio ? 'O certificado do escritório recebe as notas de saída dos clientes pelo autXML.' : 'Empresa com o certificado A1 dela.'}
+      subtitulo={escritorio ? 'O certificado do escritório recebe as notas de saída dos clientes pelo autXML.' : 'A empresa, com ou sem o certificado A1 dela.'}
       trilha={[{ rotulo: 'Clientes', para: '/clientes' }, { rotulo: titulo }]}
       erro={envio.erro}
       aoFecharErro={() => envio.setErro(null)}
@@ -162,11 +180,23 @@ function FormNovo({ escritorio }) {
               </label>
             )}
           </div>
-          <CamposCertificado arquivo={envio.arquivo} senha={envio.senha} />
-          <p className="formulario-nota">{NOTA_SEGURANCA}</p>
+          {!escritorio && (
+            <label className="campo-marcar">
+              <input type="checkbox" checked={semCertificado} onChange={(e) => setSemCertificado(e.target.checked)} />
+              <span>Cadastrar sem certificado</span>
+            </label>
+          )}
+          {semCertificado ? (
+            <p className="formulario-nota">Sem o certificado, a empresa fica desativada e não entra nas capturas. As notas de saída que chegarem pelo escritório ficam nela. Ao adicionar o certificado depois, em Clientes, ela é ativada.</p>
+          ) : (
+            <>
+              <CamposCertificado arquivo={envio.arquivo} senha={envio.senha} />
+              <p className="formulario-nota">{NOTA_SEGURANCA}</p>
+            </>
+          )}
           <div className="formulario-acoes">
             <button type="submit" className="botao botao-azul" disabled={envio.enviando}>
-              {envio.enviando ? 'Conferindo o certificado…' : 'Cadastrar'}
+              {envio.enviando ? (semCertificado ? 'Cadastrando…' : 'Conferindo o certificado…') : 'Cadastrar'}
             </button>
             {VOLTAR}
           </div>

@@ -93,6 +93,23 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     return c
   }
 
+  // Cliente sem certificado: arquivo e senha vazios e desativado, porque não tem o que capturar (a captura precisa do A1 dele).
+  // Continua na carteira e recebe as notas de saída que chegam pelo escritório. Ao ganhar o certificado, ativa sozinho.
+  function inserirSemCertificado({ cnpj, razao, uf, apelido }) {
+    sql.inserir.run({
+      cnpj,
+      razao_social: String(razao).trim(),
+      apelido: String(apelido || '').trim() || null,
+      uf: String(uf).trim().toUpperCase(),
+      papel: 'cliente',
+      cert_arquivo: '',
+      cert_senha_enc: '',
+      cert_validade: null,
+    })
+    sql.ativo.run(0, cnpj)
+    return { cliente: sql.porCnpj.get(cnpj), certificado: null, avisos: [] }
+  }
+
   // Caminho comum de cadastro: valida, guarda o .pfx e insere a linha com o papel dado.
   function inserirCliente({ cnpj, razao, uf, apelido, papel, pfx, senha }) {
     const { cert, avisos } = validarCertificado(cnpj, pfx, senha)
@@ -116,23 +133,28 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
   }
 
   /**
-   * Cadastra um cliente. `pfx` é o conteúdo do arquivo (Buffer).
-   * @returns {{ cliente: object, certificado: object, avisos: string[] }}
+   * Cadastra um cliente. `pfx` é o conteúdo do arquivo (Buffer); sem ele, o cliente fica sem certificado.
+   * @returns {{ cliente: object, certificado: object|null, avisos: string[] }}
    */
   function cadastrar({ cnpj, razao, uf, apelido, pfx, senha }) {
     const c = validarDados({ cnpj, razao, uf })
     const existente = sql.porCnpj.get(c)
     if (existente?.papel === 'escritorio' && !existente.tambem_cliente) return tornarEscritorioCliente({ cnpj: c, pfx, senha })
     if (existente) throw new Error(`CNPJ ${c} já cadastrado. Para renovar, troque o certificado do cliente (cliente:cert ou no painel).`)
+    if (!pfx) {
+      const r = inserirSemCertificado({ cnpj: c, razao, uf, apelido })
+      logger.info('Cliente cadastrado sem certificado', { cnpj: c })
+      return r
+    }
     const r = inserirCliente({ cnpj: c, razao, uf, apelido, papel: 'cliente', pfx, senha })
     logger.info('Cliente cadastrado', { cnpj: c, validade: r.certificado.validade })
     return r
   }
 
   // O CNPJ do escritório cadastrado como cliente: a mesma linha passa a guardar as notas dele (uma fila de NSU por CNPJ).
-  // O certificado enviado substitui o do escritório (é o mesmo CNPJ).
+  // O certificado enviado substitui o do escritório (é o mesmo CNPJ); sem enviar, fica o que ele já tem.
   function tornarEscritorioCliente({ cnpj, pfx, senha }) {
-    const r = trocarCertificado({ cnpj, pfx, senha })
+    const r = pfx ? trocarCertificado({ cnpj, pfx, senha }) : { certificado: null, avisos: [] }
     sql.tambemCliente.run(1, cnpj)
     logger.info('Escritório passou a ser cliente também', { cnpj })
     return { ...r, cliente: sql.porCnpj.get(cnpj) }
@@ -179,10 +201,12 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
   /** Troca o certificado (renovação anual). */
   function trocarCertificado({ cnpj, pfx, senha }) {
     const c = somenteDigitos(cnpj)
-    if (!sql.porCnpj.get(c)) throw new Error(`CNPJ ${c} não cadastrado.`)
+    const atual = sql.porCnpj.get(c)
+    if (!atual) throw new Error(`CNPJ ${c} não cadastrado.`)
     const { cert, avisos } = validarCertificado(c, pfx, senha)
     const certArquivo = gravarPfx(c, pfx)
     sql.trocarCert.run({ cnpj: c, cert_arquivo: certArquivo, cert_senha_enc: criptografar(senha, config.masterKey), cert_validade: cert.validade })
+    if (!atual.cert_arquivo) sql.ativo.run(1, c) // estava desativado só por não ter certificado
     logger.info('Certificado trocado', { cnpj: c, validade: cert.validade })
     return { cliente: sql.porCnpj.get(c), certificado: cert, avisos }
   }
@@ -195,7 +219,10 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
       logger.info(ativo ? 'Escritório voltou a ser cliente' : 'Escritório deixou de ser cliente', { cnpj: c })
       return { ...sql.porCnpj.get(c), ativo: ativo ? 1 : 0 }
     }
-    if (!sql.ativo.run(ativo ? 1 : 0, c).changes) throw new Error(`CNPJ ${c} não cadastrado.`)
+    const atual = sql.porCnpj.get(c)
+    if (!atual) throw new Error(`CNPJ ${c} não cadastrado.`)
+    if (ativo && !atual.cert_arquivo) throw new Error('Cliente sem certificado: adicione o certificado para ativar.')
+    sql.ativo.run(ativo ? 1 : 0, c)
     logger.info(ativo ? 'Cliente ativado' : 'Cliente desativado', { cnpj: c })
     return sql.porCnpj.get(c)
   }

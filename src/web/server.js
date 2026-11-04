@@ -170,10 +170,10 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_cte' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
     ultimaCapturaNfsePorCliente: db.prepare(`SELECT cliente_id, docs_recebidos, notas_recebidas, eventos_recebidos FROM execucoes
       WHERE id IN (SELECT MAX(id) FROM execucoes WHERE tipo = 'captura_nfse' AND fim IS NOT NULL AND erro IS NULL GROUP BY cliente_id)`),
-    clientePorCnpj: db.prepare('SELECT id, cnpj, papel, tambem_cliente FROM clientes WHERE cnpj = ?'),
+    clientePorCnpj: db.prepare('SELECT id, cnpj, papel, tambem_cliente, cert_arquivo FROM clientes WHERE cnpj = ?'),
     ultimaCapturaDoCliente: db.prepare(`SELECT e.id FROM execucoes e JOIN clientes c ON c.id = e.cliente_id
       WHERE c.cnpj = @cnpj AND e.tipo = @tipo AND e.fim IS NOT NULL AND e.erro IS NULL ORDER BY e.id DESC LIMIT 1`),
-    ativosNaOrdem: db.prepare("SELECT cnpj FROM clientes WHERE ativo = 1 AND papel = 'cliente' ORDER BY id"),
+    ativosNaOrdem: db.prepare("SELECT cnpj FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo <> '' ORDER BY id"),
     execucoes: db.prepare(`SELECT e.*, c.cnpj, COALESCE(c.apelido, c.razao_social) cliente_nome FROM execucoes e
       LEFT JOIN clientes c ON c.id = e.cliente_id ORDER BY e.id DESC LIMIT 200`),
     zerarTentativas: db.prepare("UPDATE notas SET tentativas_download = 0, atualizado_em = ? WHERE id = ? AND tipo = 'entrada'"),
@@ -252,6 +252,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
           },
           // Busca automática ligada por tipo de nota (os horários pulam o que estiver desligado).
           automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0, cte: c.auto_cte !== 0 },
+          temCertificado: !!c.cert_arquivo,
           certValidade: c.cert_validade,
           certDias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null,
           notas: {
@@ -560,6 +561,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
     for (const cnpj of cnpjs) {
       const cliente = sql.clientePorCnpj.get(cnpj)
       if (!cliente) throw new ErroHttp(404, `Cliente ${cnpj} não cadastrado.`)
+      if (!cliente.cert_arquivo) throw new ErroHttp(400, `Cliente ${cnpj} está sem certificado: cadastre o A1 para capturar.`)
       if (cliente.papel === 'escritorio' && !cliente.tambem_cliente) throw new ErroHttp(400, 'O escritório é capturado sempre junto; não o marque na lista.')
     }
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
@@ -592,7 +594,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
   app.post('/api/captura', (req, res) => {
     if (req.body && 'cnpjs' in req.body) return capturaDeLista(req.body.cnpjs, res, modelosDaCaptura(req.body.modelos))
     const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined
-    if (cnpj && !sql.clientePorCnpj.get(cnpj)) throw new ErroHttp(404, 'Cliente não cadastrado.')
+    const alvo = cnpj ? sql.clientePorCnpj.get(cnpj) : null
+    if (cnpj && !alvo) throw new ErroHttp(404, 'Cliente não cadastrado.')
+    if (alvo && !alvo.cert_arquivo) throw new ErroHttp(400, 'Cliente sem certificado: cadastre o A1 para capturar.')
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
     const execucao = cnpj ? ctx.ciclo.executarCiclo({ cnpj }) : agendador.executarAgora('painel')
     capturaManual = Promise.resolve(execucao)
@@ -750,16 +754,18 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
     razaoSocial: cliente.razao_social,
     apelido: cliente.apelido,
     uf: cliente.uf,
-    titular: certificado.titular,
-    cnpjCertificado: certificado.cnpj,
-    validade: certificado.validade,
+    semCertificado: !certificado,
+    titular: certificado?.titular ?? null,
+    cnpjCertificado: certificado?.cnpj ?? null,
+    validade: certificado?.validade ?? null,
     avisos,
   })
 
   app.post('/api/clientes', (req, res) => {
     exigirLocal(req)
     const b = req.body || {}
-    const pfx = lerPfx(b)
+    // Sem certificado só quando a tela pede: esquecer o arquivo continua dando erro.
+    const pfx = b.semCertificado === true ? null : lerPfx(b)
     const r = comoErroHttp(() => ctx.clientes.cadastrar({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), apelido: String(b.apelido || ''), pfx, senha: b.senha }))
     res.status(201).json(recibo(r))
   })

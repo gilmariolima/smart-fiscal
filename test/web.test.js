@@ -1409,3 +1409,57 @@ test('trocar a pasta dos XMLs vale na hora para a gravação, sem reiniciar', as
   assert.ok(fs.existsSync(path.join(nova, rel)))
   assert.equal(arm.absoluto(rel), path.join(nova, rel))
 })
+
+test('cliente sem certificado: cadastra, aparece na lista, fica fora da captura e pode ganhar o certificado depois', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const cnpj = '27865757000102'
+  const dados = { cnpj, razao: 'Sem Certificado Ltda', uf: 'CE', apelido: 'Sem Cert' }
+
+  assert.equal((await pedir('/api/clientes', { method: 'POST', body: dados })).status, 400, 'sem a opção, o certificado continua obrigatório')
+
+  const r = await pedir('/api/clientes', { method: 'POST', body: { ...dados, semCertificado: true } })
+  assert.equal(r.status, 201, JSON.stringify(r.corpo))
+  assert.equal(r.corpo.semCertificado, true)
+  assert.equal(r.corpo.validade, null)
+  assert.ok(!fs.existsSync(path.join(ctx.config.pastaCerts, `${cnpj}.pfx`)))
+
+  const lista = () => pedir('/api/clientes').then((x) => x.corpo.clientes)
+  const achar = async () => (await lista()).find((c) => c.cnpj === cnpj)
+  assert.equal((await achar()).temCertificado, false)
+  assert.equal((await achar()).certDias, null)
+  assert.equal((await achar()).ativo, false, 'nasce desativado')
+  assert.equal((await pedir(`/api/clientes/${cnpj}/ativo`, { method: 'POST', body: { ativo: true } })).status, 400)
+  assert.equal((await lista()).find((c) => c.cnpj !== cnpj).temCertificado, true)
+
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [cnpj] } })).status, 400, 'não dá para capturar sem certificado')
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpj } })).status, 400)
+
+  const repetido = await pedir('/api/clientes', { method: 'POST', body: { ...dados, semCertificado: true } })
+  assert.equal(repetido.status, 409)
+
+  const cert = gerarPfx({ cnpj })
+  const troca = await pedir(`/api/clientes/${cnpj}/certificado`, { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: cert.senha } })
+  assert.equal(troca.status, 200, JSON.stringify(troca.corpo))
+  assert.equal((await achar()).temCertificado, true)
+  assert.equal((await achar()).ativo, true, 'com o certificado, ativa sozinho')
+  assert.ok((await achar()).certValidade)
+  assert.ok(fs.existsSync(path.join(ctx.config.pastaCerts, `${cnpj}.pfx`)))
+})
+
+test('escritório cadastrado como cliente sem enviar certificado mantém o que já tem', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const cnpj = '27865757000102'
+  const cert = gerarPfx({ cnpj })
+  ctx.clientes.cadastrarEscritorio({ cnpj, razao: 'Escritório Ltda', uf: 'CE', pfx: cert.pfx, senha: cert.senha })
+  const r = await pedir('/api/clientes', { method: 'POST', body: { cnpj, razao: 'Escritório Ltda', uf: 'CE', semCertificado: true } })
+  assert.equal(r.status, 201, JSON.stringify(r.corpo))
+  const linha = ctx.db.prepare('SELECT tambem_cliente, cert_arquivo FROM clientes WHERE cnpj = ?').get(cnpj)
+  assert.equal(linha.tambem_cliente, 1)
+  assert.equal(linha.cert_arquivo, `${cnpj}.pfx`)
+})
+
+test('cadastro sem certificado fora do próprio PC é recusado', async (t) => {
+  const { ctx } = await montar(t)
+  const post = await appComPastas(t, ctx, { ehLocal: () => false })
+  assert.equal((await post('/api/clientes', { cnpj: '27865757000102', razao: 'X', uf: 'CE', semCertificado: true })).status, 403)
+})

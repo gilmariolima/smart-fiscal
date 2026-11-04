@@ -20,7 +20,7 @@ function pendentesDeCiencia(resumo) {
 const ATALHOS = [
   { para: '/notas', icone: 'notas', cor: 'azul', titulo: 'Notas', texto: 'Por empresa e mês' },
   { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e captura' },
-  { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar com o A1', soNoPc: true },
+  { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Com ou sem o A1', soNoPc: true },
   { para: '/notas/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Aguardando a ciência' },
   { para: '/exportar', icone: 'exportar', cor: 'grafite', titulo: 'Exportar', texto: 'ZIP com PDF e XML' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado das saídas', soNoPc: true },

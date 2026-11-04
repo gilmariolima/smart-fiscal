@@ -29,7 +29,7 @@ const capturaDo = (c, modelo) => {
 }
 
 // Desativado não entra; bloqueado pelo 656 (NF-e e CT-e, cada um com o seu) fica de fora.
-const marcavel = (c, modelo) => c.ativo && !capturaDo(c, modelo).bloqueadoAte
+const marcavel = (c, modelo) => c.ativo && c.temCertificado && !capturaDo(c, modelo).bloqueadoAte
 
 // Cada serviço pede 1 hora entre consultas do mesmo CNPJ; a captura pula quem ainda está esperando.
 const liberadoEm = (c, modelo) => {
@@ -147,7 +147,9 @@ function ListaDeClientes({ modelo }) {
     return () => clearInterval(t)
   }, [capturando])
 
-  const ativos = lista.filter((c) => c.ativo)
+  // Sem certificado não há o que capturar: fica só na tela Clientes.
+  const ativos = lista.filter((c) => c.ativo && c.temCertificado)
+  const semCertificado = lista.filter((c) => !c.temCertificado).length
   const termo = busca.trim().toLowerCase()
   const digitos = termo.replace(/\D/g, '')
   const visiveis = ativos.filter(
@@ -308,6 +310,11 @@ function ListaDeClientes({ modelo }) {
         </div>
       )}
       {conteudo}
+      {semCertificado > 0 && (
+        <p className="rodape-tabela">
+          {plural(semCertificado, 'cliente sem certificado não aparece', 'clientes sem certificado não aparecem')} aqui. Adicione o certificado em <Link to="/clientes">Clientes</Link>.
+        </p>
+      )}
     </section>
   )
 }

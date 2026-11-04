@@ -59,7 +59,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
       proxima_consulta = COALESCE(@proxima_consulta, proxima_consulta), bloqueado_ate = COALESCE(@bloqueado_ate, bloqueado_ate),
       ultima_consulta = @agora, ultimo_erro = @ultimo_erro WHERE id = @id`),
     cliente: db.prepare('SELECT * FROM clientes WHERE id = ?'),
-    clientesAtivos: db.prepare('SELECT * FROM clientes WHERE ativo = 1 ORDER BY id'),
+    clientesAtivos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND cert_arquivo <> '' ORDER BY id"),
     clientePorCnpj: db.prepare('SELECT * FROM clientes WHERE cnpj = ?'),
     // Encaminhamento do escritório: CNPJ exato (filial é outro cliente); inativo também recebe a nota.
     clienteDaCarteira: db.prepare(`SELECT * FROM clientes WHERE cnpj = ? AND ${DA_CARTEIRA}`),

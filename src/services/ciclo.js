@@ -25,7 +25,8 @@ function criarServicoCiclo(deps) {
   const sql = {
     emAndamento: db.prepare(`SELECT id, tipo, inicio FROM execucoes WHERE fim IS NULL AND tipo IN ('captura', 'captura_nfse', 'captura_cte', 'ciencia', 'download')
       AND inicio > ? LIMIT 1`),
-    ativos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' ORDER BY id"),
+    // Sem certificado não há como consultar: quem não tem fica de fora (cert_arquivo vazio).
+    ativos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo <> '' ORDER BY id"),
     escritorio: db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio' AND ativo = 1 LIMIT 1"),
     porCnpj: db.prepare('SELECT * FROM clientes WHERE cnpj = ?'),
   }
@@ -52,12 +53,13 @@ function criarServicoCiclo(deps) {
         }
         achados.push(c)
       }
-      return { clientes: achados.filter((c) => c.ativo === 1).sort((a, b) => a.id - b.id), escritorioComoCliente }
+      return { clientes: achados.filter((c) => c.ativo === 1 && c.cert_arquivo).sort((a, b) => a.id - b.id), escritorioComoCliente }
     }
     if (!cnpj) return { clientes: sql.ativos.all(), escritorioComoCliente: true }
     const c = sql.porCnpj.get(cnpj)
     if (!c) return { erro: `CNPJ ${cnpj} não cadastrado.` }
     if (c.papel === 'escritorio') return { clientes: [], escritorio: c.ativo ? c : null, escritorioComoCliente: true }
+    if (!c.cert_arquivo) return { erro: `CNPJ ${cnpj} está sem certificado: cadastre o A1 para capturar.` }
     return { clientes: [c] }
   }
 

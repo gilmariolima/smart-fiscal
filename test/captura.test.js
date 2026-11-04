@@ -408,3 +408,17 @@ test('escritório que também é cliente: guarda a nota destinada a ele como ent
   assert.deepEqual(doEscritorio, [{ tipo: 'entrada', status: 'completa' }, { tipo: 'entrada', status: 'resumo' }])
   assert.equal(db.prepare('SELECT tipo FROM notas WHERE cliente_id = ?').get(ids[0]).tipo, 'saida', 'a saída do cliente continua nele')
 })
+
+test('nota de saída que chega pelo escritório fica na empresa sem certificado, mesmo desativada', async (t) => {
+  const { db, servico, mock, ids, limpar } = montarComEscritorio()
+  t.after(limpar)
+  db.prepare("UPDATE clientes SET cert_arquivo = '', cert_senha_enc = '', cert_validade = NULL, ativo = 0 WHERE id = ?").run(ids[0])
+  const r = await servico.capturarCliente(ids[1])
+  assert.equal(r.ok, true)
+  assert.equal(r.saida, 2)
+  const [s1] = mock.estado(CNPJ_MOCK_ESCRITORIO).docs.map((d) => d.json.nfeProc?.protNFe.infProt.chNFe)
+  const [n] = db.prepare('SELECT * FROM notas WHERE chave = ?').all(s1)
+  assert.equal(n.cliente_id, ids[0])
+  assert.equal(n.tipo, 'saida')
+  assert.equal(n.status, 'completa')
+})
