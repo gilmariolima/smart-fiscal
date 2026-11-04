@@ -41,11 +41,11 @@ function cicloFalso(impl) {
   return { chamadas, executarCiclo: async () => (chamadas.push(1), impl ? impl() : { ok: true, clientes: [{ cnpj: '1' }, { cnpj: '2', erro: 'x' }] }) }
 }
 
-test('agenda o ciclo na expressão do .env e roda um ciclo logo depois de iniciar', async () => {
+test('agenda o ciclo na expressão do .env e , com atraso pedido (servidor pelo terminal), roda um ciclo logo depois de iniciar', async () => {
   const cron = cronFalso()
   const timer = timerFalso()
   const ciclo = cicloFalso()
-  const ag = criarAgendador({ ciclo, config, logger: silencioso, cron, agendarUmaVez: timer.agendarUmaVez })
+  const ag = criarAgendador({ ciclo, config, logger: silencioso, cron, atrasoInicialMs: 15000, agendarUmaVez: timer.agendarUmaVez })
   ag.iniciar()
   ag.iniciar() // idempotente
   assert.equal(cron.tarefas.length, 1)
@@ -245,4 +245,17 @@ test('horário e início usam a escolha de cada cliente (automatica); o painel c
   await ag.executarAgora('inicio')
   await ag.executarAgora('painel')
   assert.deepEqual(opcoes.map((o) => o.automatica), [true, true, false])
+})
+
+test('como o app abre (sem atraso pedido): não captura ao iniciar, só no horário', async () => {
+  const cron = cronFalso()
+  const timer = timerFalso()
+  const ciclo = cicloFalso()
+  const ag = criarAgendador({ ciclo, config, logger: silencioso, cron, agendarUmaVez: timer.agendarUmaVez })
+  ag.iniciar()
+  assert.deepEqual(timer.chamadas, [], 'nada agendado para logo depois de abrir')
+  assert.equal(ciclo.chamadas.length, 0)
+  await cron.tarefas[0].fn()
+  await new Promise((r) => setImmediate(r))
+  assert.equal(ciclo.chamadas.length, 1, 'no horário, captura')
 })

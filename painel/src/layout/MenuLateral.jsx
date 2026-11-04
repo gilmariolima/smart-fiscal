@@ -16,7 +16,6 @@ const GRUPOS = [
     itens: [
       { para: '/notas', rotulo: 'Notas', icone: 'fa-folder-open' },
       { para: '/exportar', rotulo: 'Exportar', icone: 'fa-file-zipper' },
-      { para: '/execucoes', rotulo: 'Execuções', icone: 'fa-clock-rotate-left' },
     ],
   },
   {
@@ -34,6 +33,7 @@ const GRUPOS = [
       { para: '/sped/contador', rotulo: 'Contador do SPED', icone: 'fa-user-tie' },
       { para: '/pastas', rotulo: 'Pastas', icone: 'fa-folder-tree' },
       { para: '/backup', rotulo: 'Backup', icone: 'fa-shield-halved' },
+      { para: '/execucoes', rotulo: 'Execuções', icone: 'fa-clock-rotate-left' },
     ],
   },
 ]

@@ -64,7 +64,7 @@ export default function Anos() {
     <Pagina
       titulo={modelo.rotulo}
       subtitulo="Escolha o ano."
-      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: modelo.rotulo, para: `/notas/${slug}` }, { rotulo: nome }]}
+      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome, para: `/notas/${cnpj}` }, { rotulo: modelo.rotulo }]}
       erro={erro}
     >
       {conteudo}

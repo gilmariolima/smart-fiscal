@@ -210,8 +210,8 @@ export default function Mes() {
   const raizModelo = `/notas/${cnpj}/${slugModelo}`
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
-    { rotulo: pastaModelo.rotulo, para: `/notas/${slugModelo}` },
-    { rotulo: nome, para: raizModelo },
+    { rotulo: nome, para: `/notas/${cnpj}` },
+    { rotulo: pastaModelo.rotulo, para: raizModelo },
     { rotulo: ano, para: `${raizModelo}/${ano}` },
     { rotulo: nomeDoMes },
   ]

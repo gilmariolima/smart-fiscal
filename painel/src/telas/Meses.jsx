@@ -67,8 +67,8 @@ export default function Meses() {
       subtitulo="Escolha o mês."
       trilha={[
         { rotulo: 'Início', para: '/notas' },
-        { rotulo: modelo.rotulo, para: `/notas/${slug}` },
-        { rotulo: nome, para: `/notas/${cnpj}/${slug}` },
+        { rotulo: nome, para: `/notas/${cnpj}` },
+        { rotulo: modelo.rotulo, para: `/notas/${cnpj}/${slug}` },
         { rotulo: ano },
       ]}
       erro={erro}

@@ -64,13 +64,12 @@ const rotas = createHashRouter([
       { path: 'capturar', element: <Capturar /> },
       { path: 'capturar/:modelo', element: <Capturar /> },
       { path: 'capturar/:modelo/novas/:cnpj', element: <NotasNovas /> },
-      // Tipo (NF-e | NFS-e | CT-e | XMLs não baixados) → cliente → ano → mês → Entradas | Saídas
-      { path: 'notas', element: <Modelos /> },
-      { path: 'notas/nf-e', element: <NotasRaiz key="nf-e" slug="nf-e" /> },
-      { path: 'notas/nfs-e', element: <NotasRaiz key="nfs-e" slug="nfs-e" /> },
-      { path: 'notas/ct-e', element: <NotasRaiz key="ct-e" slug="ct-e" /> },
+      // Empresa → tipo (NF-e | NFS-e | CT-e | XMLs não baixados) → ano → mês: a mesma ordem das pastas no disco e do ZIP
+      { path: 'notas', element: <NotasRaiz /> },
+      { path: 'notas/nf-e', element: <Navigate to="/notas" replace /> },
+      { path: 'notas/nfs-e', element: <Navigate to="/notas" replace /> },
+      { path: 'notas/ct-e', element: <Navigate to="/notas" replace /> },
       { path: 'notas/pendentes', element: <PendentesClientes /> },
-      // Pasta de um cliente só (botão "Ver as notas" em Clientes)
       { path: 'notas/:cnpj', element: <Modelos /> },
       { path: 'notas/:cnpj/nota/:id', element: <Nota /> },
       { path: 'notas/:cnpj/pendentes', element: <Pendentes /> },

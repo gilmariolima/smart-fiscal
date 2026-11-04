@@ -64,7 +64,7 @@ export default function Pastas() {
       <section className="formulario" aria-label="Pasta principal">
         <strong className="formulario-titulo">Pasta principal</strong>
         <p className="formulario-nota">
-          Pode ser em outro disco ou na rede. Ao trocar, as notas e os arquivos do SPED que já existem vão junto. Dentro dela: <span className="mono">Notas</span>, por tipo, cliente, ano e mês, e{' '}
+          Pode ser em outro disco ou na rede. Ao trocar, as notas e os arquivos do SPED que já existem vão junto. Dentro dela: <span className="mono">Notas</span>, por empresa, tipo, ano e mês, e{' '}
           <span className="mono">Arquivos SPED</span>.
         </p>
         {texto !== null ? (

@@ -183,8 +183,8 @@ test('processo real: cadastro com senha pelo pipe, captura duas vezes sem duplic
   assert.equal(db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfse'").get().n, 3, 'NFS-e da demonstração, sem duplicar')
   db.close()
   const xmls = fs.readdirSync(p.env.PASTA_XMLS, { recursive: true }).filter((f) => f.endsWith('.xml')).map((f) => f.replace(/\\/g, '/'))
-  assert.equal(xmls.filter((f) => f.startsWith('NF-e/')).length, 5)
-  assert.equal(xmls.filter((f) => f.startsWith('NFS-e/')).length, 4, '3 NFS-e e 1 cancelamento')
+  assert.equal(xmls.filter((f) => f.includes('/NF-e/')).length, 5)
+  assert.equal(xmls.filter((f) => f.includes('/NFS-e/')).length, 4, '3 NFS-e e 1 cancelamento')
   const log = fs.readFileSync(path.join(p.env.PASTA_LOGS, 'app.log'), 'utf8')
   assert.ok(!log.includes(cert.senha), 'senha não aparece no log')
 

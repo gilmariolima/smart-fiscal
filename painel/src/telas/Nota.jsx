@@ -547,7 +547,7 @@ export default function Nota() {
   const ehServico = nota?.modelo === 'nfse'
   const ehCte = nota?.modelo === 'cte'
   const [ano, mes] = (nota?.competencia || '').split('-')
-  // Pasta da nota: <NF-e|NFS-e|CT-e>/<ano>/<mês>.
+  // Pasta da nota: <empresa>/<NF-e|NFS-e|CT-e>/<ano>/<mês>.
   const slugModelo = ehServico ? 'nfs-e' : ehCte ? 'ct-e' : 'nf-e'
   const rotuloModelo = ehServico ? 'NFS-e' : ehCte ? 'CT-e' : 'NF-e'
   const pastaModelo = `/notas/${cnpj}/${slugModelo}`
@@ -566,8 +566,8 @@ export default function Nota() {
 
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
-    ...(nota ? [{ rotulo: rotuloModelo, para: `/notas/${slugModelo}` }] : []),
-    { rotulo: nota?.cliente_nome || cnpj, para: nota ? pastaModelo : `/notas/${cnpj}` },
+    { rotulo: nota?.cliente_nome || cnpj, para: `/notas/${cnpj}` },
+    ...(nota ? [{ rotulo: rotuloModelo, para: pastaModelo }] : []),
     ...(ano
       ? [
           { rotulo: ano, para: `${pastaModelo}/${ano}` },

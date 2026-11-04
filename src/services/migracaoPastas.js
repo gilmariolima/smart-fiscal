@@ -7,7 +7,9 @@
 // Nunca impede a abertura do app: qualquer erro vai para o log e a mudança tenta de novo depois.
 //
 // Segunda mudança (migrarLayoutDasTelas): do <CNPJ_cliente>/[fora-da-carteira/]AAAA/MM/<Tipo>/<Direção>/... para a
-// ordem das telas: <Tipo>/<Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Direção>/...
+// <Tipo>/<Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Direção>/...
+// Terceira mudança (migrarLayoutEmpresaPrimeiro): para <Cliente>/[fora-da-carteira/]<Tipo>/AAAA/<Mês>/<Direção>/...,
+// a mesma ordem das telas e da exportação. Quem vem de antes passa pelas duas, em sequência.
 
 const fs = require('node:fs')
 const path = require('node:path')
@@ -15,12 +17,16 @@ const { direcaoPelaChave, modeloPelaChave, pastaDoClienteNoDisco, MESES, PASTAS 
 
 const VERSAO = '2'
 const VERSAO_LAYOUT = '3'
+const VERSAO_EMPRESA = '4'
 const PASTA_CLIENTE = /^(\d{14})(_.*)?$/
 const PASTA_MES = /^(\d{4}-\d{2}|sem-data)$/
 const ARQUIVO = /^(\d+)-(nfe|resumo|evento-\d+-\d+)\.xml$/
 const POR_TRANSACAO = 500
 // Dentro da pasta do cliente, no formato da versão 2.
 const CAMINHO_V2 = /^(?:(fora-da-carteira)\/)?(?:(\d{4})\/(0[1-9]|1[0-2])|sem-data)\/(NF-e|NFS-e|CT-e)\/(Entradas|Saidas|Outros)\/(?:(Eventos|Resumos)\/)?([^/]+)$/
+
+// Dentro da pasta do tipo, no formato da versão 3: <Cliente>/[fora-da-carteira/]AAAA/<Mês>|sem-data/<Direção>/...
+const CAMINHO_V3 = new RegExp(`^([^/]+)/(?:(fora-da-carteira)/)?((?:\\d{4}/(?:${MESES.join('|')})|sem-data)/(?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+)$`)
 
 const mesmoConteudo = (a, b) => fs.readFileSync(a).equals(fs.readFileSync(b))
 const barras = (rel) => rel.replace(/\\/g, '/')
@@ -180,7 +186,7 @@ function removerSeVazia(pasta) {
 function migrarLayoutDasTelas({ db, pastaXmls, logger, fsOps = {} }) {
   const resultado = { movidos: 0, ignorados: [], pendentes: [] }
   const lerVersao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'")
-  if (lerVersao.get()?.valor === VERSAO_LAYOUT) return resultado
+  if ([VERSAO_LAYOUT, VERSAO_EMPRESA].includes(lerVersao.get()?.valor)) return resultado
   try {
     executarLayout({ db, pastaXmls, logger, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
   } catch (e) {
@@ -240,6 +246,59 @@ function executarLayout({ db, pastaXmls, logger, ops, resultado }) {
   if (resultado.movidos) logger.info('XMLs organizados na ordem das telas', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
 }
 
+/**
+ * Leva os XMLs para <Cliente>/[fora-da-carteira/]<Tipo>/AAAA/<Mês>/... Só roda depois da mudança anterior terminar
+ * e só mexe nas pastas NF-e, NFS-e e CT-e da raiz: rodar de novo não faz nada. O nome da pasta do cliente fica como está.
+ * @returns {{ movidos: number, ignorados: string[], pendentes: string[], erro?: string }}
+ */
+function migrarLayoutEmpresaPrimeiro({ db, pastaXmls, logger, fsOps = {} }) {
+  const resultado = { movidos: 0, ignorados: [], pendentes: [] }
+  if (db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get()?.valor !== VERSAO_LAYOUT) return resultado
+  try {
+    executarEmpresa({ db, pastaXmls, logger, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
+  } catch (e) {
+    resultado.erro = e.message
+    logger.error('Falha ao organizar os XMLs por empresa; tenta de novo na próxima abertura', { erro: e.message })
+  }
+  return resultado
+}
+
+function executarEmpresa({ db, pastaXmls, logger, ops, resultado }) {
+  const gravarVersao = () => db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_EMPRESA)
+  if (!fs.existsSync(pastaXmls)) {
+    pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
+    return
+  }
+
+  const tipos = Object.values(PASTAS.modelo)
+  const movimentos = []
+  const percorrer = (tipo, relativa) => {
+    for (const nome of ops.readdirSync(path.join(pastaXmls, relativa))) {
+      const antigo = path.join(relativa, nome)
+      if (fs.statSync(path.join(pastaXmls, antigo)).isDirectory()) {
+        percorrer(tipo, antigo)
+        continue
+      }
+      const m = CAMINHO_V3.exec(barras(path.relative(tipo, antigo)))
+      if (!m) {
+        resultado.ignorados.push(antigo)
+        continue
+      }
+      const [, cliente, fora, resto] = m
+      movimentos.push({ antigo, novo: path.join(cliente, ...(fora ? [fora] : []), tipo, resto) })
+    }
+  }
+  const presentes = ops.readdirSync(pastaXmls).filter((t) => tipos.includes(t) && fs.statSync(path.join(pastaXmls, t)).isDirectory())
+  for (const tipo of presentes) percorrer(tipo, tipo)
+
+  aplicarMovimentos({ db, pastaXmls, logger, ops, resultado, movimentos })
+  for (const tipo of presentes) removerVaziasDentro(path.join(pastaXmls, tipo))
+
+  if (resultado.ignorados.length) logger.warn('Arquivos fora do padrão ficaram na pasta antiga', { arquivos: resultado.ignorados })
+  if (!resultado.pendentes.length) gravarVersao()
+  if (resultado.movidos) logger.info('XMLs organizados por empresa', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
+}
+
 // Apaga as subpastas que ficaram vazias, de baixo para cima, e a própria pasta se esvaziar.
 function removerVaziasDentro(pasta) {
   try {
@@ -252,4 +311,4 @@ function removerVaziasDentro(pasta) {
   removerSeVazia(pasta)
 }
 
-module.exports = { migrarPastas, migrarLayoutDasTelas }
+module.exports = { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro }

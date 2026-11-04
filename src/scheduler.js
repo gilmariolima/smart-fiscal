@@ -14,10 +14,10 @@ const nodeCron = require('node-cron')
  * @param {object} [deps.cron]         node-cron (injetável nos testes)
  * @param {object} [deps.automacao]    criarAutomacao(...); com a busca automática desligada, só roda o que for disparado à mão;
  *                                     os horários dela substituem o cron do .env
- * @param {number|false} [deps.atrasoInicialMs] roda um ciclo logo depois de iniciar (false desliga)
+ * @param {number|false} [deps.atrasoInicialMs] só o servidor pelo terminal roda um ciclo logo depois de iniciar; o app captura só nos horários
  * @param {Function} [deps.agendarUmaVez] setTimeout injetável
  */
-function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atrasoInicialMs = 15000, agendarUmaVez = setTimeout, agora = () => new Date() }) {
+function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atrasoInicialMs = false, agendarUmaVez = setTimeout, agora = () => new Date() }) {
   let tarefas = []
   let iniciado = false
   let timerInicial = null
@@ -90,7 +90,6 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
     iniciado = true
     logger.info('Agendador iniciado', { horarios: horarios() || config.cronCaptura, proxima: proximaExecucao() })
     if (atrasoInicialMs !== false) {
-      // Ao ligar o PC, não espera até o próximo horário do cron.
       timerInicial = agendarUmaVez(() => {
         timerInicial = null
         executarAgora('inicio')

@@ -1,10 +1,10 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import Pasta from '../componentes/Pasta.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { nomeDe } from '../useCliente.js'
 import { cnpj, inteiro } from '../formato.js'
-import { MODELOS } from '../modelos.js'
 
 function filtrar(clientes, busca) {
   const texto = busca.trim().toLowerCase()
@@ -20,11 +20,11 @@ function filtrar(clientes, busca) {
   return lista.sort((a, b) => Number(!a.ativo) - Number(!b.ativo) || nomeDe(a).localeCompare(nomeDe(b), 'pt-BR'))
 }
 
-function Linha({ c, slug }) {
+function Linha({ c }) {
   return (
     <tr className={c.ativo ? undefined : 'inativo'}>
       <td>
-        <Pasta para={`/notas/${c.cnpj}/${slug}`}>{nomeDe(c)}</Pasta>
+        <Pasta para={`/notas/${c.cnpj}`}>{nomeDe(c)}</Pasta>
         {!c.ativo && <span className="secundario">Desativado</span>}
       </td>
       <td className="sem-quebra">{cnpj(c.cnpj)}</td>
@@ -32,9 +32,8 @@ function Linha({ c, slug }) {
   )
 }
 
-// Segundo nível de Notas: depois do tipo (NF-e | NFS-e), o cliente.
-export default function NotasRaiz({ slug }) {
-  const modelo = MODELOS[slug]
+// Primeiro nível de Notas: a empresa. Depois vêm o tipo, o ano e o mês, na mesma ordem das pastas no disco e do ZIP.
+export default function NotasRaiz() {
   const [busca, setBusca] = useState('')
   const { dados, erro, carregando } = useApi('/api/clientes')
   const todos = dados?.clientes || []
@@ -69,7 +68,7 @@ export default function NotasRaiz({ slug }) {
                 </thead>
                 <tbody>
                   {lista.map((c) => (
-                    <Linha key={c.cnpj} c={c} slug={slug} />
+                    <Linha key={c.cnpj} c={c} />
                   ))}
                 </tbody>
               </table>
@@ -86,9 +85,13 @@ export default function NotasRaiz({ slug }) {
 
   return (
     <Pagina
-      titulo={modelo.rotulo}
-      subtitulo="Escolha o cliente."
-      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: modelo.rotulo }]}
+      titulo="Notas"
+      subtitulo="Escolha a empresa."
+      acoes={
+        <Link className="botao botao-claro" to="/notas/pendentes">
+          XMLs não baixados
+        </Link>
+      }
       erro={erro}
     >
       {conteudo}

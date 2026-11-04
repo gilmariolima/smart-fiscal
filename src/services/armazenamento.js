@@ -3,8 +3,8 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-// Grava os XMLs em <PASTA_XMLS>/<NF-e|NFS-e|CT-e>/<Cliente>/[fora-da-carteira/]<AAAA>/<Mês>/<Entradas|Saidas|Outros>/[Eventos|Resumos/]:
-// a mesma ordem das telas do sistema (tipo, cliente, ano, mês).
+// Grava os XMLs em <PASTA_XMLS>/<Empresa>/[fora-da-carteira/]<NF-e|NFS-e|CT-e>/<AAAA>/<Mês>/<Entradas|Saidas|Outros>/[Eventos|Resumos/]:
+// a mesma ordem das telas e da exportação (empresa, tipo, ano, mês).
 // O banco guarda o caminho relativo à PASTA_XMLS, para a pasta poder mudar de lugar.
 // Só este módulo monta caminho de XML.
 
@@ -85,9 +85,10 @@ function direcaoPelaChave(chave, cnpjCliente) {
  */
 function caminhoDa({ cliente, outrosClientes, modelo = 'nfe', direcao = 'entrada', competencia, categoria = 'nota', nomeArquivo, foraDaCarteira = false }) {
   const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(competencia || '')
-  const partes = [PASTAS.modelo[modelo] || PASTAS.modelo.nfe, pastaDoClienteNoDisco(cliente, outrosClientes)]
+  const partes = [pastaDoClienteNoDisco(cliente, outrosClientes)]
   if (foraDaCarteira) partes.push(PASTAS.foraDaCarteira)
-  partes.push(...(m ? [m[1], MESES[Number(m[2]) - 1]] : [PASTAS.semData]))
+  partes.push(PASTAS.modelo[modelo] || PASTAS.modelo.nfe)
+  partes.push(...(m ?[m[1], MESES[Number(m[2]) - 1]] : [PASTAS.semData]))
   partes.push(PASTAS.direcao[direcao] || PASTAS.direcao.entrada)
   if (categoria === 'evento') partes.push(PASTAS.evento)
   if (categoria === 'resumo') partes.push(PASTAS.resumo)

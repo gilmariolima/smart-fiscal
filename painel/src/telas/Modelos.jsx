@@ -9,10 +9,6 @@ import { MODELOS } from '../modelos.js'
 
 const SLUG = Object.fromEntries(Object.entries(MODELOS).map(([slug, m]) => [m.valor, slug]))
 
-// Sem cliente (/notas): contagens de todos e o card abre a lista de clientes; com cliente, a pasta dele.
-const doCliente = (cnpj) => (cnpj ? `cnpj=${cnpj}&` : '')
-const pastaDe = (cnpj, slug) => (cnpj ? `/notas/${cnpj}/${slug}` : `/notas/${slug}`)
-
 // Card de Notas: ícone e nome do tipo, o total grande, o detalhe embaixo e "Acessar".
 function CardNota({ cor, icone, rotulo, etiqueta, rotuloNumero, numero, detalhe, para }) {
   const conteudo = (
@@ -49,7 +45,7 @@ function CardNota({ cor, icone, rotulo, etiqueta, rotuloNumero, numero, detalhe,
 function Card({ cnpj, chave }) {
   const m = CARDS[chave]
   const ativo = !m.emBreve
-  const { dados } = useApi(ativo ? `/api/notas?${doCliente(cnpj)}modelo=${chave}&status=com_xml&somenteContagem=1` : null, [cnpj, chave])
+  const { dados } = useApi(ativo ? `/api/notas?cnpj=${cnpj}&modelo=${chave}&status=com_xml&somenteContagem=1` : null, [cnpj, chave])
   const c = dados?.contagemTipo
   const total = c ? c.entradas + c.saidas + c.outros : null
   const detalhe = c ? `${inteiro(c.entradas)} entradas · ${inteiro(c.saidas)} saídas${c.outros ? ` · ${inteiro(c.outros)} outros` : ''}` : ''
@@ -62,14 +58,14 @@ function Card({ cnpj, chave }) {
       rotuloNumero="Notas"
       numero={ativo ? total : 0}
       detalhe={ativo ? detalhe : ''}
-      para={ativo ? pastaDe(cnpj, SLUG[chave]) : null}
+      para={ativo ? `/notas/${cnpj}/${SLUG[chave]}` : null}
     />
   )
 }
 
 // Depois dos tipos: as notas do cliente que ainda não têm o XML completo (canceladas fora).
 function CardSemXml({ cnpj }) {
-  const { dados } = useApi(`/api/notas?${doCliente(cnpj)}status=sem_xml&somenteContagem=1`, [cnpj])
+  const { dados } = useApi(`/api/notas?cnpj=${cnpj}&status=sem_xml&somenteContagem=1`, [cnpj])
   const c = dados?.contagemTipo
   const total = c ? c.entradas + c.saidas : null
   return (
@@ -80,16 +76,17 @@ function CardSemXml({ cnpj }) {
       rotuloNumero="Notas sem XML"
       numero={total}
       detalhe={total ? 'Aguardando o XML completo' : total === 0 ? 'Nenhuma nota sem XML' : ''}
-      para={pastaDe(cnpj, 'pendentes')}
+      para={`/notas/${cnpj}/pendentes`}
     />
   )
 }
 
+// Segundo nível de Notas: depois da empresa, o tipo de nota.
 export default function Modelos() {
   const { cnpj } = useParams()
   const nome = useNomeDoCliente(cnpj)
   return (
-    <Pagina titulo="Notas" subtitulo="Escolha o tipo de nota." trilha={cnpj && [{ rotulo: 'Início', para: '/notas' }, { rotulo: nome }]}>
+    <Pagina titulo={nome} subtitulo="Escolha o tipo de nota." trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome }]}>
       <ul className="cards-notas">
         {Object.keys(CARDS).map((chave) => (
           <li key={chave}>

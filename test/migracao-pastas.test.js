@@ -122,8 +122,8 @@ test('criarContexto move os XMLs antigos ao abrir', (t) => {
   }
   const ctx = criarContexto({ config: carregarConfig(env), logger: silencioso, db: abrirBanco(':memory:') })
   assert.ok(!fs.existsSync(antigo))
-  // As duas mudanças rodam ao abrir: formato antigo → versão 2 → ordem das telas.
-  assert.ok(fs.existsSync(path.join(pastaXmls, 'NF-e', 'INOX', '2026', 'Outubro', 'Saidas', `${SAIDA}-nfe.xml`)))
+  // As mudanças rodam em sequência ao abrir, do formato antigo até empresa primeiro.
+  assert.ok(fs.existsSync(path.join(pastaXmls, 'INOX', 'NF-e', '2026', 'Outubro', 'Saidas', `${SAIDA}-nfe.xml`)))
   assert.equal(versao(ctx.db), '2')
 })
 

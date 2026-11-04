@@ -54,7 +54,7 @@ test('busca automática desligada: horário e início são ignorados; disparo à
   const tarefas = []
   const cron = { validate: nodeCron.validate, schedule: (e, fn) => (tarefas.push(fn), { destroy() {}, getNextRun: () => new Date('2026-10-10T11:00:00Z') }) }
   const iniciais = []
-  const ag = criarAgendador({ ciclo, config: { cronCaptura: '0 8,13 * * *' }, logger: silencioso, automacao, cron, agendarUmaVez: (fn) => iniciais.push(fn) })
+  const ag = criarAgendador({ ciclo, config: { cronCaptura: '0 8,13 * * *' }, logger: silencioso, automacao, cron, atrasoInicialMs: 15000, agendarUmaVez: (fn) => iniciais.push(fn) })
   ag.iniciar()
 
   automacao.definir({ captura: false })

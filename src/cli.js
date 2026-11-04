@@ -269,7 +269,7 @@ function criarPrograma(io) {
     .action(async (o) => {
       const c = io.contextoServidor ? (ctx ||= io.contextoServidor()) : contexto()
       const { iniciarServidor, aguardarEncerramento } = require('./servidor')
-      const atraso = o.atrasoInicial !== undefined ? Math.max(0, Number(o.atrasoInicial) || 0) * 1000 : undefined
+      const atraso = o.atrasoInicial !== undefined ? Math.max(0, Number(o.atrasoInicial) || 0) * 1000 : 15000
       const servidor = await iniciarServidor(c, { atrasoInicialMs: o.semCicloInicial ? false : atraso })
       const e = servidor.agendador.estado()
       log(`Servidor rodando (${c.config.tpAmb === '1' ? 'PRODUÇÃO' : 'homologação'}${c.config.sefazMock ? ', SEFAZ simulada' : ''}).`)
