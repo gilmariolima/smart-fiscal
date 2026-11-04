@@ -139,6 +139,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
   const sql = {
     clientes: db.prepare(`SELECT ${COLUNAS_PUBLICAS} FROM clientes WHERE ${DA_CARTEIRA} ORDER BY razao_social`),
     contagemPorCliente: db.prepare(`SELECT cliente_id,
+        COUNT(*) total,
         SUM(CASE WHEN status = 'resumo' AND cancelada = 0 THEN 1 ELSE 0 END) resumo,
         SUM(CASE WHEN status = 'ciencia_enviada' AND cancelada = 0 THEN 1 ELSE 0 END) ciencia,
         SUM(CASE WHEN status = 'ciencia_erro' AND cancelada = 0 THEN 1 ELSE 0 END) ciencia_erro,
@@ -253,6 +254,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
           },
           // Busca automática ligada por tipo de nota (os horários pulam o que estiver desligado).
           automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0, cte: c.auto_cte !== 0 },
+          notasTotal: n.total || 0,
           temCertificado: !!c.cert_arquivo,
           certValidade: c.cert_validade,
           certDias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null,
@@ -776,6 +778,21 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
     const pfx = lerPfx(req.body)
     const r = comoErroHttp(() => ctx.clientes.trocarCertificado({ cnpj: req.params.cnpj, pfx, senha: req.body.senha }))
     res.json(recibo(r))
+  })
+
+  app.post('/api/clientes/:cnpj/editar', (req, res) => {
+    exigirLocal(req)
+    if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para editar o cliente.')
+    const b = req.body || {}
+    const r = comoErroHttp(() => ctx.clientes.editar(req.params.cnpj, { cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), apelido: String(b.apelido || '') }))
+    res.json({ ok: true, cnpj: r.cliente.cnpj, avisos: r.avisos, mensagem: 'Dados do cliente salvos.' })
+  })
+
+  app.post('/api/clientes/:cnpj/excluir', (req, res) => {
+    exigirLocal(req)
+    if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para excluir o cliente.')
+    const r = comoErroHttp(() => ctx.clientes.excluir(req.params.cnpj))
+    res.json({ ok: true, notas: r.notas, mensagem: `${r.cliente.apelido || r.cliente.razao_social} excluído.` })
   })
 
   app.post('/api/clientes/:cnpj/ativo', (req, res) => {

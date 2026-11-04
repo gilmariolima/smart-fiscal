@@ -1198,6 +1198,148 @@ test('busca automática de vários clientes de uma vez: só o tipo escolhido e s
   assert.equal((await auto(CNPJ_MOCK_OK)).nfe, false)
 })
 
+test('editar cliente: muda razão, apelido e UF e leva a pasta e os caminhos das notas junto', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const { db, config } = ctx
+  const cliente = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
+  const relativo = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'Entradas', 'a.xml')
+  fs.mkdirSync(path.join(config.pastaXmls, path.dirname(relativo)), { recursive: true })
+  fs.writeFileSync(path.join(config.pastaXmls, relativo), '<x/>')
+  const chave = '2'.repeat(44)
+  db.prepare("INSERT INTO notas (cliente_id, chave, status, caminho_xml) VALUES (?, ?, 'completa', ?)").run(cliente.id, chave, relativo)
+  db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(chave, relativo)
+
+  const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: ' Razão Nova Ltda ', uf: 'pi', apelido: 'Nome Novo' } })
+  assert.equal(r.status, 200)
+  const depois = db.prepare('SELECT * FROM clientes WHERE id = ?').get(cliente.id)
+  assert.deepEqual([depois.razao_social, depois.uf, depois.apelido], ['Razão Nova Ltda', 'PI', 'Nome Novo'])
+  assert.equal(depois.ult_nsu, cliente.ult_nsu)
+
+  const novo = path.join('Nome Novo', '2026', 'Outubro', 'NF-e', 'Entradas', 'a.xml')
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas WHERE chave = ?').get(chave).c, novo)
+  assert.equal(db.prepare('SELECT caminho_xml c FROM eventos WHERE chave = ?').get(chave).c, novo)
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, novo)))
+  assert.ok(!fs.existsSync(path.join(config.pastaXmls, 'Exemplo')))
+
+  assert.equal((await pedir('/api/clientes/99999999000199/editar', { method: 'POST', body: { cnpj: '99999999000199', razao: 'X', uf: 'CE' } })).status, 404)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: '', uf: 'CE' } })).status, 400)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'X', uf: 'ZZ' } })).status, 400)
+})
+
+test('editar cliente: pasta de destino ocupada não perde nada; o nome muda e os XMLs ficam onde estão', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const { db, config } = ctx
+  const cliente = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
+  const relativo = path.join('Exemplo', 'a.xml')
+  fs.mkdirSync(path.join(config.pastaXmls, 'Exemplo'), { recursive: true })
+  fs.writeFileSync(path.join(config.pastaXmls, relativo), '<x/>')
+  fs.mkdirSync(path.join(config.pastaXmls, 'Ocupado'), { recursive: true })
+  db.prepare("INSERT INTO notas (cliente_id, chave, status, caminho_xml) VALUES (?, ?, 'completa', ?)").run(cliente.id, '3'.repeat(44), relativo)
+
+  const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'R', uf: 'CE', apelido: 'Ocupado' } })
+  assert.equal(r.status, 200)
+  assert.equal(r.corpo.avisos.length, 1)
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas WHERE cliente_id = ?').get(cliente.id).c, relativo)
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, relativo)))
+})
+
+test('editar cliente: CNPJ muda só sem notas e zera as filas, porque o NSU é de cada CNPJ', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const { db, config } = ctx
+  const antes = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
+  db.prepare("UPDATE clientes SET ult_nsu = '000000000000050', nfse_ult_nsu = '7', cte_ult_nsu = '9', proxima_consulta = 'x', bloqueado_ate = 'y' WHERE id = ?").run(antes.id)
+  const FILIAL = '11222333000262'
+  const editar = (corpo) => pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { razao: 'R', uf: 'CE', ...corpo } })
+
+  // Outra raiz: o certificado guardado não serve para esse CNPJ.
+  assert.equal((await editar({ cnpj: CNPJ_NOVO })).status, 400)
+  // CNPJ de outro cliente.
+  assert.equal((await editar({ cnpj: CNPJ_MOCK_656 })).status, 409)
+  assert.equal((await editar({ cnpj: '123' })).status, 400)
+
+  const r = await editar({ cnpj: FILIAL })
+  assert.equal(r.status, 200)
+  assert.equal(r.corpo.cnpj, FILIAL)
+  const depois = db.prepare('SELECT * FROM clientes WHERE id = ?').get(antes.id)
+  assert.equal(depois.cnpj, FILIAL)
+  assert.equal(Number(depois.ult_nsu), 0)
+  assert.equal(Number(depois.nfse_ult_nsu), 0)
+  assert.equal(Number(depois.cte_ult_nsu), 0)
+  assert.equal(depois.proxima_consulta, null)
+  assert.equal(depois.bloqueado_ate, null)
+  assert.equal(depois.cert_arquivo, `${FILIAL}.pfx`)
+  assert.ok(fs.existsSync(path.join(config.pastaCerts, `${FILIAL}.pfx`)))
+  assert.ok(!fs.existsSync(path.join(config.pastaCerts, `${CNPJ_MOCK_OK}.pfx`)))
+
+  db.prepare("INSERT INTO notas (cliente_id, chave, status) VALUES (?, ?, 'resumo')").run(antes.id, '4'.repeat(44))
+  const comNotas = await pedir(`/api/clientes/${FILIAL}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'R', uf: 'CE' } })
+  assert.equal(comNotas.status, 400)
+  assert.match(comNotas.corpo.erro, /notas/)
+})
+
+test('editar cliente sem certificado: CNPJ muda para qualquer raiz', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  ctx.clientes.cadastrar({ cnpj: CNPJ_NOVO, razao: 'Sem Cert', uf: 'CE' })
+  const r = await pedir(`/api/clientes/${CNPJ_NOVO}/editar`, { method: 'POST', body: { cnpj: '12345678000195', razao: 'Sem Cert', uf: 'CE' } })
+  assert.equal(r.status, 200)
+  assert.ok(ctx.clientes.obter('12345678000195'))
+})
+
+test('excluir cliente: sai cadastro, certificado e registros; os XMLs continuam no disco', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const { db, config } = ctx
+  const a = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
+  const b = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_656)
+  const relativo = path.join('Exemplo', 'a.xml')
+  fs.mkdirSync(path.join(config.pastaXmls, 'Exemplo'), { recursive: true })
+  fs.writeFileSync(path.join(config.pastaXmls, relativo), '<x/>')
+  const [so, juntos] = ['5'.repeat(44), '6'.repeat(44)]
+  const nota = db.prepare("INSERT INTO notas (cliente_id, chave, status, caminho_xml) VALUES (?, ?, 'completa', ?)")
+  nota.run(a.id, so, relativo)
+  nota.run(a.id, juntos, relativo)
+  nota.run(b.id, juntos, relativo) // a mesma nota nos dois clientes (A vende para B)
+  const evento = db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq) VALUES (?, '110111', '1')")
+  evento.run(so)
+  evento.run(juntos)
+  db.prepare("INSERT INTO execucoes (cliente_id, tipo, inicio, fim) VALUES (?, 'captura', 'x', 'y')").run(a.id)
+
+  const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/excluir`, { method: 'POST', body: {} })
+  assert.equal(r.status, 200)
+  assert.equal(r.corpo.notas, 2)
+  assert.equal(ctx.clientes.obter(CNPJ_MOCK_OK), null)
+  assert.ok(!fs.existsSync(path.join(config.pastaCerts, a.cert_arquivo)))
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, relativo)), 'o XML não é apagado')
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(a.id).n, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM execucoes WHERE cliente_id = ?').get(a.id).n, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM eventos WHERE chave = ?').get(so).n, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM eventos WHERE chave = ?').get(juntos).n, 1, 'o evento da nota do outro cliente fica')
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(b.id).n, 1)
+
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/excluir`, { method: 'POST', body: {} })).status, 404)
+})
+
+test('excluir e editar cliente: escritório fica de fora e nada muda durante a captura', async (t) => {
+  const { pedir, ctx } = await montar(t, {}, { atrasoSefazMs: 200 })
+  const cert = gerarPfx({ cnpj: CNPJ_NOVO })
+  ctx.clientes.cadastrarEscritorio({ cnpj: CNPJ_NOVO, razao: 'Escritório', uf: 'CE', pfx: cert.pfx, senha: cert.senha })
+  assert.equal((await pedir(`/api/clientes/${CNPJ_NOVO}/excluir`, { method: 'POST', body: {} })).status, 400)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_NOVO}/editar`, { method: 'POST', body: { cnpj: CNPJ_NOVO, razao: 'X', uf: 'CE' } })).status, 400)
+
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: {} })).status, 202)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/excluir`, { method: 'POST', body: {} })).status, 409)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'X', uf: 'CE' } })).status, 409)
+  assert.ok(ctx.clientes.obter(CNPJ_MOCK_OK))
+  await ctx.ciclo.parar()
+})
+
+test('/api/clientes traz o total de notas, para a confirmação de excluir', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const a = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
+  ctx.db.prepare("INSERT INTO notas (cliente_id, chave, status) VALUES (?, ?, 'resumo')").run(a.id, '7'.repeat(44))
+  const c = (await pedir('/api/clientes')).corpo.clientes.find((x) => x.cnpj === CNPJ_MOCK_OK)
+  assert.equal(c.notasTotal, 1)
+})
+
 // Notas de CT-e direto no banco: 1 entrada, 1 saída e 2 outros (um deles num mês só de Outros).
 function cteNoBanco(ctx) {
   const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id

@@ -333,6 +333,93 @@ O cadastro e o certificado dele saem do Smart Fiscal e as notas de saída pelo a
   )
 }
 
+// Todos os dados do cliente, menos o certificado, que tem a sua tela.
+function FormEdicao({ alvo }) {
+  const [cnpjSalvo, setCnpjSalvo] = useState(alvo.cnpj)
+  const [campos, setCampos] = useState({ cnpj: formatarCnpj(alvo.cnpj), razao: alvo.razaoSocial, uf: alvo.uf, apelido: alvo.apelido || '' })
+  const [enviando, setEnviando] = useState(false)
+  const [erro, setErro] = useState(null)
+  const [salvo, setSalvo] = useState(null)
+  const { recarregar } = useResumo()
+  const mudar = (nome) => (e) => setCampos((c) => ({ ...c, [nome]: e.target.value }))
+  const [nome, setNome] = useState(alvo.apelido || alvo.razaoSocial)
+  const titulo = `Editar ${nome}`
+
+  async function salvar(e) {
+    e.preventDefault()
+    setEnviando(true)
+    setErro(null)
+    setSalvo(null)
+    try {
+      const r = await api.post(`/api/clientes/${cnpjSalvo}/editar`, { cnpj: campos.cnpj.replace(/\D/g, ''), razao: campos.razao.trim(), uf: campos.uf, apelido: campos.apelido.trim() })
+      setCnpjSalvo(r.cnpj)
+      setNome(campos.apelido.trim() || campos.razao.trim())
+      setSalvo(r)
+      recarregar()
+    } catch (x) {
+      setErro(x.message)
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  return (
+    <Pagina
+      titulo={titulo}
+      subtitulo="Dados da empresa. Mudar o nome também renomeia a pasta dela."
+      trilha={[{ rotulo: 'Clientes', para: '/clientes' }, { rotulo: nome }, { rotulo: 'Editar' }]}
+      erro={erro}
+      aoFecharErro={() => setErro(null)}
+      aviso={salvo ? [salvo.mensagem, ...salvo.avisos].join(' ') : null}
+    >
+      <form className="formulario" onSubmit={salvar}>
+        <label className="campo">
+          <span>CNPJ</span>
+          <input value={campos.cnpj} onChange={mudar('cnpj')} required inputMode="numeric" autoComplete="off" />
+        </label>
+        <label className="campo">
+          <span>Razão social</span>
+          <input value={campos.razao} onChange={mudar('razao')} required autoComplete="off" />
+        </label>
+        <div className="linha-campos">
+          <label className="campo campo-uf">
+            <span>UF</span>
+            <select value={campos.uf} onChange={mudar('uf')} required>
+              {UFS.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="campo">
+            <span>Apelido (opcional)</span>
+            <input value={campos.apelido} onChange={mudar('apelido')} maxLength={40} autoComplete="off" />
+          </label>
+        </div>
+        <p className="formulario-nota">
+          O CNPJ só muda em cliente sem notas e, com certificado, para matriz ou filial da mesma empresa.{' '}
+          <Link to={`/clientes/${cnpjSalvo}/certificado`}>{alvo.temCertificado ? 'Trocar o certificado' : 'Adicionar o certificado'}</Link>
+        </p>
+        <div className="formulario-acoes">
+          <button type="submit" className="botao botao-azul" disabled={enviando}>
+            {enviando ? 'Salvando…' : 'Salvar'}
+          </button>
+          {VOLTAR}
+        </div>
+      </form>
+    </Pagina>
+  )
+}
+
+function EdicaoDoCliente({ cnpj }) {
+  const { dados, erro } = useApi('/api/clientes')
+  if (!dados) return <Pagina titulo="Editar cliente" subtitulo={erro ? '' : 'Carregando…'} erro={erro} />
+  const cliente = dados.clientes.find((c) => c.cnpj === cnpj)
+  if (!cliente) return <Pagina titulo="Editar cliente" subtitulo="Cliente não encontrado." trilha={[{ rotulo: 'Clientes', para: '/clientes' }, { rotulo: 'Editar' }]} />
+  return <FormEdicao alvo={cliente} />
+}
+
 function CertificadoDoCliente({ cnpj }) {
   const { dados, erro } = useApi('/api/clientes')
   if (!dados) return <Pagina titulo="Certificado" subtitulo={erro ? '' : 'Carregando…'} erro={erro} />
@@ -363,5 +450,6 @@ export default function Cadastro({ modo }) {
     )
   if (modo === 'escritorio') return <Escritorio />
   if (modo === 'certificado') return <CertificadoDoCliente key={cnpj} cnpj={cnpj} />
+  if (modo === 'editar') return <EdicaoDoCliente key={cnpj} cnpj={cnpj} />
   return <FormNovo />
 }

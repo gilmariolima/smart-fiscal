@@ -110,9 +110,10 @@ function Pendencias({ notas: n }) {
   )
 }
 
-function Acoes({ c, cadastroLiberado, onAtivo, ocupado }) {
+function Acoes({ c, cadastroLiberado, onAtivo, onExcluir, ocupado }) {
   return (
     <span className="acoes-cliente">
+      {cadastroLiberado && <BotaoIcone icone="fa-pen" dica="Editar os dados" to={c.escritorio ? '/escritorio' : `/clientes/${c.cnpj}/editar`} />}
       {cadastroLiberado && <BotaoIcone icone="fa-id-card" dica={c.temCertificado ? 'Trocar o certificado' : 'Adicionar o certificado'} to={`/clientes/${c.cnpj}/certificado`} />}
       {cadastroLiberado && c.temCertificado && (
         <BotaoIcone
@@ -124,6 +125,7 @@ function Acoes({ c, cadastroLiberado, onAtivo, ocupado }) {
         />
       )}
       <BotaoIcone icone="fa-folder-open" dica="Ver as notas" to={`/notas/${c.cnpj}`} />
+      {cadastroLiberado && !c.escritorio && <BotaoIcone icone="fa-trash" dica="Excluir o cliente" onClick={() => onExcluir(c)} disabled={ocupado} perigo />}
     </span>
   )
 }
@@ -238,6 +240,25 @@ export default function Clientes() {
     })
   }
 
+  function excluirCliente(c) {
+    const nome = nomeDe(c)
+    const notas = c.notasTotal
+      ? `${plural(c.notasTotal, 'nota sai', 'notas saem')} do sistema e não ${c.notasTotal === 1 ? 'aparece' : 'aparecem'} mais nas telas.`
+      : 'Ele não tem notas no sistema.'
+    const pergunta = `Excluir ${nome} (${formatarCnpj(c.cnpj)})?
+
+O cadastro e o certificado são apagados. ${notas} Os arquivos XML continuam na pasta da empresa.
+
+Para só parar de capturar, use Desativar. Esta exclusão não pode ser desfeita.`
+    if (!window.confirm(pergunta)) return
+    executar('excluir', async () => {
+      const r = await api.post(`/api/clientes/${c.cnpj}/excluir`, {})
+      setAviso(r.mensagem)
+      recarregar()
+      recarregarResumo()
+    })
+  }
+
   let conteudo
   if (!dados) conteudo = !erroLista && <p className="vazio">Carregando…</p>
   else if (!lista.length)
@@ -288,7 +309,7 @@ export default function Clientes() {
                     <Pendencias notas={c.notas} />
                   </td>
                   <td className="sem-quebra">
-                    <Acoes c={c} cadastroLiberado={cadastroLiberado} onAtivo={alternarAtivo} ocupado={!!ocupado} />
+                    <Acoes c={c} cadastroLiberado={cadastroLiberado} onAtivo={alternarAtivo} onExcluir={excluirCliente} ocupado={!!ocupado} />
                   </td>
                 </tr>
             ))}

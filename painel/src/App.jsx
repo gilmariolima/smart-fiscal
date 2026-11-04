@@ -81,6 +81,7 @@ const rotas = createHashRouter([
       { path: 'clientes', element: <Clientes /> },
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },
       { path: 'clientes/:cnpj/certificado', element: <Cadastro key="certificado" modo="certificado" /> },
+      { path: 'clientes/:cnpj/editar', element: <Cadastro key="editar" modo="editar" /> },
       { path: 'escritorio', element: <Cadastro key="escritorio" modo="escritorio" /> },
       { path: 'exportar', element: <Exportar /> },
       { path: 'execucoes', element: <Execucoes /> },

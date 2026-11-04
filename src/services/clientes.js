@@ -5,6 +5,7 @@ const path = require('node:path')
 const { criptografar } = require('../crypto')
 const { lerCertificado, diasParaVencer } = require('../certificado')
 const { dadosUf } = require('../sefaz/uf')
+const { pastaDoClienteNoDisco } = require('./armazenamento')
 
 const DIAS_ALERTA_CERT = 30
 
@@ -57,6 +58,21 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     notasDe: db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?'),
     apagarExecucoes: db.prepare('DELETE FROM execucoes WHERE cliente_id = ?'),
     apagar: db.prepare('DELETE FROM clientes WHERE id = ?'),
+    editar: db.prepare('UPDATE clientes SET razao_social = @razao_social, uf = @uf, apelido = @apelido WHERE id = @id'),
+    // Cada CNPJ tem a sua fila na SEFAZ, no ADN e no CT-e: com outro CNPJ, tudo volta para o início.
+    trocarCnpj: db.prepare(`UPDATE clientes SET cnpj = @cnpj, cert_arquivo = @cert_arquivo,
+      ult_nsu = '000000000000000', max_nsu = NULL, proxima_consulta = NULL, bloqueado_ate = NULL, ultima_consulta = NULL, ultimo_erro = NULL,
+      nfse_ult_nsu = '0', nfse_proxima_consulta = NULL, nfse_ultima_consulta = NULL, nfse_ultimo_erro = NULL,
+      cte_ult_nsu = '0', cte_proxima_consulta = NULL, cte_bloqueado_ate = NULL, cte_ultima_consulta = NULL, cte_ultimo_erro = NULL
+      WHERE id = @id`),
+    apagarNotas: db.prepare('DELETE FROM notas WHERE cliente_id = ?'),
+    // A mesma nota pode estar em dois clientes (A vende para B): o evento só sai se ela não ficar em outro.
+    apagarEventos: db.prepare(`DELETE FROM eventos WHERE chave IN (SELECT chave FROM notas WHERE cliente_id = @id)
+      AND chave NOT IN (SELECT chave FROM notas WHERE cliente_id <> @id)`),
+    caminhosNotas: db.prepare('SELECT id, caminho_xml FROM notas WHERE caminho_xml IS NOT NULL'),
+    caminhosEventos: db.prepare('SELECT id, caminho_xml FROM eventos WHERE caminho_xml IS NOT NULL'),
+    caminhoNota: db.prepare('UPDATE notas SET caminho_xml = ? WHERE id = ?'),
+    caminhoEvento: db.prepare('UPDATE eventos SET caminho_xml = ? WHERE id = ?'),
   }
 
   /** Abre o .pfx e confere senha, validade e raiz do CNPJ. Lança Error com a mensagem para o usuário. */
@@ -198,6 +214,92 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     return atual
   }
 
+  // O nome da pasta vem do nome do cliente. Banco primeiro, depois a pasta; se ela não mudar (aberta no Windows, por exemplo),
+  // o banco volta e os XMLs continuam acessíveis onde estão.
+  function moverPastaDoCliente(antiga, nova) {
+    if (antiga === nova) return null
+    const origem = path.join(config.pastaXmls, antiga)
+    const destino = path.join(config.pastaXmls, nova)
+    if (!fs.existsSync(origem)) return null
+    const aviso = `Os XMLs antigos continuam na pasta "${antiga}"; os novos vão para "${nova}".`
+    if (antiga.toLowerCase() !== nova.toLowerCase() && fs.existsSync(destino)) return aviso
+    const prefixo = antiga + path.sep
+    const dentro = (r) => r.caminho_xml.startsWith(prefixo)
+    const notas = sql.caminhosNotas.all().filter(dentro)
+    const eventos = sql.caminhosEventos.all().filter(dentro)
+    const apontar = db.transaction((de, para) => {
+      for (const r of notas) sql.caminhoNota.run(para + r.caminho_xml.slice(de.length), r.id)
+      for (const r of eventos) sql.caminhoEvento.run(para + r.caminho_xml.slice(de.length), r.id)
+    })
+    apontar(antiga, nova)
+    try {
+      fs.renameSync(origem, destino)
+      return null
+    } catch (e) {
+      db.transaction(() => {
+        for (const r of notas) sql.caminhoNota.run(r.caminho_xml, r.id)
+        for (const r of eventos) sql.caminhoEvento.run(r.caminho_xml, r.id)
+      })()
+      logger.warn('Pasta do cliente não renomeada', { erro: e.message })
+      return aviso
+    }
+  }
+
+  /**
+   * Edita os dados do cliente. O CNPJ só muda sem notas (as que existem são do CNPJ antigo) e, com certificado,
+   * só dentro da mesma empresa (matriz e filial), porque o certificado guardado é dela.
+   * @returns {{ cliente: object, avisos: string[] }}
+   */
+  function editar(cnpjAtual, { cnpj, razao, uf, apelido }) {
+    const atual = sql.porCnpj.get(somenteDigitos(cnpjAtual))
+    if (!atual) throw new Error(`CNPJ ${somenteDigitos(cnpjAtual)} não cadastrado.`)
+    if (atual.papel === 'escritorio') throw new Error('Os dados do escritório são editados na tela Escritório.')
+    const novo = validarDados({ cnpj, razao, uf })
+    let certArquivo = atual.cert_arquivo
+    if (novo !== atual.cnpj) {
+      if (sql.porCnpj.get(novo)) throw new Error(`CNPJ ${novo} já cadastrado.`)
+      if (sql.notasDe.get(atual.id).n) throw new Error('Este cliente já tem notas no CNPJ atual: para usar outro CNPJ, exclua e cadastre de novo.')
+      if (atual.cert_arquivo && novo.slice(0, 8) !== atual.cnpj.slice(0, 8)) {
+        throw new Error('O certificado guardado é de outra empresa: para usar este CNPJ, exclua e cadastre de novo.')
+      }
+    }
+    const pastaAntiga = pastaDoClienteNoDisco(atual, sql.listar.all())
+    if (novo !== atual.cnpj && atual.cert_arquivo) {
+      certArquivo = `${novo}.pfx`
+      fs.renameSync(path.join(config.pastaCerts, atual.cert_arquivo), path.join(config.pastaCerts, certArquivo))
+    }
+    db.transaction(() => {
+      sql.editar.run({ id: atual.id, razao_social: String(razao).trim(), uf: String(uf).trim().toUpperCase(), apelido: String(apelido || '').trim() || null })
+      if (novo !== atual.cnpj) sql.trocarCnpj.run({ id: atual.id, cnpj: novo, cert_arquivo: certArquivo })
+    })()
+    const cliente = sql.porCnpj.get(novo)
+    const aviso = moverPastaDoCliente(pastaAntiga, pastaDoClienteNoDisco(cliente, sql.listar.all()))
+    logger.info('Dados do cliente alterados', { cnpj: novo, ...(novo !== atual.cnpj && { cnpjAnterior: atual.cnpj }) })
+    return { cliente, avisos: aviso ? [aviso] : [] }
+  }
+
+  /**
+   * Exclui o cliente: cadastro, certificado, notas e histórico no sistema.
+   * Os XMLs ficam no disco: guardar o documento fiscal é obrigação legal, e apagar não teria volta.
+   * @returns {{ cliente: object, notas: number }}
+   */
+  function excluir(cnpj) {
+    const c = somenteDigitos(cnpj)
+    const atual = sql.porCnpj.get(c)
+    if (!atual) throw new Error(`CNPJ ${c} não cadastrado.`)
+    if (atual.papel === 'escritorio') throw new Error('O escritório é excluído na tela Escritório.')
+    const notas = sql.notasDe.get(atual.id).n
+    db.transaction(() => {
+      sql.apagarEventos.run({ id: atual.id })
+      sql.apagarNotas.run(atual.id)
+      sql.apagarExecucoes.run(atual.id)
+      sql.apagar.run(atual.id)
+    })()
+    if (atual.cert_arquivo) fs.rmSync(path.join(config.pastaCerts, atual.cert_arquivo), { force: true })
+    logger.info('Cliente excluído', { cnpj: c, notas })
+    return { cliente: atual, notas }
+  }
+
   /** Troca o certificado (renovação anual). */
   function trocarCertificado({ cnpj, pfx, senha }) {
     const c = somenteDigitos(cnpj)
@@ -260,7 +362,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, listar, obter, validarCertificado }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado }
 }
 
 module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }
