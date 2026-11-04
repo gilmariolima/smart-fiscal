@@ -380,9 +380,9 @@ async function ligarMotorEstoque(dadosEstoque) {
   }
 }
 
-// ---------- atualização automática ----------
+// ---------- atualização (só pelo botão "Verificar atualizações") ----------
 
-function procurarAtualizacao() {
+function prepararAtualizacao() {
   // Só no app instalado no Windows: rodando do código (npm run app) não há o que atualizar
   if (!app.isPackaged || !NO_WINDOWS || process.env.SMART_FISCAL_SEM_ATUALIZAR) return
   try {
@@ -394,9 +394,6 @@ function procurarAtualizacao() {
       sair,
       log: path.join(pasta, 'atualizacao.log'),
     })
-    atualizacao.procurar()
-    // O app fica dias ligado perto do relógio: procura de novo a cada 6 horas
-    setInterval(() => atualizacao.procurar(), 6 * 3600e3).unref()
   } catch {
     // sem a atualização, o app funciona do mesmo jeito
   }
@@ -434,6 +431,12 @@ async function iniciar() {
     if (motorEstoque?.erro) ctx.logger.error('Motor do SPED', { erro: motorEstoque.erro })
     servidor = await iniciarServidor(ctx, {
       estoque: () => motorEstoque,
+      // Janela de pastas do Windows, para a tela Pastas; devolve null se cancelar.
+      escolherPasta: async () => {
+        const opcoes = { title: 'Onde vai ficar a pasta SMART FISCAL?', buttonLabel: 'Escolher esta pasta', properties: ['openDirectory', 'createDirectory'] }
+        const r = await (janela ? dialog.showOpenDialog(janela, opcoes) : dialog.showOpenDialog(opcoes))
+        return r.canceled ? null : r.filePaths[0]
+      },
       // O botão do painel; fora do app instalado no Windows não há atualização
       atualizacao: {
         estado: () => (atualizacao ? atualizacao.estado() : { situacao: 'indisponivel' }),
@@ -446,7 +449,7 @@ async function iniciar() {
     if (prefs.iniciarComWindows === undefined) definirInicioComWindows(true)
     criarBandeja()
     if (!process.argv.includes(ARG_OCULTO)) abrirJanela()
-    procurarAtualizacao()
+    prepararAtualizacao()
 
     if (janela && (copiados.length || env.criado) && !janela.isVisible()) await new Promise((r) => janela.once('show', r))
     if (copiados.length) {

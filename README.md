@@ -5,7 +5,7 @@ O app do escritório para duas rotinas fiscais, numa janela só:
 - **Notas fiscais:** busca na SEFAZ as NF-e emitidas contra os clientes, baixa os XMLs depois que o cliente dá ciência, organiza por cliente e mês e exporta para o Domínio e o Fortes. Funciona sozinho nos horários marcados. Detalhes em [docs/NOTAS.md](docs/NOTAS.md).
 - **SPED Fiscal:** converte o inventário do cliente (relatório, `.FS` da Fortes, bloco H ou planilha) no SPED EFD ICMS/IPI com o bloco H, pronto para o PVA, com as pendências para conferir e a correção dos itens no próprio painel. Detalhes em [docs/SPED.md](docs/SPED.md).
 
-Junta o antigo **SmartDoc** (notas) e o antigo **Estoque SPED** (inventário), com a estrutura, a atualização automática e o visual do Estoque SPED.
+Junta o antigo **SmartDoc** (notas) e o antigo **Estoque SPED** (inventário), com a estrutura, a atualização e o visual do Estoque SPED.
 
 **Para instalar em qualquer computador:** baixe o instalador na [última versão](https://github.com/gilmariolima/smart-fiscal/releases/latest) e siga o passo a passo em [INSTALAR.md](INSTALAR.md).
 
@@ -14,7 +14,7 @@ Junta o antigo **SmartDoc** (notas) e o antigo **Estoque SPED** (inventário), c
 - Abre numa janela própria, com o menu lateral dividido em **Notas fiscais**, **SPED Fiscal** e **Cadastros**.
 - **Fechar a janela não desliga o app.** Ele fica no ícone perto do relógio, e a busca automática de notas continua nos horários. Para abrir de novo, clique no ícone; para desligar de vez, use botão direito no ícone > **Sair do Smart Fiscal**.
 - **Liga junto com o Windows**, direto no ícone perto do relógio, sem abrir a janela. Dá para desligar em "Iniciar com o Windows", no menu do ícone.
-- **Atualiza sozinho.** Ao abrir, e a cada 6 horas, procura uma versão nova em Releases e baixa em segundo plano; quando termina, pergunta se reinicia agora ou instala ao fechar. Sem internet, nada acontece (o que houve fica em `atualizacao.log`, na pasta de dados).
+- **Atualiza só quando você pede.** Ao abrir ou ligar o PC, não procura nem avisa nada. O botão "Verificar atualizações" olha as Releases e baixa a versão nova; quando termina, pergunta se reinicia agora ou instala ao fechar. Sem internet, ele avisa no painel (o que houve fica em `atualizacao.log`, na pasta de dados).
 - Abrir o atalho com o app já ligado só traz a janela para a frente.
 
 Por dentro são dois motores: o das **notas** (Node, o servidor do antigo SmartDoc, que roda dentro do app e serve o painel) e o do **SPED** (Python embutido, o motor do antigo Estoque SPED, que roda à parte numa porta livre). O painel repassa `/estoque` para o motor do SPED com o token daquela execução; nada fica aberto para outros programas ou outros computadores.
@@ -27,7 +27,7 @@ Ficam em `%LOCALAPPDATA%\Smart Fiscal\dados`, fora da pasta do programa. Atualiz
 |---|---|
 | `notas\` | `.env` (com a `MASTER_KEY` que abre os certificados), banco, certificados, XMLs, exportações e logs das notas |
 | `estoque\` | empresas, correções de itens, contador do SPED, SPEDs gerados (`saida\<CNPJ>_<empresa>\<AAAA-MM>\`, ou a pasta escolhida em Arquivos gerados) e o `painel.log` do SPED |
-| `atualizacao.log` | o que a atualização automática fez |
+| `atualizacao.log` | o que a atualização fez |
 
 Os XMLs, as exportações e os SPEDs gerados podem ir para uma pasta mais fácil de achar (outro disco, rede, Documentos) em **Cadastros → Pastas**: ao trocar, os XMLs e ZIPs já existentes vão junto. Banco, certificados e `.env` ficam sempre aqui.
 
@@ -72,7 +72,7 @@ npm run painel:dev        # painel com recarga automática (o servidor precisa e
 
 | Pasta | O que tem |
 |---|---|
-| `electron/` | o app: janela, ícone perto do relógio, os dois motores, pasta de dados, cópia dos apps antigos e atualização automática |
+| `electron/` | o app: janela, ícone perto do relógio, os dois motores, pasta de dados, cópia dos apps antigos e atualização |
 | `src/` | motor das notas: SEFAZ, banco SQLite, agendador e o servidor do painel (com a ponte `/estoque`) |
 | `painel/` | o painel (React): telas das notas em `telas/`, do SPED em `sped/`, visual em `estilo.css` |
 | `estoque/` | motor do SPED em Python (`gerar_sped.py`, `painel.py`) e os testes dele |

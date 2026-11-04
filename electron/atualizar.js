@@ -1,10 +1,10 @@
 'use strict'
 
-// Atualização automática: ao abrir, o app procura uma versão nova em Releases do GitHub
-// (o latest.yml que o workflow "Publicar versão" publica) e baixa em segundo plano. Baixada,
-// pergunta se reinicia agora; se a pessoa deixar para depois, instala quando o app fechar.
-// Sem internet ou sem versão nova, não aparece nada. O botão "Verificar atualizações" do painel
-// chama verificar(), que responde na hora e, se houver versão nova, mostra o download no painel.
+// Atualização: o app só procura versão nova quando a pessoa clica em "Verificar atualizações" no
+// painel; ao abrir ou ligar o PC, não procura nem avisa nada. verificar() olha as Releases do GitHub
+// (o latest.yml que o workflow "Publicar versão" publica), responde na hora e, se houver versão nova,
+// baixa mostrando o andamento no painel. Baixada, pergunta se reinicia agora; se a pessoa deixar para
+// depois, instala quando o app fechar.
 
 const fs = require('node:fs')
 
@@ -74,15 +74,12 @@ function criarAtualizacao({ atualizador, perguntar, sair, log, titulo = 'Smart F
 
   atualizador.on('update-downloaded', async (info) => {
     mudar({ situacao: 'pronta', versao: info.version })
-    if (baixada === info.version) return // já perguntou (o app procura de novo de tempos em tempos)
+    if (baixada === info.version) return // já perguntou
     baixada = info.version
     await oferecerReinicio(info.version)
   })
 
   return {
-    procurar() {
-      return atualizador.checkForUpdates().catch((e) => anotar('erro', e))
-    },
     /** Situação para o painel: nada | procurando | atualizado | baixando | pronta | erro. */
     estado: () => situacao,
     /**

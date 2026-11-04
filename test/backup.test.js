@@ -187,3 +187,29 @@ test('pasta escolhida na tela: vale mais que o .env, testa a gravação e "nenhu
   assert.deepEqual([m.servico.estado().configurado, m.servico.estado().origem], [false, null])
   assert.equal((await m.servico.fazerBackup()).desligado, true)
 })
+
+test('com pasta principal, o backup leva os arquivos do SPED que saíram da pasta de dados e nunca apaga', async (t) => {
+  const m = montar(t)
+  const fora = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-principal-'))
+  t.after(() => fs.rmSync(fora, { recursive: true, force: true }))
+  const raiz = path.join(fora, 'SMART FISCAL')
+  const arquivo = path.join(raiz, 'Arquivos SPED', '11222333000181_X', '2026-10', 'SPED_1.txt')
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true })
+  fs.writeFileSync(arquivo, '|0000|')
+  m.amb.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(raiz)
+
+  const r = await m.servico.fazerBackup()
+  assert.equal(r.ok, true)
+  const copia = path.join(m.pastaBackup, 'sped', '11222333000181_X', '2026-10', 'SPED_1.txt')
+  assert.equal(fs.readFileSync(copia, 'utf8'), '|0000|')
+
+  fs.rmSync(arquivo)
+  await m.servico.fazerBackup({ forcar: true })
+  assert.ok(fs.existsSync(copia), 'apagado do PC continua no backup')
+})
+
+test('sem pasta principal não há pasta sped no backup: o SPED vai na cópia do dia', async (t) => {
+  const m = montar(t)
+  await m.servico.fazerBackup()
+  assert.ok(!fs.existsSync(path.join(m.pastaBackup, 'sped')))
+})

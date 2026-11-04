@@ -48,7 +48,7 @@ test('grava entradas e saídas nas pastas certas e marca a espera de 1 h', async
   assert.equal(n1.emitente_cnpj, PRESTADOR_MOCK)
   assert.equal(n1.destinatario_cnpj, CNPJ_MOCK_OK)
 
-  const base = `${CNPJ_MOCK_OK}_Cliente_1/2026/10/NFS-e`
+  const base = 'NFS-e/Cliente 1/2026/Outubro'
   assert.deepEqual(arquivos(pastaXmls), [
     `${base}/Entradas/${n1.chave}-nfse.xml`,
     `${base}/Entradas/${n2.chave}-nfse.xml`,

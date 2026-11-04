@@ -452,6 +452,50 @@ class PainelCorrecoes(unittest.TestCase):
                 _, r = self.json("/api/pasta", {"pasta_saida": ""})
             self.assertTrue(r["eh_padrao"])
 
+    def test_pasta_nova_com_levar_traz_os_gerados(self):
+        _, gerado = self.converter(self.novo_lote())
+        saida = Path(self.dados.name) / "saida"
+        pasta_empresa = (saida / gerado["arquivo"]).parent
+        estranho = saida / "minha-planilha.xlsx"
+        estranho.write_text("nao e do sistema")
+        with tempfile.TemporaryDirectory() as rede:
+            destino = Path(rede) / "SMART FISCAL" / "Arquivos SPED"
+            try:
+                status, r = self.json("/api/pasta", {"pasta_saida": str(destino), "levar": True})
+                self.assertEqual((status, r["pasta_saida"]), (200, str(destino)))
+                self.assertEqual(r["movidos"], 3 if gerado["pendencias"] else 2)
+                self.assertTrue((destino / gerado["arquivo"]).is_file())
+                self.assertTrue((destino / gerado["dominio"]).is_file())
+                self.assertFalse((saida / gerado["arquivo"]).exists())
+                self.assertFalse(pasta_empresa.exists())  # pasta vazia nao fica
+                self.assertTrue(estranho.exists())  # so leva os arquivos do sistema
+                lista = json.loads(self.pedir("GET", "/api/gerados")[1])
+                self.assertEqual([g["arquivo"] for g in lista], [gerado["arquivo"]])
+                self.assertEqual(self.pedir("GET", f"/baixar/{gerado['arquivo']}")[0], 200)
+                # Mesma pasta de novo: nada a fazer
+                self.assertEqual(self.json("/api/pasta", {"pasta_saida": str(destino), "levar": True})[1]["movidos"], 0)
+            finally:
+                _, r = self.json("/api/pasta", {"pasta_saida": "", "levar": True})
+            self.assertTrue(r["eh_padrao"])
+            self.assertTrue((saida / gerado["arquivo"]).is_file())  # voltaram para a padrao
+
+    def test_levar_nao_sobrescreve_e_recusa_pasta_dentro_da_atual(self):
+        _, gerado = self.converter(self.novo_lote())
+        saida = Path(self.dados.name) / "saida"
+        self.assertEqual(self.json("/api/pasta", {"pasta_saida": str(saida / "dentro"), "levar": True})[0], 400)
+        self.assertTrue(json.loads(self.pedir("GET", "/api/pasta")[1])["eh_padrao"])
+        with tempfile.TemporaryDirectory() as rede:
+            destino = Path(rede) / "SPED"
+            alvo = destino / gerado["arquivo"]
+            alvo.parent.mkdir(parents=True)
+            alvo.write_text("ja estava aqui")
+            try:
+                self.assertEqual(self.json("/api/pasta", {"pasta_saida": str(destino), "levar": True})[0], 200)
+                self.assertEqual(alvo.read_text(), "ja estava aqui")
+            finally:
+                alvo.unlink()
+                self.json("/api/pasta", {"pasta_saida": ""})
+
     def test_gerados_por_empresa_e_mes(self):
         _, gerado = self.converter(self.novo_lote())
         saida = Path(self.dados.name) / "saida"

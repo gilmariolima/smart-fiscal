@@ -37,7 +37,7 @@ const horaMinuto = (iso) => {
  * @param {Function} deps.fabricaCte (linha de clientes) => cliente do CTeDistribuicaoDFe
  */
 function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormirPadrao, agora = () => new Date() }) {
-  const armazenamento = criarArmazenamento({ pastaXmls: config.pastaXmls })
+  const armazenamento = criarArmazenamento({ config, db })
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
 
   const sql = {

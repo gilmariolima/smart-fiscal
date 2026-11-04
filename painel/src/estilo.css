@@ -1260,6 +1260,10 @@ tr.editavel:hover .botao-icone {
   overflow-wrap: anywhere;
 }
 
+.pasta-principal {
+  margin-bottom: 12px;
+}
+
 .pasta-atual i {
   margin-right: 4px;
 }
@@ -1715,6 +1719,90 @@ tr.editavel:hover .botao-icone {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+}
+
+/* ---------- exportar ---------- */
+
+.exportar {
+  display: grid;
+  grid-template-columns: 160px 160px minmax(0, 1fr);
+  gap: 22px 28px;
+  padding: 20px 22px;
+}
+
+.exportar-grupo {
+  position: relative;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.exportar-grupo legend {
+  padding: 0;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--apagado);
+}
+
+.exportar-opcoes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.exportar-meses .exportar-opcoes {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(4, auto);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.exportar-clientes {
+  grid-column: 1 / -1;
+  padding-top: 20px;
+  border-top: 1px solid var(--borda-clara);
+}
+
+.exportar-clientes legend {
+  float: left;
+}
+
+.exportar-clientes .exportar-opcoes {
+  padding-top: 16px;
+  clear: both;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.exportar-todos {
+  position: absolute;
+  top: 12px;
+  right: 0;
+}
+
+.exportar-opcao {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.exportar-opcao input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.exportar-opcao.apagada {
+  color: var(--apagado);
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* ---------- capturar ---------- */

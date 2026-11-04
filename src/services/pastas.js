@@ -5,6 +5,7 @@
 // A escolha fica na tabela `sistema` e vale mais que o PASTA_XMLS/PASTA_EXPORTS do .env.
 // Trocar a pasta leva os arquivos junto: só os do Smart Fiscal (.xml / .zip), para nunca
 // apagar outra coisa que esteja na pasta antiga.
+// Pasta principal: o escritório escolhe um lugar só e nele fica SMART FISCAL\Notas e SMART FISCAL\Arquivos SPED.
 
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
@@ -14,6 +15,10 @@ const TIPOS = {
   xmls: { chave: 'pasta_xmls', campo: 'pastaXmls', nome: 'XMLs das notas', arquivo: (rel) => rel.toLowerCase().endsWith('.xml') },
   exports: { chave: 'pasta_exports', campo: 'pastaExports', nome: 'Exportações', arquivo: (rel) => !rel.includes(path.sep) && rel.toLowerCase().endsWith('.zip') },
 }
+
+const PRINCIPAL = 'SMART FISCAL'
+const NOTAS = 'Notas'
+const SPED = 'Arquivos SPED'
 
 /** Caminho completo no Windows (C:\..., \\servidor\...) ou no Linux/macOS (/...). */
 const caminhoCompleto = (p) => path.win32.isAbsolute(p) || path.posix.isAbsolute(p)
@@ -39,6 +44,7 @@ function criarServicoPastas({ db, config, logger }) {
   function estado() {
     return {
       movendo: movendo?.tipo || null,
+      principal: sql.ler.get('pasta_principal')?.valor || null,
       pastas: Object.entries(TIPOS).map(([tipo, t]) => ({
         tipo,
         nome: t.nome,
@@ -150,7 +156,29 @@ function criarServicoPastas({ db, config, logger }) {
     }
   }
 
-  return { estado, mudar, TIPOS }
+  /**
+   * Escolhe o lugar da pasta principal ('' volta para a pasta padrão) e leva os XMLs para <lugar>\SMART FISCAL\Notas.
+   * Quem chama leva os arquivos do SPED para `pastaSped`, que ficam com o motor em Python.
+   * @returns {Promise<{ raiz: string|null, anterior: string|null, pastaSped: string, movidos: number, mudou: boolean }>}
+   */
+  async function mudarPrincipal(valor) {
+    const texto = String(valor ?? '').trim().replace(/^"(.*)"$/, '$1').trim()
+    if (texto && !caminhoCompleto(texto)) throw new Error('Informe o endereço completo da pasta, como D:\\Contabilidade ou \\\\servidor\\contabilidade.')
+    // Quem escolhe a própria pasta SMART FISCAL não ganha outra dentro dela.
+    const raiz = !texto ? null : path.basename(path.resolve(texto)).toLowerCase() === PRINCIPAL.toLowerCase() ? path.resolve(texto) : path.join(path.resolve(texto), PRINCIPAL)
+    const anterior = sql.ler.get('pasta_principal')?.valor || null
+    const r = await mudar('xmls', raiz ? path.join(raiz, NOTAS) : '')
+    sql.gravar.run('pasta_principal', raiz || '')
+    return { raiz, anterior: anterior !== raiz ? anterior : null, pastaSped: raiz ? path.join(raiz, SPED) : '', movidos: r.movidos, mudou: r.mudou }
+  }
+
+  // Tira a pasta principal antiga, se ficou vazia. Sobrando qualquer outra coisa dentro, ela fica.
+  async function limparPrincipalAntiga(anterior) {
+    if (!anterior) return
+    for (const d of [path.join(anterior, NOTAS), path.join(anterior, SPED), anterior]) await fsp.rmdir(d).catch(() => {})
+  }
+
+  return { estado, mudar, mudarPrincipal, limparPrincipalAntiga, TIPOS }
 }
 
 module.exports = { criarServicoPastas }

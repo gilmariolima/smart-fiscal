@@ -73,7 +73,7 @@ test('laço de NSU: processa os lotes, grava ultNSU e espera 1 h com a fila zera
   assert.equal(ev[0].tp_evento, '110111')
   assert.equal(ev[0].chave, beta.chave)
 
-  const pasta = `${CNPJ_MOCK_OK}_Cliente_1/2026/10/NF-e/Entradas`
+  const pasta = 'NF-e/Cliente 1/2026/Outubro/Entradas'
   assert.deepEqual(arquivos(pastaXmls), [
     `${pasta}/Resumos/${alfa.chave}-resumo.xml`,
     `${pasta}/Eventos/${beta.chave}-evento-110111-1.xml`,
@@ -155,8 +155,8 @@ test('ultNSU é salvo a cada lote: falha no 2º lote mantém o 1º', async (t) =
 test('erro ao gravar o lote desfaz o lote inteiro e não avança o NSU', async (t) => {
   const { db, servico, ids, pastaXmls, limpar } = montar()
   t.after(limpar)
-  // Um arquivo no lugar da pasta do cliente faz o mkdir falhar.
-  fs.writeFileSync(path.join(pastaXmls, `${CNPJ_MOCK_OK}_Cliente_1`), 'bloqueio')
+  // Um arquivo no lugar da pasta do tipo faz o mkdir falhar.
+  fs.writeFileSync(path.join(pastaXmls, 'NF-e'), 'bloqueio')
   const r = await servico.capturarCliente(ids[0])
   assert.equal(r.ok, false)
   assert.equal(cliente(db, ids[0]).ult_nsu, '000000000000000')
@@ -284,8 +284,8 @@ test('mesma chave em dois clientes: cada um com a sua cópia', async (t) => {
   const chave = linhas[0].chave
   const xmls = arquivos(pastaXmls)
   assert.equal(xmls.length, 2)
-  assert.ok(xmls.some((f) => f.startsWith(`${CNPJ_MOCK_OK}_Cliente_1/`) && f.endsWith(`${chave}-nfe.xml`)))
-  assert.ok(xmls.some((f) => f.startsWith('34567890000130_Cliente_2/') && f.endsWith(`${chave}-nfe.xml`)))
+  assert.ok(xmls.some((f) => f.startsWith('NF-e/Cliente 1/') && f.endsWith(`${chave}-nfe.xml`)))
+  assert.ok(xmls.some((f) => f.startsWith('NF-e/Cliente 2/') && f.endsWith(`${chave}-nfe.xml`)))
 })
 
 /** Clientes CNPJ_MOCK_OK (cliente) e o escritório, com a mesma SEFAZ simulada. */
@@ -335,13 +335,13 @@ test('escritório: saída, entrada que completa resumo, fora da carteira e resNF
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas').get().n, antes + 2)
 
   assert.equal(nota(f1).length, 0)
-  const pastaFora = new RegExp(`^${CNPJ_MOCK_ESCRITORIO}_Cliente_2/fora-da-carteira/\\d{4}/\\d{2}/NF-e/Entradas/${f1}-nfe\\.xml$`)
+  const pastaFora = new RegExp(`^NF-e/Cliente 2 Ltda/fora-da-carteira/\\d{4}/[^/]+/Entradas/${f1}-nfe\\.xml$`)
   assert.ok(arquivos(pastaXmls).some((f) => pastaFora.test(f)), 'XML fora da carteira na pasta do escritório')
 
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(ids[1]).n, 0)
   const evento = db.prepare('SELECT * FROM eventos WHERE chave = ?').get(s2)
-  assert.ok(evento.caminho_xml.startsWith(`${CNPJ_MOCK_OK}_Cliente_1`), 'evento na pasta do dono da nota')
-  assert.match(evento.caminho_xml.replace(/\\/g, '/'), /\/NF-e\/Saidas\/Eventos\//, 'evento da saída em Saidas/Eventos')
+  assert.ok(evento.caminho_xml.startsWith(path.join('NF-e', 'Cliente 1')), 'evento na pasta do dono da nota')
+  assert.match(evento.caminho_xml.replace(/\\/g, '/'), /\/Saidas\/Eventos\//, 'evento da saída em Saidas/Eventos')
 })
 
 test('nota de A para B pelo escritório vira saída em A e entrada em B', async (t) => {

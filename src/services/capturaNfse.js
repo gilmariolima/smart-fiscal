@@ -21,7 +21,7 @@ const maiorNsu = (a, b) => (Number(b) > Number(a) ? String(b) : String(a))
  * @param {Function} deps.fabricaAdn (linha de clientes) => cliente do ADN
  */
 function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dormirPadrao, agora = () => new Date() }) {
-  const armazenamento = criarArmazenamento({ pastaXmls: config.pastaXmls })
+  const armazenamento = criarArmazenamento({ config, db })
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
   const tamanhoLote = config.adnTamanhoLote || TAMANHO_LOTE
 

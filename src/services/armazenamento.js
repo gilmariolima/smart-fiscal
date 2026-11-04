@@ -3,9 +3,35 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-// Grava os XMLs em <PASTA_XMLS>/<CNPJ>_<apelido>/[fora-da-carteira/]<AAAA>/<MM>/<NF-e|NFS-e>/<Entradas|Saidas>/[Eventos|Resumos/].
+// Grava os XMLs em <PASTA_XMLS>/<NF-e|NFS-e|CT-e>/<Cliente>/[fora-da-carteira/]<AAAA>/<Mês>/<Entradas|Saidas|Outros>/[Eventos|Resumos/]:
+// a mesma ordem das telas do sistema (tipo, cliente, ano, mês).
 // O banco guarda o caminho relativo à PASTA_XMLS, para a pasta poder mudar de lugar.
 // Só este módulo monta caminho de XML.
+
+const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+const MAX_NOME_PASTA = 40
+
+// Tira o que o Windows não aceita em nome de pasta; mantém acentos e espaços.
+// Curto e cortado em palavra inteira: o Windows não extrai caminho com mais de 260 caracteres.
+function nomeDePasta(texto) {
+  const limpo = String(texto ?? '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const curto = limpo.length > MAX_NOME_PASTA ? limpo.slice(0, MAX_NOME_PASTA + 1).replace(/\s+\S*$/, '').slice(0, MAX_NOME_PASTA) : limpo
+  return curto.replace(/[. ]+$/, '')
+}
+
+// O apelido do escritório é interno: nele vale a razão social.
+const nomeDoCliente = (c) => (c.papel === 'escritorio' ? c.razao_social : c.apelido || c.razao_social)
+
+/** Pasta do cliente no disco. `outros`: os demais clientes; com o mesmo nome (o Windows não diferencia maiúscula), leva o CNPJ. */
+function pastaDoClienteNoDisco(cliente, outros = []) {
+  const nome = nomeDePasta(nomeDoCliente(cliente))
+  if (!nome) return cliente.cnpj
+  const repetido = outros.some((o) => o.cnpj !== cliente.cnpj && nomeDePasta(nomeDoCliente(o)).toLowerCase() === nome.toLowerCase())
+  return repetido ? `${nome} ${cliente.cnpj}` : nome
+}
 
 /** Nome seguro para pasta: sem acento, só letras, números, '-' e '_'. */
 function slug(texto) {
@@ -53,13 +79,16 @@ function direcaoPelaChave(chave, cnpjCliente) {
   return emitente === cnpjCliente ? 'saida' : 'entrada'
 }
 
-/** Caminho relativo do XML. categoria: 'nota' | 'evento' | 'resumo'; competencia: 'AAAA-MM' ou vazia. */
-function caminhoDa({ cliente, modelo = 'nfe', direcao = 'entrada', competencia, categoria = 'nota', nomeArquivo, foraDaCarteira = false }) {
-  const m = /^(\d{4})-(\d{2})$/.exec(competencia || '')
-  const partes = [pastaDoCliente(cliente)]
+/**
+ * Caminho relativo do XML. categoria: 'nota' | 'evento' | 'resumo'; competencia: 'AAAA-MM' ou vazia.
+ * `outrosClientes`: para dois clientes com o mesmo nome não caírem na mesma pasta.
+ */
+function caminhoDa({ cliente, outrosClientes, modelo = 'nfe', direcao = 'entrada', competencia, categoria = 'nota', nomeArquivo, foraDaCarteira = false }) {
+  const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(competencia || '')
+  const partes = [PASTAS.modelo[modelo] || PASTAS.modelo.nfe, pastaDoClienteNoDisco(cliente, outrosClientes)]
   if (foraDaCarteira) partes.push(PASTAS.foraDaCarteira)
-  partes.push(...(m ? [m[1], m[2]] : [PASTAS.semData]))
-  partes.push(PASTAS.modelo[modelo] || PASTAS.modelo.nfe, PASTAS.direcao[direcao] || PASTAS.direcao.entrada)
+  partes.push(...(m ? [m[1], MESES[Number(m[2]) - 1]] : [PASTAS.semData]))
+  partes.push(PASTAS.direcao[direcao] || PASTAS.direcao.entrada)
   if (categoria === 'evento') partes.push(PASTAS.evento)
   if (categoria === 'resumo') partes.push(PASTAS.resumo)
   return path.join(...partes, nomeArquivo)
@@ -82,15 +111,24 @@ function comDeclaracao(xml) {
   return `<?xml version="1.0" encoding="UTF-8"?>${s}`
 }
 
-function criarArmazenamento({ pastaXmls }) {
+/**
+ * @param {object} p
+ * @param {object} [p.config] lê config.pastaXmls a cada uso: a troca pela tela Pastas vale na hora
+ * @param {string} [p.pastaXmls] pasta fixa, sem config
+ * @param {object} [p.db] com o banco, clientes de mesmo nome não caem na mesma pasta
+ */
+function criarArmazenamento({ config, pastaXmls, db }) {
+  const pasta = () => (config ? config.pastaXmls : pastaXmls)
+  const clientes = db?.prepare('SELECT cnpj, papel, apelido, razao_social FROM clientes')
+
   /**
    * Grava o XML e devolve o caminho relativo à pasta de XMLs.
    * Escreve num temporário e renomeia, para nunca deixar arquivo pela metade.
    * Se o arquivo já existe com o mesmo conteúdo, não reescreve.
    */
   function salvar({ xml, ...onde }) {
-    const relativo = caminhoDa(onde)
-    const destino = path.join(pastaXmls, relativo)
+    const relativo = caminhoDa({ ...onde, outrosClientes: clientes?.all() })
+    const destino = path.join(pasta(), relativo)
     const conteudo = comDeclaracao(xml)
     if (fs.existsSync(destino) && fs.readFileSync(destino, 'utf8') === conteudo) return relativo
     fs.mkdirSync(path.dirname(destino), { recursive: true })
@@ -102,10 +140,10 @@ function criarArmazenamento({ pastaXmls }) {
 
   /** Caminho absoluto a partir do relativo guardado no banco. */
   function absoluto(relativo) {
-    return path.join(pastaXmls, relativo)
+    return path.join(pasta(), relativo)
   }
 
   return { salvar, absoluto }
 }
 
-module.exports = { criarArmazenamento, pastaDoCliente, nomes, slug, PASTAS, caminhoDa, direcaoPelaChave, modeloPelaChave, pastaNoZip, nomeNoZip }
+module.exports = { criarArmazenamento, pastaDoCliente, pastaDoClienteNoDisco, nomeDePasta, nomeDoCliente, MESES, nomes, slug, PASTAS, caminhoDa, direcaoPelaChave, modeloPelaChave, pastaNoZip, nomeNoZip }

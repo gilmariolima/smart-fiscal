@@ -1269,3 +1269,143 @@ test('seleção mista: planilha e relatório trazem NF-e e CT-e (sem Outros)', a
   assert.match(wb, /name="CT-e"/)
   assert.match(wb, /name="NF-e"/)
 })
+
+test('tela Exportar: opções, ZIP organizado e escolha recusada', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const clientes = ctx.db.prepare('SELECT id, apelido FROM clientes ORDER BY id').all()
+  const chave = '1'.repeat(50)
+  const relativo = `x/${chave}.xml`
+  gravarXml(ctx, relativo, fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml'), 'utf8'))
+  ctx.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml) VALUES (?, ?, 'nfse', 'entrada', 'completa', '2026-03', ?)").run(clientes[0].id, chave, relativo)
+
+  const o = await pedir('/api/exportacao/opcoes')
+  assert.equal(o.status, 200)
+  assert.deepEqual(o.corpo.notas, [{ modelo: 'nfse', competencia: '2026-03', clienteId: clientes[0].id, total: 1 }])
+
+  const r = await pedir('/api/exportacao/zip', { method: 'POST', body: { modelos: ['nfse'], competencias: ['2026-03'], clientes: [clientes[0].id] } })
+  assert.equal(r.status, 200)
+  assert.equal(r.headers.get('content-type'), 'application/zip')
+  assert.match(r.headers.get('content-disposition'), /^attachment; filename="Smart-Fiscal-Exportacao-\d{4}-\d{2}-\d{2}\.zip"/)
+  const zip = lerZip(r.corpo)
+  assert.deepEqual([...zip.keys()].sort(), [`NFS-e/2026/Março/Exemplo/PDF/${chave}-nfse.pdf`, `NFS-e/2026/Março/Exemplo/XML/${chave}-nfse.xml`])
+  assert.equal(zip.get(`NFS-e/2026/Março/Exemplo/PDF/${chave}-nfse.pdf`).subarray(0, 5).toString(), '%PDF-')
+
+  const invalida = await pedir('/api/exportacao/zip', { method: 'POST', body: { modelos: [], competencias: ['2026-03'], clientes: [clientes[0].id] } })
+  assert.equal(invalida.status, 400)
+  const vazia = await pedir('/api/exportacao/zip', { method: 'POST', body: { modelos: ['cte'], competencias: ['2026-03'], clientes: [clientes[0].id] } })
+  assert.equal(vazia.status, 409)
+  assert.match(vazia.corpo.erro, /Nenhuma nota/)
+  const semPainel = await pedir('/api/exportacao/zip', { method: 'POST', body: {}, headers: { 'X-Painel': '0' } })
+  assert.equal(semPainel.status, 403)
+})
+
+// Motor do SPED de mentira: guarda o que recebeu em /api/pasta.
+async function motorFalso(t, responder = () => ({ pasta_saida: 'x', movidos: 2 })) {
+  const pedidos = []
+  const servidor = http.createServer((req, res) => {
+    let corpo = ''
+    req.on('data', (b) => (corpo += b))
+    req.on('end', () => {
+      const dados = JSON.parse(corpo)
+      pedidos.push({ rota: req.url, token: req.headers['x-estoque-token'], dados })
+      const r = responder(dados)
+      res.writeHead(r.erro ? 400 : 200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(r))
+    })
+  }).listen(0, '127.0.0.1')
+  await new Promise((r) => servidor.once('listening', r))
+  t.after(() => new Promise((r) => servidor.close(r)))
+  return { pedidos, motor: { porta: servidor.address().port, token: 'tk' } }
+}
+
+async function appComPastas(t, ctx, opcoes) {
+  const agendador = criarAgendador({ ciclo: ctx.ciclo, config: ctx.config, logger: silencioso, automacao: ctx.automacao, atrasoInicialMs: false })
+  const pastaPainel = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-painel-'))
+  fs.writeFileSync(path.join(pastaPainel, 'index.html'), '<!doctype html>')
+  const servidor = criarApp({ ctx, agendador, pastaPainel, ...opcoes }).listen(0, '127.0.0.1')
+  await new Promise((r) => servidor.once('listening', r))
+  t.after(() => new Promise((r) => servidor.close(r)).then(() => fs.rmSync(pastaPainel, { recursive: true, force: true })))
+  return (caminho, body) => fetch(`http://127.0.0.1:${servidor.address().port}${caminho}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Painel': '1' }, body: JSON.stringify(body ?? {}) }).then(async (r) => ({ status: r.status, corpo: await r.json() }))
+}
+
+test('pasta principal: cria SMART FISCAL com Notas e Arquivos SPED, leva tudo e volta para a padrão', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const cliente = ctx.db.prepare('SELECT * FROM clientes LIMIT 1').get()
+  const rel = path.join('NF-e', 'Exemplo', '2026', 'Outubro', 'Entradas', 'a-nfe.xml')
+  gravarXml(ctx, rel, '<a/>')
+  const nota = ctx.db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia, caminho_xml) VALUES (?, 'a', 'completa', '2026-10', ?)").run(cliente.id, rel).lastInsertRowid
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-principal-'))
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }))
+  const { pedidos, motor } = await motorFalso(t)
+  const post = await appComPastas(t, ctx, { estoque: () => motor })
+
+  assert.equal((await pedir('/api/pastas')).corpo.principal, null)
+  assert.equal((await post('/api/pastas/principal', { pasta: 'relativa' })).status, 400)
+
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  const raiz = path.join(base, 'SMART FISCAL')
+  assert.equal(r.corpo.estado.principal, raiz)
+  assert.ok(fs.existsSync(path.join(raiz, 'Notas', rel)))
+  assert.equal(ctx.config.pastaXmls, path.join(raiz, 'Notas'))
+  assert.deepEqual(pedidos.at(-1), { rota: '/api/pasta', token: 'tk', dados: { pasta_saida: path.join(raiz, 'Arquivos SPED'), levar: true } })
+  assert.match(r.corpo.mensagem, /1 XML/)
+  assert.match(r.corpo.mensagem, /2 arquivos do SPED/)
+  assert.equal((await pedir(`/api/notas/${nota}/xml`)).status, 200)
+
+  // Escolher a própria pasta SMART FISCAL não cria outra dentro dela.
+  const mesma = await post('/api/pastas/principal', { pasta: raiz })
+  assert.equal(mesma.corpo.estado.principal, raiz)
+  assert.ok(!fs.existsSync(path.join(raiz, 'SMART FISCAL')))
+
+  const volta = await post('/api/pastas/principal', { pasta: '' })
+  assert.equal(volta.corpo.estado.principal, null)
+  assert.equal(pedidos.at(-1).dados.pasta_saida, '')
+  assert.equal((await pedir(`/api/notas/${nota}/xml`)).status, 200)
+  assert.ok(!fs.existsSync(raiz), 'a pasta vazia não fica para trás')
+})
+
+test('pasta principal: erro no SPED não desfaz as notas e avisa; escolher de novo tenta outra vez', async (t) => {
+  const { ctx } = await montar(t)
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-principal-'))
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }))
+  let falhar = true
+  const { pedidos, motor } = await motorFalso(t, () => (falhar ? { erro: 'disco cheio' } : { movidos: 0 }))
+  const post = await appComPastas(t, ctx, { estoque: () => motor })
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 200)
+  assert.match(r.corpo.erroSped, /disco cheio/)
+  assert.equal(ctx.config.pastaXmls, path.join(base, 'SMART FISCAL', 'Notas'))
+  falhar = false
+  const depois = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(depois.corpo.erroSped, undefined)
+  assert.equal(pedidos.length, 2)
+
+  const semMotor = await appComPastas(t, ctx, { estoque: () => ({ erro: 'parado' }) })
+  assert.match((await semMotor('/api/pastas/principal', { pasta: base })).corpo.erroSped, /motor do SPED/)
+})
+
+test('pasta principal: janela de escolher pasta só no app; fora do próprio PC é recusado', async (t) => {
+  const { ctx } = await montar(t)
+  const semJanela = await appComPastas(t, ctx, {})
+  assert.deepEqual((await semJanela('/api/pastas/escolher')).corpo, { indisponivel: true })
+  const comJanela = await appComPastas(t, ctx, { escolherPasta: async () => 'D:\\Contabilidade' })
+  assert.deepEqual((await comJanela('/api/pastas/escolher')).corpo, { pasta: 'D:\\Contabilidade' })
+  const cancelou = await appComPastas(t, ctx, { escolherPasta: async () => null })
+  assert.deepEqual((await cancelou('/api/pastas/escolher')).corpo, { pasta: null })
+  const deFora = await appComPastas(t, ctx, { ehLocal: () => false, escolherPasta: async () => 'x' })
+  assert.equal((await deFora('/api/pastas/escolher')).status, 403)
+  assert.equal((await deFora('/api/pastas/principal', { pasta: 'x' })).status, 403)
+})
+
+test('trocar a pasta dos XMLs vale na hora para a gravação, sem reiniciar', async (t) => {
+  const { ctx } = await montar(t)
+  const { criarArmazenamento } = require('../src/services/armazenamento')
+  const arm = criarArmazenamento({ config: ctx.config, db: ctx.db })
+  const nova = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-nova-'))
+  t.after(() => fs.rmSync(nova, { recursive: true, force: true }))
+  await ctx.pastas.mudar('xmls', nova)
+  const rel = arm.salvar({ cliente: { cnpj: '11222333000181', apelido: 'Teste' }, competencia: '2026-10', nomeArquivo: 'a.xml', xml: '<a/>' })
+  assert.ok(fs.existsSync(path.join(nova, rel)))
+  assert.equal(arm.absoluto(rel), path.join(nova, rel))
+})

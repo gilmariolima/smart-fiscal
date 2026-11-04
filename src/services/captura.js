@@ -23,7 +23,7 @@ const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {Function} [deps.agora]   relógio (injetável nos testes)
  */
 function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormirPadrao, agora = () => new Date() }) {
-  const armazenamento = criarArmazenamento({ pastaXmls: config.pastaXmls })
+  const armazenamento = criarArmazenamento({ config, db })
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
 
   const sql = {

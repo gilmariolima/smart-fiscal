@@ -135,14 +135,47 @@ def info_pasta():
             "acessivel": existe or pasta == SAIDA_PADRAO}
 
 
+def arquivos_gerados(pasta):
+    """Os arquivos do sistema dentro da pasta (caminhos relativos a ela): nada de outra coisa que esteja lá.
+    Lista pelo nome, sem testar cada um: com caminho longo demais o teste diria "não existe" e o arquivo
+    ficaria para trás sem aviso; assim a cópia falha e nada muda."""
+    return [(Path(raiz) / nome).relative_to(pasta) for raiz, _, nomes in os.walk(pasta) for nome in nomes if nome.startswith(("SPED_", "DOMINIO_"))]
+
+
+def copiar_gerados(de, para, relativos):
+    """Copia sem substituir o que já está no destino, mantendo a data do arquivo."""
+    for rel in relativos:
+        alvo = para / rel
+        if not alvo.exists():
+            alvo.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(de / rel, alvo)
+
+
+def apagar_gerados(pasta, relativos):
+    """Apaga os arquivos levados e as subpastas que ficaram vazias (a pasta em si fica)."""
+    for rel in relativos:
+        (pasta / rel).unlink(missing_ok=True)
+    for sub in sorted({p for rel in relativos for p in (pasta / rel).parents if p != pasta and pasta in p.parents}, key=lambda p: -len(p.parts)):
+        try:
+            sub.rmdir()
+        except OSError:
+            pass  # ainda tem coisa dentro
+
+
 def mudar_pasta(dados):
     """Troca a pasta dos arquivos gerados. Vazio volta para a padrão. A pasta tem de ser um
-    caminho completo (C:\\... ou \\\\servidor\\...) em que o app consiga gravar."""
+    caminho completo (C:\\... ou \\\\servidor\\...) em que o app consiga gravar.
+    Com `levar`, os arquivos já gerados vão junto: primeiro copia e só apaga depois de tudo
+    copiado; se a cópia falhar, nada muda."""
     texto = str(dados.get("pasta_saida") or "").strip().strip('"').strip()
+    levar = dados.get("levar") is True
+    atual = pasta_saida()
     if texto:
         pasta = Path(os.path.expandvars(texto))
         if not pasta.is_absolute():
             raise PedidoInvalido("Use o endereço completo da pasta, como C:\\Fiscal\\SPED ou \\\\servidor\\fiscal\\SPED.")
+        if levar and pasta != atual and (atual in pasta.parents or pasta in atual.parents):
+            raise PedidoInvalido("A pasta nova não pode ficar dentro da atual (nem a atual dentro da nova).")
         try:
             pasta.mkdir(parents=True, exist_ok=True)
             teste = pasta / f".estoque-sped-{secrets.token_hex(4)}.tmp"
@@ -151,14 +184,24 @@ def mudar_pasta(dados):
         except OSError as e:
             raise PedidoInvalido(f"Não foi possível gravar em {pasta}: {e.strerror or e}. Confira o endereço e se a pasta "
                                  "(ou o servidor) está acessível.")
+    nova = pasta if texto else SAIDA_PADRAO
+    relativos = []
     with trava:
+        if levar and nova != atual:
+            relativos = arquivos_gerados(atual)
+            try:
+                nova.mkdir(parents=True, exist_ok=True)
+                copiar_gerados(atual, nova, relativos)
+            except OSError as e:
+                raise PedidoInvalido(f"Não consegui copiar os arquivos do SPED para {nova}: {e.strerror or e}. Nada mudou: continua em {atual}.")
         config = gs.carregar_json(CONFIG) if CONFIG.exists() else {}
         if texto and pasta != SAIDA_PADRAO:
             config["pasta_saida"] = str(pasta)
         else:
             config.pop("pasta_saida", None)
         gravar_json(CONFIG, config)
-    return info_pasta()
+        apagar_gerados(atual, relativos)
+    return {**info_pasta(), "movidos": len(relativos)}
 
 
 def gravar_json(caminho, dados):

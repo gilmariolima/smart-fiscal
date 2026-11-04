@@ -16,9 +16,7 @@ const path = require('node:path')
 const { criarArmazenamento, pastaDoCliente, pastaNoZip, nomeNoZip, slug } = require('./armazenamento')
 const { montarPlanilhaDoMes } = require('./planilhaMes')
 const { montarRelatorioPdf } = require('./relatorioPdf')
-const { gerarDanfse, situacaoDanfse } = require('./danfse/gerar')
-const { gerarDanfe } = require('./danfe/gerar')
-const { gerarDacte } = require('./dacte/gerar')
+const { pdfsDasNotas } = require('./pdfNota')
 
 const LIMITE_NOTAS = 2000
 const CONTEUDOS = ['xml', 'danfe', 'danfse', 'dacte', 'excel', 'pdf']
@@ -37,7 +35,7 @@ function carimbo(data) {
 const unico = (notas, campo) => (notas.every((n) => n[campo] === notas[0][campo]) ? notas[0][campo] : null)
 
 function criarServicoSelecao({ db, config, agora = () => new Date() }) {
-  const armazenamento = criarArmazenamento({ pastaXmls: config.pastaXmls })
+  const armazenamento = criarArmazenamento({ config, db })
   const cliente = db.prepare('SELECT cnpj, apelido, razao_social FROM clientes WHERE id = ?')
   const evento = db.prepare("SELECT caminho_xml FROM eventos WHERE chave = ? AND tp_evento = '110111' AND caminho_xml IS NOT NULL ORDER BY n_seq")
   const tiposEvento = db.prepare('SELECT tp_evento FROM eventos WHERE chave = ?')
@@ -97,12 +95,7 @@ function criarServicoSelecao({ db, config, agora = () => new Date() }) {
       }
     }
     // PDF de cada nota: DANFE para NF-e, DANFSe para NFS-e (ao lado do XML, com o mesmo nome).
-    const pdfsDasNotas = [
-      ['danfe', 'DANFE', (n) => n.modelo !== 'nfse' && n.modelo !== 'cte', (xml, n) => gerarDanfe(xml, { situacao: n.cancelada ? 'cancelada' : 'autorizada' })],
-      ['danfse', 'DANFSe', (n) => n.modelo === 'nfse', (xml, n) => gerarDanfse(xml, { situacao: situacaoDanfse(n, tiposEvento.all(n.chave).map((e) => e.tp_evento)) })],
-      ['dacte', 'DACTE', (n) => n.modelo === 'cte', (xml, n) => gerarDacte(xml, { situacao: n.cancelada ? 'cancelado' : 'autorizado' })],
-    ]
-    for (const [chave, rotulo, doModelo, gerar] of pdfsDasNotas) {
+    for (const { chave, rotulo, doModelo, gerar } of pdfsDasNotas((c) => tiposEvento.all(c).map((e) => e.tp_evento))) {
       if (!partes.has(chave)) continue
       for (const n of notas.filter(doModelo)) {
         const xml = lerXml(n)

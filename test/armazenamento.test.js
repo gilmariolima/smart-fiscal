@@ -6,25 +6,33 @@ const path = require('node:path')
 const { caminhoDa, direcaoPelaChave, modeloPelaChave, nomes, pastaNoZip, nomeNoZip } = require('../src/services/armazenamento')
 
 const cliente = { cnpj: '12138481000185', apelido: 'INOX' }
-const escritorio = { cnpj: '01904741000160', apelido: 'escritorio' }
+const escritorio = { cnpj: '01904741000160', apelido: 'escritorio', papel: 'escritorio', razao_social: 'SM Smart Auditoria' }
 const p = (...partes) => path.join(...partes)
 
-test('caminhoDa: nota, resumo e evento por ano, mês, modelo e direção', () => {
+test('caminhoDa: nota, resumo e evento na ordem das telas (tipo, cliente, ano, mês, direção)', () => {
   const base = { cliente, competencia: '2026-10', nomeArquivo: 'x.xml' }
-  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'entrada', categoria: 'nota' }), p('12138481000185_INOX', '2026', '10', 'NF-e', 'Entradas', 'x.xml'))
-  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'entrada', categoria: 'resumo' }), p('12138481000185_INOX', '2026', '10', 'NF-e', 'Entradas', 'Resumos', 'x.xml'))
-  assert.equal(caminhoDa({ ...base, modelo: 'nfse', direcao: 'saida', categoria: 'evento' }), p('12138481000185_INOX', '2026', '10', 'NFS-e', 'Saidas', 'Eventos', 'x.xml'))
+  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'entrada', categoria: 'nota' }), p('NF-e', 'INOX', '2026', 'Outubro', 'Entradas', 'x.xml'))
+  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'entrada', categoria: 'resumo' }), p('NF-e', 'INOX', '2026', 'Outubro', 'Entradas', 'Resumos', 'x.xml'))
+  assert.equal(caminhoDa({ ...base, modelo: 'nfse', direcao: 'saida', categoria: 'evento' }), p('NFS-e', 'INOX', '2026', 'Outubro', 'Saidas', 'Eventos', 'x.xml'))
 })
 
 test('caminhoDa: fora da carteira e sem competência', () => {
   assert.equal(
     caminhoDa({ cliente: escritorio, foraDaCarteira: true, competencia: '2026-10', modelo: 'nfe', direcao: 'entrada', categoria: 'nota', nomeArquivo: 'x.xml' }),
-    p('01904741000160_escritorio', 'fora-da-carteira', '2026', '10', 'NF-e', 'Entradas', 'x.xml'),
+    p('NF-e', 'SM Smart Auditoria', 'fora-da-carteira', '2026', 'Outubro', 'Entradas', 'x.xml'),
   )
   assert.equal(
     caminhoDa({ cliente, competencia: null, modelo: 'nfe', direcao: 'entrada', categoria: 'nota', nomeArquivo: 'x.xml' }),
-    p('12138481000185_INOX', 'sem-data', 'NF-e', 'Entradas', 'x.xml'),
+    p('NF-e', 'INOX', 'sem-data', 'Entradas', 'x.xml'),
   )
+})
+
+test('caminhoDa: clientes com o mesmo nome levam o CNPJ; nome sem letras vira o CNPJ', () => {
+  const base = { competencia: '2026-10', nomeArquivo: 'x.xml' }
+  const outrosClientes = [cliente, { cnpj: '44555666000199', apelido: 'inox' }]
+  assert.equal(caminhoDa({ ...base, cliente, outrosClientes }), p('NF-e', 'INOX 12138481000185', '2026', 'Outubro', 'Entradas', 'x.xml'))
+  assert.equal(caminhoDa({ ...base, cliente, outrosClientes: [cliente] }), p('NF-e', 'INOX', '2026', 'Outubro', 'Entradas', 'x.xml'))
+  assert.equal(caminhoDa({ ...base, cliente: { cnpj: '12138481000185', apelido: '***' } }), p('NF-e', '12138481000185', '2026', 'Outubro', 'Entradas', 'x.xml'))
 })
 
 test('direção e modelo pela chave', () => {
@@ -60,7 +68,7 @@ test('CT-e: pastas CT-e/Entradas|Saidas|Outros e nome <chave>-cte.xml', () => {
   assert.equal(nomes.cte(CH), `${CH}-cte.xml`)
   assert.equal(
     caminhoDa({ cliente, modelo: 'cte', direcao: 'outro', competencia: '2026-10', nomeArquivo: nomes.cte(CH) }),
-    p('12138481000185_INOX', '2026', '10', 'CT-e', 'Outros', `${CH}-cte.xml`),
+    p('CT-e', 'INOX', '2026', 'Outubro', 'Outros', `${CH}-cte.xml`),
   )
   assert.equal(pastaNoZip({ modelo: 'cte', tipo: 'outro', cancelada: 0 }), 'CT-e/Outros')
   assert.equal(pastaNoZip({ modelo: 'cte', tipo: 'entrada', cancelada: 1 }), 'CT-e/Entradas/Canceladas')

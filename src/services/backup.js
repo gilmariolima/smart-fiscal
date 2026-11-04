@@ -2,6 +2,7 @@
 
 // Backup para outra pasta, escolhida na tela Backup (fica na tabela `sistema`) ou no PASTA_BACKUP do .env:
 //   xmls/                espelho dos XMLs: copia só os novos ou alterados e nunca apaga
+//   sped/                espelho de SMART FISCAL\Arquivos SPED, quando há pasta principal (fora da pasta de dados)
 //   diarios/AAAA-MM-DD/  nfe.db (VACUUM INTO, consistente com o sistema rodando), certs/, .env
 //                        e estoque/ (dados do SPED, sem os logs)
 // Uma cópia diária por dia; guarda as MANTER_DIARIOS mais recentes.
@@ -77,18 +78,18 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
   }
 
   // Copia o que não existe no espelho ou mudou de tamanho (o resumo da nota vira o XML completo).
-  async function espelharXmls(destino) {
+  async function espelhar(pasta, destino) {
     let novos = 0
     let itens = []
     try {
-      itens = await fsp.readdir(config.pastaXmls, { recursive: true, withFileTypes: true })
+      itens = await fsp.readdir(pasta, { recursive: true, withFileTypes: true })
     } catch (e) {
       if (e.code !== 'ENOENT') throw e
     }
     for (const item of itens) {
       if (!item.isFile()) continue
       const origem = path.join(item.parentPath, item.name)
-      const alvo = path.join(destino, path.relative(config.pastaXmls, origem))
+      const alvo = path.join(destino, path.relative(pasta, origem))
       const [o, a] = await Promise.all([fsp.stat(origem), fsp.stat(alvo).catch(() => null)])
       if (a && a.size === o.size) continue
       await fsp.mkdir(path.dirname(alvo), { recursive: true })
@@ -137,7 +138,10 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
       } catch (e) {
         throw new Error(`Pasta de backup indisponível (${pastaBackup}): ${e.code || e.message}`)
       }
-      const xmlsNovos = await espelharXmls(path.join(pastaBackup, 'xmls'))
+      const xmlsNovos = await espelhar(config.pastaXmls, path.join(pastaBackup, 'xmls'))
+      // Na pasta principal, os arquivos do SPED estão fora da pasta de dados: a cópia do dia não os alcança.
+      const principal = sql.lerPasta.get('pasta_principal')?.valor
+      if (principal) await espelhar(path.join(principal, 'Arquivos SPED'), path.join(pastaBackup, 'sped'))
       await copiaDoDia(pastaDiarios, dia)
       await rodizio(pastaDiarios)
       const resumo = `${xmlsNovos} ${xmlsNovos === 1 ? 'XML novo' : 'XMLs novos'}; cópia de ${dia.split('-').reverse().join('/')}`

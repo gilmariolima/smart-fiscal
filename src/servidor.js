@@ -28,11 +28,11 @@ const relogioReal = {
   },
 }
 
-async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque, atualizacao } = {}) {
+async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque, atualizacao, escolherPasta } = {}) {
   const { config, logger } = ctx
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, ...(cron ? { cron } : {}) })
   let painel = null
-  if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao })
+  if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta })
   agendador.iniciar()
 
   // Backup: 1 min depois de ligar e a cada hora; o serviço só copia se houver pasta escolhida

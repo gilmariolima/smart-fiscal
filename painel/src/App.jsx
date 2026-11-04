@@ -8,6 +8,7 @@ import Capturar from './telas/Capturar.jsx'
 import NotasNovas from './telas/NotasNovas.jsx'
 import Clientes from './telas/Clientes.jsx'
 import Execucoes from './telas/Execucoes.jsx'
+import Exportar from './telas/Exportar.jsx'
 import Backup from './telas/Backup.jsx'
 import Pastas from './telas/Pastas.jsx'
 import Inicio from './telas/Inicio.jsx'
@@ -83,8 +84,7 @@ const rotas = createHashRouter([
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },
       { path: 'clientes/:cnpj/certificado', element: <Cadastro key="certificado" modo="certificado" /> },
       { path: 'escritorio', element: <Cadastro key="escritorio" modo="escritorio" /> },
-      // A exportação agora é pelo "Exportar mês" de cada mês.
-      { path: 'exportar', element: <Navigate to="/notas" replace /> },
+      { path: 'exportar', element: <Exportar /> },
       { path: 'execucoes', element: <Execucoes /> },
       { path: 'backup', element: <Backup /> },
       { path: 'pastas', element: <Pastas /> },

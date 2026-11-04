@@ -179,10 +179,25 @@ function atualizadorFalso({ falhar = false } = {}) {
   }
 }
 
+test('atualização: ao abrir não procura nada; só o botão procura', async () => {
+  const atualizador = atualizadorFalso()
+  const a = criarAtualizacao({ atualizador, perguntar: async () => ({ response: 1 }), sair: () => {} })
+  assert.equal(atualizador.procurou, 0)
+  assert.equal(a.procurar, undefined, 'não há outro caminho para procurar além do botão')
+  await a.verificar()
+  assert.equal(atualizador.procurou, 1)
+})
+
+test('o app não procura atualização ao abrir nem de tempos em tempos', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8')
+  assert.doesNotMatch(main, /checkForUpdates|atualizacao\.(procurar|verificar)\(\)\s*$/m)
+  assert.doesNotMatch(main, /setInterval\([^\n]*atualizacao/)
+})
+
 test('atualização: sem versão baixada, fechar o app não instala nada', async () => {
   const atualizador = atualizadorFalso()
   const a = criarAtualizacao({ atualizador, perguntar: async () => ({ response: 1 }), sair: () => {} })
-  await a.procurar()
+  await a.verificar()
   assert.equal(atualizador.procurou, 1)
   assert.equal(atualizador.autoInstallOnAppQuit, false)
   assert.equal(a.instalarAoSair(), false)
@@ -215,7 +230,7 @@ test('atualização: sem internet, só anota no log', async () => {
   const log = path.join(tmp(), 'atualizacao.log')
   const atualizador = atualizadorFalso({ falhar: true })
   const a = criarAtualizacao({ atualizador, perguntar: async () => ({ response: 1 }), sair: () => {}, log })
-  await a.procurar()
+  await a.verificar()
   assert.match(fs.readFileSync(log, 'utf8'), /erro .*sem internet/)
   assert.equal(a.instalarAoSair(), false)
 })

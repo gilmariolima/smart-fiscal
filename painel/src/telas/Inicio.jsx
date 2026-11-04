@@ -22,7 +22,7 @@ const ATALHOS = [
   { para: '/clientes', icone: 'clientes', cor: 'verde', titulo: 'Clientes', texto: 'Certificados e captura' },
   { para: '/clientes/novo', icone: 'novoCliente', cor: 'roxo', titulo: 'Novo cliente', texto: 'Cadastrar com o A1', soNoPc: true },
   { para: '/notas/pendentes', icone: 'pendentes', cor: 'vermelho', titulo: 'XMLs não baixados', texto: 'Aguardando a ciência' },
-  { para: '/execucoes', icone: 'execucoes', cor: 'grafite', titulo: 'Execuções', texto: 'Consultas e downloads' },
+  { para: '/exportar', icone: 'exportar', cor: 'grafite', titulo: 'Exportar', texto: 'ZIP com PDF e XML' },
   { para: '/escritorio', icone: 'escritorio', cor: 'ocre', titulo: 'Escritório', texto: 'Certificado das saídas', soNoPc: true },
   { para: '/capturar', icone: 'capturar', cor: 'ciano', titulo: 'Capturar', texto: 'Buscar notas agora' },
   { para: '/sped', icone: 'inventario', cor: 'laranja', titulo: 'Converter inventário', texto: 'Inventário em SPED' },

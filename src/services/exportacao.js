@@ -61,7 +61,7 @@ function gravarZip(destino, arquivos) {
 // ---------- serviço ----------
 
 function criarServicoExportacao({ db, config, logger, agora = () => new Date() }) {
-  const armazenamento = criarArmazenamento({ pastaXmls: config.pastaXmls })
+  const armazenamento = criarArmazenamento({ config, db })
   const iso = () => agora().toISOString()
 
   const sql = {

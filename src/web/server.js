@@ -58,7 +58,7 @@ function iguaisSemVazarTempo(a, b) {
  * @param {Function} [deps.ehLocal] (req) => o pedido veio do próprio computador (troca nos testes)
  * @param {Function} [deps.estoque] () => motor do SPED ({ porta, token } ou { erro }), para onde vai /estoque
  */
-function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => ENDERECOS_LOCAIS.has(req.socket.remoteAddress), pastaPainel = path.join(__dirname, 'dist') }) {
+function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal = (req) => ENDERECOS_LOCAIS.has(req.socket.remoteAddress), pastaPainel = path.join(__dirname, 'dist') }) {
   const { db, config, logger } = ctx
   const app = express()
   app.disable('x-powered-by')
@@ -123,9 +123,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     if (!ehLocal(req)) return res.status(403).json({ erro: 'O cadastro de clientes só pode ser feito no próprio computador do sistema.' })
     jsonCertificado(req, res, next)
   })
-  // ZIP das selecionadas: até 2.000 ids cabem em 64 KB; o limite maior vale só nesta rota.
+  // ZIP das selecionadas e da tela Exportar: até 2.000 ids cabem em 64 KB; o limite maior vale só nestas rotas.
   const jsonZip = express.json({ limit: '64kb' })
-  app.use('/api', (req, res, next) => (req.method === 'POST' && req.path === '/notas/zip' ? jsonZip(req, res, next) : next()))
+  app.use('/api', (req, res, next) => (req.method === 'POST' && ['/notas/zip', '/exportacao/zip'].includes(req.path) ? jsonZip(req, res, next) : next()))
   app.use('/api', express.json({ limit: '10kb' }))
 
   // Ações (POST) só pelo próprio painel: exige cabeçalho que um formulário de outro site não envia.
@@ -653,6 +653,44 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     arquivo.finalize()
   })
 
+  // Tela Exportar: clientes e contagem de notas para montar os filtros.
+  app.get('/api/exportacao/opcoes', (req, res) => res.json(ctx.exportacaoLote.opcoes()))
+
+  app.post('/api/exportacao/zip', async (req, res) => {
+    let lote
+    try {
+      lote = ctx.exportacaoLote.preparar(req.body || {})
+    } catch (e) {
+      if (e.status) throw new ErroHttp(e.status, e.message)
+      throw e
+    }
+    res.set('Content-Type', 'application/zip')
+    res.set('Content-Disposition', `attachment; filename="${lote.nome}"`)
+    const arquivo = archiver('zip', { zlib: { level: 9 } })
+    arquivo.on('error', (e) => {
+      logger.error('Falha ao montar o ZIP da exportação', { erro: e.message })
+      res.destroy(e)
+    })
+    arquivo.on('warning', (e) => logger.warn('Aviso ao montar o ZIP da exportação', { erro: e.message }))
+    let fechada = false
+    const fechou = new Promise((r) => res.once('close', () => r((fechada = true))))
+    arquivo.pipe(res)
+    try {
+      // Um arquivo por vez: muitas notas não enchem a memória nem abrem milhares de arquivos.
+      for await (const a of lote.arquivos()) {
+        const gravado = new Promise((r) => arquivo.once('entry', r))
+        arquivo.append(a.caminho ? fs.createReadStream(a.caminho) : a.conteudo, { name: a.nome })
+        await Promise.race([gravado, fechou])
+        if (fechada) break
+      }
+      if (fechada) arquivo.abort()
+      else await arquivo.finalize()
+    } catch (e) {
+      logger.error('Falha ao montar o ZIP da exportação', { erro: e.message })
+      res.destroy(e)
+    }
+  })
+
   app.post('/api/exportar', async (req, res) => {
     const { cnpj, competencia, modelo, incluir } = req.body || {}
     if (!cnpj || !competencia) throw new ErroHttp(400, 'Informe o cliente e a competência.')
@@ -849,9 +887,60 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
     res.json({ ok: true, mensagem, estado: ctx.pastas.estado() })
   })
 
+  // A janela de pastas do Windows só existe no app instalado; fora dele a tela mostra um campo de texto.
+  app.post('/api/pastas/escolher', async (req, res) => {
+    exigirLocal(req)
+    if (!escolherPasta) return res.json({ indisponivel: true })
+    res.json({ pasta: await escolherPasta() })
+  })
+
+  const plural = (n, um, varios) => `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`
+
+  // Leva os arquivos do SPED: quem cuida deles é o motor em Python.
+  async function levarSped(pastaSped) {
+    const motor = estoque?.()
+    if (!motor?.porta) return { erro: `O motor do SPED não está ligado (${motor?.erro || 'sem motor'}).` }
+    try {
+      const r = await fetch(`http://127.0.0.1:${motor.porta}/api/pasta`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Estoque-Token': motor.token },
+        body: JSON.stringify({ pasta_saida: pastaSped, levar: true }),
+      })
+      const corpo = await r.json()
+      return corpo.erro ? { erro: corpo.erro } : { movidos: corpo.movidos || 0 }
+    } catch (e) {
+      logger.error('Motor do SPED não respondeu ao levar os arquivos', { erro: e.message })
+      return { erro: 'O motor do SPED não respondeu.' }
+    }
+  }
+
+  app.post('/api/pastas/principal', async (req, res) => {
+    exigirLocal(req)
+    if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para mudar a pasta principal.')
+    let r
+    try {
+      r = await ctx.pastas.mudarPrincipal(req.body?.pasta)
+    } catch (e) {
+      throw new ErroHttp(400, e.message)
+    }
+    // As notas já foram: se o SPED falhar, elas ficam na pasta nova e escolher de novo tenta só o que faltou.
+    const sped = await levarSped(r.pastaSped)
+    if (!sped.erro) await ctx.pastas.limparPrincipalAntiga(r.anterior)
+    const partes = [plural(r.movidos, 'XML', 'XMLs')]
+    if (!sped.erro) partes.push(plural(sped.movidos, 'arquivo do SPED', 'arquivos do SPED'))
+    const lugar = r.raiz ? `Pasta principal: ${r.raiz}.` : 'Voltou para a pasta padrão.'
+    res.json({
+      ok: true,
+      mensagem: `${lugar} ${partes.join(' e ')} ${r.movidos + (sped.movidos || 0) === 1 ? 'levado' : 'levados'}.`,
+      ...(sped.erro ? { erroSped: `As notas foram, mas os arquivos do SPED não: ${sped.erro} Escolha a pasta de novo para tentar outra vez.` } : {}),
+      estado: ctx.pastas.estado(),
+    })
+  })
+
   app.post('/api/pastas/abrir', (req, res) => {
     exigirLocal(req)
-    const pasta = ctx.pastas.estado().pastas.find((p) => p.tipo === req.body?.tipo)?.pasta
+    const estado = ctx.pastas.estado()
+    const pasta = req.body?.tipo === 'principal' ? estado.principal || estado.pastas.find((p) => p.tipo === 'xmls').pasta : estado.pastas.find((p) => p.tipo === req.body?.tipo)?.pasta
     if (!pasta) throw new ErroHttp(404, 'Pasta desconhecida.')
     fs.mkdirSync(pasta, { recursive: true })
     abrirNoExplorador(pasta)
@@ -883,9 +972,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, ehLocal = (req) => END
 }
 
 /** Sobe o painel em PAINEL_HOST:PAINEL_PORTA. */
-function iniciarPainel({ ctx, agendador, estoque, atualizacao }) {
+function iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta }) {
   const { config, logger } = ctx
-  const app = criarApp({ ctx, agendador, estoque, atualizacao })
+  const app = criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta })
   return new Promise((resolve, reject) => {
     const servidor = app.listen(config.painelPorta, config.painelHost)
     servidor.once('error', (e) => {

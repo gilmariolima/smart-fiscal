@@ -15,6 +15,7 @@ const GRUPOS = [
     titulo: 'Notas fiscais',
     itens: [
       { para: '/notas', rotulo: 'Notas', icone: 'fa-folder-open' },
+      { para: '/exportar', rotulo: 'Exportar', icone: 'fa-file-zipper' },
       { para: '/execucoes', rotulo: 'Execuções', icone: 'fa-clock-rotate-left' },
     ],
   },

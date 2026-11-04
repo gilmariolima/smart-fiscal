@@ -13,11 +13,12 @@ const { criarServicoCiclo } = require('./services/ciclo')
 const { criarServicoResumo } = require('./services/resumo')
 const { criarServicoExportacao } = require('./services/exportacao')
 const { criarServicoSelecao } = require('./services/selecao')
+const { criarServicoExportacaoLote } = require('./services/exportacaoLote')
 const { verificarAmbiente } = require('./ambiente')
 const { criarAutomacao } = require('./services/automacao')
 const { criarServicoBackup } = require('./services/backup')
 const { criarServicoPastas } = require('./services/pastas')
-const { migrarPastas } = require('./services/migracaoPastas')
+const { migrarPastas, migrarLayoutDasTelas } = require('./services/migracaoPastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
 function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, agora, verificarAmbiente: verificar = true } = {}) {
@@ -37,6 +38,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   const pastas = criarServicoPastas(deps)
   // Uma vez só: XMLs do formato antigo (AAAA-MM) para AAAA\MM\<modelo>\<direção>.
   migrarPastas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
+  migrarLayoutDasTelas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
   return {
     config,
     logger: log,
@@ -47,6 +49,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     resumo: criarServicoResumo(deps),
     exportacao: criarServicoExportacao(deps),
     selecao: criarServicoSelecao(deps),
+    exportacaoLote: criarServicoExportacaoLote(deps),
     automacao: criarAutomacao(deps),
     backup: criarServicoBackup(deps),
     pastas,

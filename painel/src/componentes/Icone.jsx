@@ -27,11 +27,11 @@ const DESENHOS = {
       <path d="M12 11v4M12 18h.01" />
     </>
   ),
-  execucoes: (
+  exportar: (
     <>
-      <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" />
-      <path d="M3 4v4h4" />
-      <path d="M12 8v4l3 2" />
+      <path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      <path d="M4 8l2-4h12l2 4" />
+      <path d="M12 11v6M9.5 14.5 12 17l2.5-2.5" />
     </>
   ),
   escritorio: (
