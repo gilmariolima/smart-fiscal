@@ -36,7 +36,7 @@ const horaMinuto = (iso) => {
  * @param {object} deps
  * @param {Function} deps.fabricaCte (linha de clientes) => cliente do CTeDistribuicaoDFe
  */
-function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormirPadrao, agora = () => new Date() }) {
+function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormirPadrao, agora = () => new Date(), deveParar = () => false }) {
   const armazenamento = criarArmazenamento({ config, db })
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
 
@@ -64,6 +64,7 @@ function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormi
     erro: db.prepare('UPDATE clientes SET cte_ultima_consulta = ?, cte_ultimo_erro = ? WHERE id = ?'),
     aviso: db.prepare('UPDATE clientes SET cte_ultimo_erro = ? WHERE id = ?'),
     iniciarExecucao: db.prepare("INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura_cte', ?)"),
+    docsAteAgora: db.prepare('UPDATE execucoes SET docs_recebidos = ? WHERE id = ?'),
     marcarCaptura: db.prepare('UPDATE notas SET captura_id = ? WHERE cliente_id = ? AND chave = ?'),
     notasDaCaptura: db.prepare('SELECT COUNT(*) n FROM notas WHERE captura_id = ?'),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, c_stat = @c_stat, x_motivo = @x_motivo, docs_recebidos = @docs, notas_recebidas = @notas,
@@ -174,6 +175,8 @@ function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormi
       return { ok: true, cnpj: cliente.cnpj, pulado: espera, docs: 0, notas: 0, eventos: 0 }
     }
 
+    if (deveParar()) return { ok: true, cnpj: cliente.cnpj, pulado: 'app fechando', docs: 0, notas: 0, eventos: 0 }
+
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     const resultado = { ok: true, cnpj: cliente.cnpj, docs: 0, notas: 0, eventos: 0, entradas: 0, saidas: 0, outros: 0, ignorados: 0, lotes: 0, cStat: null, erro: null }
     let xMotivo = null
@@ -201,6 +204,10 @@ function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormi
       let nsu = nsuCurto(cliente.cte_ult_nsu)
       while (resultado.lotes < MAX_LOTES_POR_CICLO) {
         if (resultado.lotes > 0) await dormir(config.intervaloEntreChamadasMs)
+        if (deveParar()) {
+          logger.info('Captura de CT-e interrompida: app fechando; continua na próxima', { cnpj: cliente.cnpj, nsu })
+          return fechar()
+        }
         const r = await servico.consultarLote(nsu)
         resultado.cStat = r.cStat ? String(r.cStat) : null
         xMotivo = r.xMotivo || null
@@ -236,6 +243,7 @@ function criarServicoCapturaCte({ db, config, logger, fabricaCte, dormir = dormi
         if (c.ignorado === r.documentos.length) resultado.aviso = `Lote sem CT-e reconhecido (${c.ignorado} documentos ignorados)`
         resultado.lotes++
         resultado.docs += r.documentos.length
+        sql.docsAteAgora.run(resultado.docs, execId)
         resultado.entradas += c.entrada
         resultado.saidas += c.saida
         resultado.outros += c.outro

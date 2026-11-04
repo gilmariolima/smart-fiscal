@@ -10,6 +10,7 @@ const { criarFabricaAdn } = require('./sefaz/adn')
 const { criarFabricaCte } = require('./sefaz/cte')
 const { criarServicoClientes } = require('./services/clientes')
 const { criarServicoCiclo } = require('./services/ciclo')
+const { criarConferenciaXmls } = require('./services/conferenciaXmls')
 const { criarServicoResumo } = require('./services/resumo')
 const { criarServicoExportacao } = require('./services/exportacao')
 const { criarServicoSelecao } = require('./services/selecao')
@@ -54,6 +55,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     exportacaoLote: criarServicoExportacaoLote(deps),
     automacao: criarAutomacao(deps),
     backup: criarServicoBackup(deps),
+    conferenciaXmls: criarConferenciaXmls(deps),
     pastas,
     fechar: () => banco.close(),
   }

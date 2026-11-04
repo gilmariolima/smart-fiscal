@@ -4,6 +4,7 @@
 // O escritório não dá ciência: o dono da empresa dá, e o XML completo chega numa consulta seguinte.
 // Um cliente por vez; erro em um cliente não interrompe os outros.
 // Trava: em memória (mesmo processo) + no banco (CLI e servidor ao mesmo tempo).
+// Fechar o app para entre um lote e outro: o NSU já gravado faz a próxima captura continuar dali.
 
 const { criarServicoCaptura } = require('./captura')
 const { criarServicoManifestacao } = require('./manifestacao')
@@ -15,16 +16,22 @@ const JANELA_TRAVA_MS = 30 * 60e3 // execução sem fim há mais de 30 min = pro
 
 function criarServicoCiclo(deps) {
   const { db, logger, agora = () => new Date() } = deps
-  const captura = criarServicoCaptura(deps)
-  const manifestacao = criarServicoManifestacao(deps)
-  const download = criarServicoDownload({ ...deps, captura })
-  const capturaNfse = criarServicoCapturaNfse(deps)
-  const capturaCte = criarServicoCapturaCte(deps)
   let rodando = false
+  let parada = false
+  let emCurso = null // resolve quando o ciclo atual termina
+  let andamento = null
+  const depsCaptura = { ...deps, deveParar: () => parada }
+  const captura = criarServicoCaptura(depsCaptura)
+  const manifestacao = criarServicoManifestacao(deps)
+  const download = criarServicoDownload({ ...depsCaptura, captura })
+  const capturaNfse = criarServicoCapturaNfse(depsCaptura)
+  const capturaCte = criarServicoCapturaCte(depsCaptura)
 
   const sql = {
     emAndamento: db.prepare(`SELECT id, tipo, inicio FROM execucoes WHERE fim IS NULL AND tipo IN ('captura', 'captura_nfse', 'captura_cte', 'ciencia', 'download')
       AND inicio > ? LIMIT 1`),
+    fecharOrfas: db.prepare(`UPDATE execucoes SET fim = inicio, erro = ?,
+      notas_recebidas = (SELECT COUNT(*) FROM notas WHERE notas.captura_id = execucoes.id) WHERE fim IS NULL`),
     // Sem certificado não há como consultar: quem não tem fica de fora (cert_arquivo vazio).
     ativos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo <> '' ORDER BY id"),
     escritorio: db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio' AND ativo = 1 LIMIT 1"),
@@ -36,6 +43,21 @@ function criarServicoCiclo(deps) {
     const limite = new Date(agora().getTime() - JANELA_TRAVA_MS).toISOString()
     const exec = sql.emAndamento.get(limite)
     return exec ? `Já existe uma execução (${exec.tipo}) em andamento desde ${exec.inicio}.` : null
+  }
+
+  // Ao abrir: linha sem fim é de um processo que morreu no meio. Sem isso ela segura a trava e fica "Em andamento" para sempre.
+  // O fim fica igual ao início porque não se sabe a que horas parou.
+  function encerrarOrfas() {
+    if (rodando) return 0
+    const { changes } = sql.fecharOrfas.run('Interrompida: o app foi fechado antes de terminar. A próxima captura continua de onde parou.')
+    if (changes) logger.warn('Execuções interrompidas encerradas ao abrir', { execucoes: changes })
+    return changes
+  }
+
+  /** Para no próximo intervalo entre lotes e espera; nada mais começa depois disso. */
+  function parar() {
+    parada = true
+    return emCurso || Promise.resolve()
   }
 
   // `escritorioComoCliente`: o escritório entra também como cliente (NFS-e e CT-e dele), quando ele é cliente e foi escolhido.
@@ -82,10 +104,18 @@ function criarServicoCiclo(deps) {
     const escritorio = passoEscritorio ? (cnpj && !cnpjs ? alvoEscritorio : sql.escritorio.get()) : null
     const tarefaEscritorio = escritorio ? passoEscritorio(escritorio, !!(escritorioComoCliente && escritorio.tambem_cliente)) : null
     rodando = true
+    let liberar
+    emCurso = new Promise((r) => (liberar = r))
+    const total = clientes.length + (tarefaEscritorio ? 1 : 0)
+    let posicao = 0
+    const comecar = (c) => {
+      andamento = { cnpj: c.cnpj, nome: c.apelido || c.razao_social, posicao: ++posicao, total }
+      avisar(aoIniciarCliente, c.cnpj)
+    }
     try {
       let resultadoEscritorio
       if (tarefaEscritorio) {
-        avisar(aoIniciarCliente, escritorio.cnpj)
+        comecar(escritorio)
         try {
           resultadoEscritorio = { cnpj: escritorio.cnpj, ...(await tarefaEscritorio()) }
         } catch (e) {
@@ -95,7 +125,11 @@ function criarServicoCiclo(deps) {
       }
       const resultados = []
       for (const cliente of clientes) {
-        avisar(aoIniciarCliente, cliente.cnpj)
+        if (parada) {
+          logger.info('Ciclo interrompido: app fechando', { clientesFaltando: total - posicao })
+          break
+        }
+        comecar(cliente)
         try {
           resultados.push({ cnpj: cliente.cnpj, ...(await passo(cliente)) })
         } catch (e) {
@@ -106,6 +140,9 @@ function criarServicoCiclo(deps) {
       return resultadoEscritorio ? { ok: true, escritorio: resultadoEscritorio, clientes: resultados } : { ok: true, clientes: resultados }
     } finally {
       rodando = false
+      andamento = null
+      emCurso = null
+      liberar()
     }
   }
 
@@ -160,6 +197,9 @@ function criarServicoCiclo(deps) {
     somenteDownload,
     manifestar: (args) => manifestacao.manifestar(args),
     cicloEmAndamento,
+    encerrarOrfas,
+    parar,
+    progresso: () => andamento,
   }
 }
 

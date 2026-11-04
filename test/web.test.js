@@ -1173,6 +1173,31 @@ test('busca automática por cliente: liga e desliga por tipo; /api/clientes most
   assert.equal((await pedir('/api/clientes/99999999000199/automatica', { method: 'POST', body: { modelo: 'nfe', ligado: true } })).status, 404)
 })
 
+test('busca automática de vários clientes de uma vez: só o tipo escolhido e só quem veio na lista', async (t) => {
+  const { pedir } = await montar(t)
+  const auto = async (cnpj) => (await pedir('/api/clientes')).corpo.clientes.find((c) => c.cnpj === cnpj).automatica
+  const enviar = (body) => pedir('/api/clientes/automatica', { method: 'POST', body })
+
+  const r = await enviar({ modelo: 'nfe', ligado: false, cnpjs: [CNPJ_MOCK_OK, CNPJ_MOCK_656] })
+  assert.equal(r.status, 200)
+  assert.equal(r.corpo.alterados, 2)
+  assert.deepEqual(await auto(CNPJ_MOCK_OK), { nfe: false, nfse: true, cte: true })
+  assert.deepEqual(await auto(CNPJ_MOCK_656), { nfe: false, nfse: true, cte: true })
+
+  await enviar({ modelo: 'nfe', ligado: true, cnpjs: [CNPJ_MOCK_656] })
+  assert.equal((await auto(CNPJ_MOCK_OK)).nfe, false)
+  assert.equal((await auto(CNPJ_MOCK_656)).nfe, true)
+
+  assert.equal((await enviar({ modelo: 'mdfe', ligado: true, cnpjs: [CNPJ_MOCK_OK] })).status, 400)
+  assert.equal((await enviar({ modelo: 'nfe', ligado: 'sim', cnpjs: [CNPJ_MOCK_OK] })).status, 400)
+  assert.equal((await enviar({ modelo: 'nfe', ligado: true })).status, 400)
+
+  // CNPJ desconhecido: ninguém muda.
+  const desconhecido = await enviar({ modelo: 'nfe', ligado: true, cnpjs: [CNPJ_MOCK_OK, '99999999000199'] })
+  assert.equal(desconhecido.status, 404)
+  assert.equal((await auto(CNPJ_MOCK_OK)).nfe, false)
+})
+
 // Notas de CT-e direto no banco: 1 entrada, 1 saída e 2 outros (um deles num mês só de Outros).
 function cteNoBanco(ctx) {
   const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).id

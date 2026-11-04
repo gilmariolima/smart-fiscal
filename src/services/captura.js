@@ -22,7 +22,7 @@ const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {Function} [deps.dormir]  pausa entre chamadas (injetável nos testes)
  * @param {Function} [deps.agora]   relógio (injetável nos testes)
  */
-function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormirPadrao, agora = () => new Date() }) {
+function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormirPadrao, agora = () => new Date(), deveParar = () => false }) {
   const armazenamento = criarArmazenamento({ config, db })
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
 
@@ -64,6 +64,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     // Encaminhamento do escritório: CNPJ exato (filial é outro cliente); inativo também recebe a nota.
     clienteDaCarteira: db.prepare(`SELECT * FROM clientes WHERE cnpj = ? AND ${DA_CARTEIRA}`),
     iniciarExecucao: db.prepare(`INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura', ?)`),
+    docsAteAgora: db.prepare('UPDATE execucoes SET docs_recebidos = ? WHERE id = ?'),
     marcarCaptura: db.prepare('UPDATE notas SET captura_id = ? WHERE cliente_id = ? AND chave = ?'),
     notasDaCaptura: db.prepare('SELECT COUNT(*) n FROM notas WHERE captura_id = ?'),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, c_stat = @c_stat, x_motivo = @x_motivo,
@@ -231,6 +232,8 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
       return { ok: true, pulado: espera, docs: 0 }
     }
 
+    if (deveParar()) return { ok: true, cnpj: cliente.cnpj, pulado: 'app fechando', docs: 0, notas: 0, eventos: 0 }
+
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     const resultado = { ok: true, cnpj: cliente.cnpj, docs: 0, lotes: 0, resumo: 0, completa: 0, evento: 0, ignorado: 0, fora: 0, saida: 0, cStat: null, xMotivo: null, erro: null }
     const fechar = () => {
@@ -253,6 +256,10 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
       let ultNSU = nsu15(cliente.ult_nsu)
       while (resultado.lotes < MAX_LOTES_POR_CICLO) {
         if (resultado.lotes > 0) await dormir(config.intervaloEntreChamadasMs)
+        if (deveParar()) {
+          logger.info('Captura interrompida: app fechando; continua na próxima', { cnpj: cliente.cnpj, ultNSU })
+          return fechar()
+        }
         const r = await sefaz.consultaUltNSU(ultNSU)
         if (r.error) return falhar(`Erro na consulta: ${r.error}`)
 
@@ -266,6 +273,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
           const contagem = gravarLote(cliente, dados, execId)
           resultado.lotes++
           resultado.docs += (dados.docZip || []).length
+          sql.docsAteAgora.run(resultado.docs, execId)
           for (const k of Object.keys(contagem)) resultado[k] += contagem[k]
           ultNSU = novoUlt
           logger.info('Lote processado', { cnpj: cliente.cnpj, ultNSU, maxNSU: dados.maxNSU, ...contagem })

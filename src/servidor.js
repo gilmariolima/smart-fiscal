@@ -16,6 +16,7 @@ const { criarAgendador } = require('./scheduler')
  */
 const BACKUP_INICIAL_MS = 60e3
 const BACKUP_INTERVALO_MS = 3600e3
+const CONFERENCIA_INICIAL_MS = 20e3
 
 const relogioReal = {
   depois: (fn, ms) => {
@@ -30,6 +31,7 @@ const relogioReal = {
 
 async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque, atualizacao, escolherPasta } = {}) {
   const { config, logger } = ctx
+  ctx.ciclo.encerrarOrfas()
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, ...(cron ? { cron } : {}) })
   let painel = null
   if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta })
@@ -42,6 +44,7 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
     const backup = () => ctx.backup.fazerBackup()
     cancelarBackup.push(relogio.depois(backup, BACKUP_INICIAL_MS), relogio.aCada(backup, BACKUP_INTERVALO_MS))
   }
+  if (ctx.conferenciaXmls) cancelarBackup.push(relogio.depois(() => ctx.conferenciaXmls.conferir(), CONFERENCIA_INICIAL_MS))
   logger.info('Servidor iniciado', {
     ambiente: config.tpAmb === '1' ? 'produção' : 'homologação',
     sefazSimulada: config.sefazMock,
@@ -53,9 +56,13 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   function parar() {
     parando ||= (async () => {
       logger.info('Encerrando o servidor')
+      // Pede a parada antes de tudo; a captura pelo painel não passa pelo agendador e também precisa terminar antes de o banco fechar.
+      const fimDoCiclo = ctx.ciclo.parar()
       if (painel) await painel.fechar()
       for (const cancelar of cancelarBackup) cancelar()
       await agendador.parar()
+      await fimDoCiclo
+      await ctx.conferenciaXmls?.parar()
       if (ctx.backup) await ctx.backup.aguardar()
       logger.info('Servidor encerrado')
     })()

@@ -71,7 +71,15 @@ export function explicarSefaz({ cStat, xMotivo, erro } = {}) {
         }
   }
   if (POR_CODIGO[codigo]) return POR_CODIGO[codigo]
-  if (/recusou o certificado|HTTP 403/i.test(texto)) {
+  if (/^Interrompida/.test(texto)) {
+    return {
+      cor: 'ambar',
+      titulo: 'Interrompida ao fechar o app',
+      dica: 'O app foi fechado antes de terminar. Nenhuma nota se perde: a próxima captura continua de onde parou.',
+    }
+  }
+  // BAD_DECRYPT: o ADN derruba a conexão quando o certificado venceu; não é falta de internet.
+  if (/recusou o certificado|HTTP 403|BAD_DECRYPT/i.test(texto)) {
     return {
       cor: 'vermelha',
       titulo: 'Certificado recusado pela SEFAZ',

@@ -202,6 +202,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
       agendador: agendador.estado(),
       ultimaCaptura: sql.ultimaCaptura.get()?.fim ?? null,
       capturaEmAndamento: capturaOcupada(),
+      capturaProgresso: ctx.ciclo.progresso(),
       limites: { consultasChavePorCiclo: config.maxConsultasChavePorCiclo, tentativasDownload: config.maxTentativasDownload },
     })
   })
@@ -267,7 +268,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
           },
         }
       })
-    res.json({ clientes, capturandoAgora: andamento.atual, filaCaptura: [...andamento.fila] })
+    res.json({ clientes, capturandoAgora: andamento.atual || ctx.ciclo.progresso()?.cnpj || null, filaCaptura: [...andamento.fila] })
   })
 
   app.get('/api/clientes/:cnpj/meses', (req, res) => {
@@ -785,6 +786,14 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
       return res.json({ ok: true, ativo: !!c.ativo, mensagem: c.ativo ? 'Escritório de volta na lista de clientes.' : 'Escritório fora da lista de clientes: as notas dele deixam de ser puxadas.' })
     }
     res.json({ ok: true, ativo: !!c.ativo, mensagem: c.ativo ? 'Cliente reativado.' : 'Cliente desativado: fica fora das próximas capturas.' })
+  })
+
+  app.post('/api/clientes/automatica', (req, res) => {
+    const { modelo, ligado, cnpjs } = req.body || {}
+    if (typeof ligado !== 'boolean') throw new ErroHttp(400, 'Informe se a busca automática fica ligada.')
+    if (!Array.isArray(cnpjs) || !cnpjs.length || cnpjs.length > MAX_CNPJS_CAPTURA) throw new ErroHttp(400, `Informe de 1 a ${MAX_CNPJS_CAPTURA} CNPJs.`)
+    const alterados = comoErroHttp(() => ctx.clientes.definirAutomaticaDeVarios(cnpjs.map(String), String(modelo || ''), ligado))
+    res.json({ ok: true, alterados })
   })
 
   app.post('/api/clientes/:cnpj/automatica', (req, res) => {

@@ -50,3 +50,5 @@ export function mesAno(iso) {
 }
 
 export const NOMES_DOS_MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
+export const rotuloDaCaptura = (progresso) => (progresso ? `Capturando ${inteiro(progresso.posicao)} de ${inteiro(progresso.total)}…` : 'Capturando…')

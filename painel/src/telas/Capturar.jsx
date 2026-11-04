@@ -10,7 +10,7 @@ import { useApi } from '../useApi.js'
 import { explicarSefaz, resumoDaCaptura } from '../mensagensSefaz.js'
 import { nomeDe } from '../useCliente.js'
 import { useSelecao } from '../useSelecao.js'
-import { cnpj as formatarCnpj, hora, inteiro, plural, quando } from '../formato.js'
+import { cnpj as formatarCnpj, hora, inteiro, plural, quando, rotuloDaCaptura } from '../formato.js'
 
 const INTERVALO_CAPTURANDO = 5000
 
@@ -72,6 +72,8 @@ function VerNotasNovas({ cnpj, modelo }) {
     </Link>
   )
 }
+
+const TODOS = 'todos'
 
 function UltimaCaptura({ c, modelo, capturandoAgora, fila }) {
   if (capturandoAgora === c.cnpj) return <Etiqueta cor="ambar">Capturando…</Etiqueta>
@@ -195,6 +197,21 @@ function ListaDeClientes({ modelo }) {
     }
   }
 
+  // Vale para quem está na lista (com a busca, só os encontrados) e só neste tipo de nota.
+  const automaticaLigada = (c) => c.automatica?.[modelo] !== false
+  async function alternarTodas(ligado) {
+    setTrocando(TODOS)
+    setErro(null)
+    try {
+      await api.post('/api/clientes/automatica', { modelo, ligado, cnpjs: visiveis.filter((c) => automaticaLigada(c) !== ligado).map((c) => c.cnpj) })
+      recarregar()
+    } catch (e) {
+      setErro(e.message)
+    } finally {
+      setTrocando(null)
+    }
+  }
+
   let conteudo
   if (!dados) conteudo = !erroLista && <p className="vazio">Carregando…</p>
   else if (!ativos.length)
@@ -254,7 +271,7 @@ function ListaDeClientes({ modelo }) {
                     <Interruptor
                       ligado={c.automatica?.[modelo] !== false}
                       onChange={(ligado) => alternarAutomatica(c, ligado)}
-                      desabilitado={trocando === c.cnpj}
+                      desabilitado={trocando === c.cnpj || trocando === TODOS}
                       rotulo={c.automatica?.[modelo] !== false ? 'Ligada' : 'Desligada'}
                     />
                   </td>
@@ -298,8 +315,29 @@ function ListaDeClientes({ modelo }) {
               Desmarcar todos
             </button>
           </div>
+          <div className="grupo-botoes grupo-automatica" role="group" aria-label={`Busca automática de ${rotulo}`}>
+            <span className="grupo-rotulo">Busca automática</span>
+            <button
+              type="button"
+              className="botao botao-claro"
+              onClick={() => alternarTodas(true)}
+              disabled={!!trocando || visiveis.every(automaticaLigada)}
+              title={`Liga a busca automática de ${rotulo} em todos os clientes da lista`}
+            >
+              Ligar todos
+            </button>
+            <button
+              type="button"
+              className="botao botao-claro"
+              onClick={() => alternarTodas(false)}
+              disabled={!!trocando || !visiveis.some(automaticaLigada)}
+              title={`Desliga a busca automática de ${rotulo} em todos os clientes da lista. O botão Capturar continua valendo.`}
+            >
+              Desligar todos
+            </button>
+          </div>
           <button type="button" className="botao botao-verde" onClick={capturar} disabled={!marcados.length || capturando || enviando}>
-            {capturando || enviando ? 'Capturando…' : `⟳ Capturar ${rotulo} (${inteiro(marcados.length)})`}
+            {capturando || enviando ? rotuloDaCaptura(resumo?.capturaProgresso) : `⟳ Capturar ${rotulo} (${inteiro(marcados.length)})`}
           </button>
         </div>
       )}

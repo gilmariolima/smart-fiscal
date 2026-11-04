@@ -3,10 +3,11 @@ import Etiqueta from '../componentes/Etiqueta.jsx'
 import Icone from '../componentes/Icone.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useResumo } from '../layout/ResumoProvider.jsx'
-import { inteiro, plural, quando } from '../formato.js'
+import { inteiro, plural, quando, rotuloDaCaptura } from '../formato.js'
 
 // A próxima busca e o ambiente já aparecem nas estatísticas do menu lateral.
 function subtitulo(resumo) {
+  if (resumo.capturaProgresso) return `Capturando ${resumo.capturaProgresso.nome}`
   if (resumo.capturaEmAndamento) return 'Captura em andamento'
   return resumo.ultimaCaptura ? `Última captura ${quando(resumo.ultimaCaptura)}` : 'Nenhuma captura ainda'
 }
@@ -154,7 +155,7 @@ export default function Inicio() {
   const pendentes = pendentesDeCiencia(resumo)
 
   return (
-    <Pagina titulo="Início" subtitulo={subtitulo(resumo)} acoes={resumo.capturaEmAndamento && <Etiqueta cor="ambar">Capturando…</Etiqueta>}>
+    <Pagina titulo="Início" subtitulo={subtitulo(resumo)} acoes={resumo.capturaEmAndamento && <Etiqueta cor="ambar">{rotuloDaCaptura(resumo.capturaProgresso)}</Etiqueta>}>
       <div className="inicio-corpo">
         <Atalhos resumo={resumo} />
       </div>

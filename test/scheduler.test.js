@@ -38,7 +38,7 @@ const config = { cronCaptura: '0 */2 * * *' }
 
 function cicloFalso(impl) {
   const chamadas = []
-  return { chamadas, executarCiclo: async () => (chamadas.push(1), impl ? impl() : { ok: true, clientes: [{ cnpj: '1' }, { cnpj: '2', erro: 'x' }] }) }
+  return { chamadas, encerrarOrfas: () => 0, parar: async () => {}, progresso: () => null, executarCiclo: async () => (chamadas.push(1), impl ? impl() : { ok: true, clientes: [{ cnpj: '1' }, { cnpj: '2', erro: 'x' }] }) }
 }
 
 test('agenda o ciclo na expressão do .env e , com atraso pedido (servidor pelo terminal), roda um ciclo logo depois de iniciar', async () => {

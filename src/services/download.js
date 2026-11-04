@@ -10,7 +10,7 @@ const UMA_HORA = 3600e3
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function criarServicoDownload(deps) {
-  const { db, config, logger, fabricaSefaz, dormir = dormirPadrao, agora = () => new Date() } = deps
+  const { db, config, logger, fabricaSefaz, dormir = dormirPadrao, agora = () => new Date(), deveParar = () => false } = deps
   const captura = deps.captura || criarServicoCaptura(deps)
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
 
@@ -42,13 +42,14 @@ function criarServicoDownload(deps) {
     if (bloqueado(cliente)) return { ...resultado, pulado: `bloqueado até ${cliente.bloqueado_ate}` }
 
     const chaves = sql.pendentes.all(cliente.id, config.maxTentativasDownload, config.maxConsultasChavePorCiclo).map((n) => n.chave)
-    if (!chaves.length) return resultado
+    if (!chaves.length || deveParar()) return resultado
 
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     try {
       const sefaz = fabricaSefaz(cliente)
       for (const chave of chaves) {
         if (resultado.consultas > 0) await dormir(config.intervaloEntreChamadasMs)
+        if (deveParar()) break
         const r = await sefaz.consultaChNFe(chave)
         resultado.consultas++
         sql.tentativa.run(iso(), cliente.id, chave)

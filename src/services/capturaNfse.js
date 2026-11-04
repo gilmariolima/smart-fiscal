@@ -20,7 +20,7 @@ const maiorNsu = (a, b) => (Number(b) > Number(a) ? String(b) : String(a))
  * @param {object} deps
  * @param {Function} deps.fabricaAdn (linha de clientes) => cliente do ADN
  */
-function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dormirPadrao, agora = () => new Date() }) {
+function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dormirPadrao, agora = () => new Date(), deveParar = () => false }) {
   const armazenamento = criarArmazenamento({ config, db })
   const iso = (deslocamentoMs = 0) => new Date(agora().getTime() + deslocamentoMs).toISOString()
   const tamanhoLote = config.adnTamanhoLote || TAMANHO_LOTE
@@ -46,6 +46,7 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
     filaZerada: db.prepare('UPDATE clientes SET nfse_proxima_consulta = ?, nfse_ultima_consulta = ?, nfse_ultimo_erro = NULL WHERE id = ?'),
     erro: db.prepare('UPDATE clientes SET nfse_ultima_consulta = ?, nfse_ultimo_erro = ? WHERE id = ?'),
     iniciarExecucao: db.prepare("INSERT INTO execucoes (cliente_id, tipo, inicio) VALUES (?, 'captura_nfse', ?)"),
+    docsAteAgora: db.prepare('UPDATE execucoes SET docs_recebidos = ? WHERE id = ?'),
     marcarCaptura: db.prepare('UPDATE notas SET captura_id = ? WHERE cliente_id = ? AND chave = ?'),
     notasDaCaptura: db.prepare('SELECT COUNT(*) n FROM notas WHERE captura_id = ?'),
     fecharExecucao: db.prepare(`UPDATE execucoes SET fim = @fim, c_stat = @c_stat, docs_recebidos = @docs, notas_recebidas = @notas,
@@ -126,6 +127,8 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
       return { ok: true, pulado: `próxima consulta em ${cliente.nfse_proxima_consulta}`, docs: 0, notas: 0, eventos: 0 }
     }
 
+    if (deveParar()) return { ok: true, cnpj: cliente.cnpj, pulado: 'app fechando', docs: 0, notas: 0, eventos: 0 }
+
     const execId = sql.iniciarExecucao.run(cliente.id, iso()).lastInsertRowid
     const resultado = { ok: true, cnpj: cliente.cnpj, docs: 0, notas: 0, eventos: 0, entradas: 0, saidas: 0, ignorados: 0, lotes: 0, cStat: null, erro: null }
     const fechar = () => {
@@ -144,6 +147,10 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
       let nsu = String(cliente.nfse_ult_nsu || '0')
       while (resultado.lotes < MAX_LOTES_POR_CICLO) {
         if (resultado.lotes > 0) await dormir(config.intervaloEntreChamadasMs)
+        if (deveParar()) {
+          logger.info('Captura de NFS-e interrompida: app fechando; continua na próxima', { cnpj: cliente.cnpj, nsu })
+          return fechar()
+        }
         const r = await adn.consultarLote(nsu)
         if (!r.ok) {
           resultado.ok = false
@@ -158,6 +165,7 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
         const c = gravarLote(cliente, r.documentos, novoNsu, execId)
         resultado.lotes++
         resultado.docs += r.documentos.length
+        sql.docsAteAgora.run(resultado.docs, execId)
         resultado.entradas += c.entrada
         resultado.saidas += c.saida
         resultado.notas += c.entrada + c.saida

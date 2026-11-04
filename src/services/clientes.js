@@ -237,6 +237,20 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     return sql.porCnpj.get(c)
   }
 
+  /** Vários clientes de uma vez, num tipo de nota: CNPJ desconhecido cancela tudo. */
+  function definirAutomaticaDeVarios(cnpjs, modelo, ligado) {
+    const alvo = { nfe: sql.autoNfe, nfse: sql.autoNfse, cte: sql.autoCte }[modelo]
+    if (!alvo) throw new Error(`Modelo inválido: ${modelo}. Use nfe, nfse ou cte.`)
+    db.transaction(() => {
+      for (const cnpj of cnpjs) {
+        const c = somenteDigitos(cnpj)
+        if (!alvo.run(ligado ? 1 : 0, c).changes) throw new Error(`CNPJ ${c} não cadastrado.`)
+      }
+    })()
+    logger.info(ligado ? 'Clientes na busca automática' : 'Clientes fora da busca automática', { clientes: cnpjs.length, modelo })
+    return cnpjs.length
+  }
+
   /** Lista sem a senha; inclui dias para o certificado vencer. */
   function listar() {
     return sql.listar.all().map((c) => ({ ...c, cert_dias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null }))
@@ -246,7 +260,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, listar, obter, validarCertificado }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, listar, obter, validarCertificado }
 }
 
 module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }

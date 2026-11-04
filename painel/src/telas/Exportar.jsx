@@ -140,7 +140,15 @@ export default function Exportar() {
   return (
     <Pagina
       titulo="Exportar"
-      subtitulo="Monte um ZIP separado por empresa, ano, mês e tipo."
+      subtitulo={
+        grande ? (
+          <span className="exportar-aviso" role="status">
+            Exportação grande: {plural(total, 'nota', 'notas')} com PDF podem levar cerca de {plural(minutos, 'minuto', 'minutos')}. Deixe o Smart Fiscal aberto até o ZIP baixar.
+          </span>
+        ) : (
+          'Monte um ZIP separado por empresa, ano, mês e tipo.'
+        )
+      }
       erro={erro || erroOpcoes}
       aoFecharErro={erro ? () => setErro(null) : undefined}
       acoes={
@@ -160,13 +168,6 @@ export default function Exportar() {
           <Grupo titulo="Mês" classe="exportar-meses" opcoes={MESES} marcados={mesesValidos} aoMudar={setMeses} disponiveis={mesesComNota} />
           <Grupo titulo="Tipo de nota" opcoes={TIPOS} marcados={tipos} aoMudar={setTipos} disponiveis={new Set(notas.map((n) => n.modelo))} />
           <Grupo titulo="O que exportar" opcoes={[...CONTEUDOS, { valor: TUDO, rotulo: 'Tudo' }]} marcados={tudoMarcado ? [...conteudos, TUDO] : conteudos} aoMudar={mudarConteudos} />
-        </div>
-      )}
-      {grande && (
-        <div className="faixa faixa-ambar exportar-aviso" role="status">
-          <span>
-            Exportação grande: {plural(total, 'nota', 'notas')} com PDF podem levar cerca de {plural(minutos, 'minuto', 'minutos')}. Deixe o Smart Fiscal aberto até o ZIP baixar.
-          </span>
         </div>
       )}
     </Pagina>
