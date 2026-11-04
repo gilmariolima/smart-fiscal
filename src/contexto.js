@@ -18,7 +18,7 @@ const { verificarAmbiente } = require('./ambiente')
 const { criarAutomacao } = require('./services/automacao')
 const { criarServicoBackup } = require('./services/backup')
 const { criarServicoPastas } = require('./services/pastas')
-const { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro } = require('./services/migracaoPastas')
+const { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes } = require('./services/migracaoPastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
 function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, agora, verificarAmbiente: verificar = true } = {}) {
@@ -40,6 +40,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   migrarPastas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
   migrarLayoutDasTelas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
   migrarLayoutEmpresaPrimeiro({ db: banco, pastaXmls: config.pastaXmls, logger: log })
+  migrarLayoutAnoMes({ db: banco, pastaXmls: config.pastaXmls, logger: log })
   return {
     config,
     logger: log,

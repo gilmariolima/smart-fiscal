@@ -207,13 +207,12 @@ export default function Mes() {
     )
   }
 
-  const raizModelo = `/notas/${cnpj}/${slugModelo}`
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
     { rotulo: nome, para: `/notas/${cnpj}` },
-    { rotulo: pastaModelo.rotulo, para: raizModelo },
-    { rotulo: ano, para: `${raizModelo}/${ano}` },
-    { rotulo: nomeDoMes },
+    { rotulo: ano, para: `/notas/${cnpj}/${ano}` },
+    { rotulo: nomeDoMes, para: `/notas/${cnpj}/${ano}/${mes2}` },
+    { rotulo: pastaModelo.rotulo },
   ]
 
   const acimaDoLimite = selecao.tamanho > LIMITE_ZIP

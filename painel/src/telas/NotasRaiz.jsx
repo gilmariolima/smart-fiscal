@@ -32,7 +32,7 @@ function Linha({ c }) {
   )
 }
 
-// Primeiro nível de Notas: a empresa. Depois vêm o tipo, o ano e o mês, na mesma ordem das pastas no disco e do ZIP.
+// Primeiro nível de Notas: a empresa. Depois vêm o ano, o mês e o tipo, na mesma ordem das pastas no disco e do ZIP.
 export default function NotasRaiz() {
   const [busca, setBusca] = useState('')
   const { dados, erro, carregando } = useApi('/api/clientes')

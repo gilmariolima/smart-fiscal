@@ -547,11 +547,11 @@ export default function Nota() {
   const ehServico = nota?.modelo === 'nfse'
   const ehCte = nota?.modelo === 'cte'
   const [ano, mes] = (nota?.competencia || '').split('-')
-  // Pasta da nota: <empresa>/<NF-e|NFS-e|CT-e>/<ano>/<mês>.
+  // Pasta da nota: <empresa>/<ano>/<mês>/<NF-e|NFS-e|CT-e>.
   const slugModelo = ehServico ? 'nfs-e' : ehCte ? 'ct-e' : 'nf-e'
   const rotuloModelo = ehServico ? 'NFS-e' : ehCte ? 'CT-e' : 'NF-e'
-  const pastaModelo = `/notas/${cnpj}/${slugModelo}`
-  const pastaDoMes = ano ? `${pastaModelo}/${ano}/${mes}` : `/notas/${cnpj}`
+  const pastaDoAno = `/notas/${cnpj}/${ano}`
+  const pastaDoTipo = ano ? `${pastaDoAno}/${mes}/${slugModelo}` : `/notas/${cnpj}`
 
   // "Imprimir DANFE" do menu da nota: abre a impressão assim que a nota carrega, uma vez só.
   const imprimir = params.get('imprimir') === '1'
@@ -561,17 +561,17 @@ export default function Nota() {
     if (dados.nfe) setTimeout(() => window.print(), 300)
   }, [imprimir, dados])
 
-  // Voltar mantém os filtros da lista quando se veio dela; link direto cai na pasta do mês.
-  const voltar = () => (window.history.state?.idx > 0 ? navigate(-1) : navigate(pastaDoMes))
+  // Voltar mantém os filtros da lista quando se veio dela; link direto cai na pasta do tipo.
+  const voltar = () => (window.history.state?.idx > 0 ? navigate(-1) : navigate(pastaDoTipo))
 
   const trilha = [
     { rotulo: 'Início', para: '/notas' },
     { rotulo: nota?.cliente_nome || cnpj, para: `/notas/${cnpj}` },
-    ...(nota ? [{ rotulo: rotuloModelo, para: pastaModelo }] : []),
     ...(ano
       ? [
-          { rotulo: ano, para: `${pastaModelo}/${ano}` },
-          { rotulo: NOMES_DOS_MESES[Number(mes) - 1] || mes, para: pastaDoMes },
+          { rotulo: ano, para: pastaDoAno },
+          { rotulo: NOMES_DOS_MESES[Number(mes) - 1] || mes, para: `${pastaDoAno}/${mes}` },
+          { rotulo: rotuloModelo, para: pastaDoTipo },
         ]
       : []),
     { rotulo: `Nota ${numero}`.trim() },

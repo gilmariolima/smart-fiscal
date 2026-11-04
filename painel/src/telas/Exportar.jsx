@@ -140,7 +140,7 @@ export default function Exportar() {
   return (
     <Pagina
       titulo="Exportar"
-      subtitulo="Monte um ZIP separado por empresa, tipo, ano e mês."
+      subtitulo="Monte um ZIP separado por empresa, ano, mês e tipo."
       erro={erro || erroOpcoes}
       aoFecharErro={erro ? () => setErro(null) : undefined}
       acoes={
@@ -156,9 +156,9 @@ export default function Exportar() {
       ) : (
         <div className="cartao exportar">
           <Empresas empresas={listaClientes} marcadas={clientes} aoMudar={setClientes} />
-          <Grupo titulo="Tipo de nota" opcoes={TIPOS} marcados={tipos} aoMudar={setTipos} disponiveis={new Set(notas.map((n) => n.modelo))} />
           <Grupo titulo="Ano" opcoes={listaAnos} marcados={anos} aoMudar={setAnos} />
           <Grupo titulo="Mês" classe="exportar-meses" opcoes={MESES} marcados={mesesValidos} aoMudar={setMeses} disponiveis={mesesComNota} />
+          <Grupo titulo="Tipo de nota" opcoes={TIPOS} marcados={tipos} aoMudar={setTipos} disponiveis={new Set(notas.map((n) => n.modelo))} />
           <Grupo titulo="O que exportar" opcoes={[...CONTEUDOS, { valor: TUDO, rotulo: 'Tudo' }]} marcados={tudoMarcado ? [...conteudos, TUDO] : conteudos} aoMudar={mudarConteudos} />
         </div>
       )}

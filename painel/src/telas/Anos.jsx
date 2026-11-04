@@ -1,24 +1,22 @@
-import { Navigate, useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 import Pasta from '../componentes/Pasta.jsx'
 import Pagina from '../layout/Pagina.jsx'
 import { useApi } from '../useApi.js'
 import { useNomeDoCliente } from '../useCliente.js'
 import { inteiro } from '../formato.js'
-import { MODELOS } from '../modelos.js'
 
+// Segundo nível de Notas: depois da empresa, o ano. Soma todos os tipos de nota.
 export default function Anos() {
-  const { cnpj, modelo: slug } = useParams()
-  const modelo = MODELOS[slug]
+  const { cnpj } = useParams()
   const nome = useNomeDoCliente(cnpj)
-  const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses?modelo=${modelo?.valor || 'nfe'}`, [cnpj, slug])
+  const { dados, erro, carregando } = useApi(`/api/clientes/${encodeURIComponent(cnpj)}/meses`, [cnpj])
   const anos = dados || []
-  // Outros (CT-e em que o cliente não é tomador nem emitente) só existem no CT-e.
-  const comOutros = modelo?.valor === 'cte'
-  if (!modelo) return <Navigate to={`/notas/${cnpj}`} replace />
+  // Outros (CT-e em que o cliente não é tomador nem emitente) só aparecem se houver.
+  const comOutros = anos.some((a) => a.outros > 0)
 
   let conteudo
   if (carregando && !dados) conteudo = <p className="vazio">Carregando…</p>
-  else if (!anos.length) conteudo = !erro && <p className="vazio">Nenhuma {modelo.rotulo} capturada para este cliente.</p>
+  else if (!anos.length) conteudo = !erro && <p className="vazio">Nenhuma nota capturada para este cliente.</p>
   else
     conteudo = (
       <>
@@ -44,7 +42,7 @@ export default function Anos() {
               {anos.map((a) => (
                 <tr key={a.ano}>
                   <td>
-                    <Pasta para={`/notas/${cnpj}/${slug}/${a.ano}`}>{a.ano}</Pasta>
+                    <Pasta para={`/notas/${cnpj}/${a.ano}`}>{a.ano}</Pasta>
                   </td>
                   <td className="num">{inteiro(a.entradas)}</td>
                   <td className="num">{inteiro(a.saidas)}</td>
@@ -62,9 +60,14 @@ export default function Anos() {
 
   return (
     <Pagina
-      titulo={modelo.rotulo}
+      titulo={nome}
       subtitulo="Escolha o ano."
-      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome, para: `/notas/${cnpj}` }, { rotulo: modelo.rotulo }]}
+      trilha={[{ rotulo: 'Início', para: '/notas' }, { rotulo: nome }]}
+      acoes={
+        <Link className="botao botao-claro" to={`/notas/${cnpj}/pendentes`}>
+          XMLs não baixados
+        </Link>
+      }
       erro={erro}
     >
       {conteudo}

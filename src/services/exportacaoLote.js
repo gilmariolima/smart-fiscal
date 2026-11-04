@@ -1,7 +1,7 @@
 'use strict'
 
-// ZIP da tela Exportar: clientes, tipos e meses escolhidos, em <Empresa>/<Tipo>/<Ano>/<Mês>/, a mesma ordem das telas.
-// `incluir` escolhe o conteúdo: 'pdf' (pasta PDF, um por nota), 'xml' (pasta XML), 'relatorio' e 'excel' (um de cada por mês, soltos no mês).
+// ZIP da tela Exportar: clientes, tipos e meses escolhidos, em <Empresa>/<Ano>/<Mês>/<Tipo>/, a mesma ordem das telas.
+// `incluir` escolhe o conteúdo: 'pdf' (pasta PDF, um por nota), 'xml' (pasta XML), 'relatorio' e 'excel' (um de cada por empresa, mês e tipo, soltos na pasta do tipo).
 // Dois clientes com o mesmo nome de pasta levam o CNPJ junto, para as notas não se misturarem.
 // Só notas com XML completo. Um XML sumido ou um PDF com erro não param a exportação: vão para avisos.txt.
 // Só lê: não grava em `execucoes` nem marca `exportada_em`.
@@ -86,7 +86,7 @@ function criarServicoExportacaoLote({ db, config, agora = () => new Date() }) {
         const [ano, mes] = competencia.split('-')
         const nomeDoMes = MESES[Number(mes) - 1]
         const tipo = PASTAS.modelo[modelo]
-        const pasta = `${pastaCliente.get(clienteId)}/${tipo}/${ano}/${nomeDoMes}`
+        const pasta = `${pastaCliente.get(clienteId)}/${ano}/${nomeDoMes}/${tipo}`
 
         for (const n of partes.has('pdf') || partes.has('xml') ? grupo : []) {
           const origem = armazenamento.absoluto(n.caminho_xml)

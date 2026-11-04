@@ -64,20 +64,19 @@ const rotas = createHashRouter([
       { path: 'capturar', element: <Capturar /> },
       { path: 'capturar/:modelo', element: <Capturar /> },
       { path: 'capturar/:modelo/novas/:cnpj', element: <NotasNovas /> },
-      // Empresa → tipo (NF-e | NFS-e | CT-e | XMLs não baixados) → ano → mês: a mesma ordem das pastas no disco e do ZIP
+      // Empresa → ano → mês → tipo (NF-e | NFS-e | CT-e): a mesma ordem das pastas no disco e do ZIP
       { path: 'notas', element: <NotasRaiz /> },
       { path: 'notas/nf-e', element: <Navigate to="/notas" replace /> },
       { path: 'notas/nfs-e', element: <Navigate to="/notas" replace /> },
       { path: 'notas/ct-e', element: <Navigate to="/notas" replace /> },
       { path: 'notas/pendentes', element: <PendentesClientes /> },
-      { path: 'notas/:cnpj', element: <Modelos /> },
+      { path: 'notas/:cnpj', element: <Anos /> },
       { path: 'notas/:cnpj/nota/:id', element: <Nota /> },
       { path: 'notas/:cnpj/pendentes', element: <Pendentes /> },
-      { path: 'notas/:cnpj/:modelo', element: <Anos /> },
-      { path: 'notas/:cnpj/:modelo/:ano', element: <Meses /> },
-      // Entradas e saídas juntas na lista do mês; os caminhos antigos das pastas caem nela.
-      { path: 'notas/:cnpj/:modelo/:ano/:mes', element: <Mes /> },
-      { path: 'notas/:cnpj/:modelo/:ano/:mes/*', element: <Navigate to=".." relative="path" replace /> },
+      { path: 'notas/:cnpj/:ano', element: <Meses /> },
+      { path: 'notas/:cnpj/:ano/:mes', element: <Modelos /> },
+      // Entradas e saídas juntas na lista do tipo.
+      { path: 'notas/:cnpj/:ano/:mes/:modelo', element: <Mes /> },
       { path: 'pendentes', element: <Navigate to="/notas/pendentes" replace /> },
       { path: 'clientes', element: <Clientes /> },
       { path: 'clientes/novo', element: <Cadastro key="novo" modo="novo" /> },

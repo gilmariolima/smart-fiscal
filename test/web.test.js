@@ -1287,8 +1287,8 @@ test('tela Exportar: opções, ZIP organizado e escolha recusada', async (t) => 
   assert.equal(r.headers.get('content-type'), 'application/zip')
   assert.match(r.headers.get('content-disposition'), /^attachment; filename="Smart-Fiscal-Exportacao-\d{4}-\d{2}-\d{2}\.zip"/)
   const zip = lerZip(r.corpo)
-  assert.deepEqual([...zip.keys()].sort(), [`Exemplo/NFS-e/2026/Março/PDF/${chave}-nfse.pdf`, `Exemplo/NFS-e/2026/Março/XML/${chave}-nfse.xml`])
-  assert.equal(zip.get(`Exemplo/NFS-e/2026/Março/PDF/${chave}-nfse.pdf`).subarray(0, 5).toString(), '%PDF-')
+  assert.deepEqual([...zip.keys()].sort(), [`Exemplo/2026/Março/NFS-e/PDF/${chave}-nfse.pdf`, `Exemplo/2026/Março/NFS-e/XML/${chave}-nfse.xml`])
+  assert.equal(zip.get(`Exemplo/2026/Março/NFS-e/PDF/${chave}-nfse.pdf`).subarray(0, 5).toString(), '%PDF-')
 
   const invalida = await pedir('/api/exportacao/zip', { method: 'POST', body: { modelos: [], competencias: ['2026-03'], clientes: [clientes[0].id], incluir: ['pdf', 'xml'] } })
   assert.equal(invalida.status, 400)
