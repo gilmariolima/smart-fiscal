@@ -427,3 +427,18 @@ test('ciclo: CT-e do escritório só quando ele também é cliente', async (t) =
   r = await ciclo.executarCiclo({ forcar: true })
   assert.ok(r.escritorio.cte)
 })
+
+test('aoTerminarCiclo é chamado ao fim do ciclo, mesmo sem clientes e mesmo se ele lançar', async (t) => {
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK] })
+  t.after(amb.limpar)
+  let chamadas = 0
+  const erros = []
+  const deps = { ...amb.deps, logger: { info() {}, warn() {}, error: (m) => erros.push(m) }, aoTerminarCiclo: () => { chamadas++; throw new Error('falhou') } }
+  const ciclo = criarServicoCiclo(deps)
+  const r = await ciclo.executarCiclo({ cnpj: CNPJ_MOCK_OK })
+  assert.equal(r.ok, true)
+  assert.equal(chamadas, 1)
+  assert.equal(erros.length, 1)
+  await ciclo.executarCiclo({ cnpj: '00000000000000' })
+  assert.equal(chamadas, 1, 'ciclo recusado antes da trava não conta')
+})

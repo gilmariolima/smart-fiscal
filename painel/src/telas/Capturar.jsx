@@ -117,12 +117,30 @@ function Cards({ escolhido }) {
   )
 }
 
+// Andamento da captura: quantos clientes já passaram e quem está sendo consultado agora.
+function BarraDaCaptura({ progresso, pulados }) {
+  const porcento = progresso ? Math.round((progresso.posicao / progresso.total) * 100) : 0
+  return (
+    <div className="barra-captura" role="status">
+      <div className="barra-captura-texto">
+        <strong>{progresso ? `Capturando ${progresso.nome}` : 'Iniciando a captura'}</strong>
+        <span>{progresso ? `${inteiro(progresso.posicao)} de ${inteiro(progresso.total)}` : ''}</span>
+      </div>
+      <div className="barra-captura-trilho" role="progressbar" aria-label="Andamento da captura" aria-valuemin={0} aria-valuemax={100} aria-valuenow={porcento}>
+        <div className="barra-captura-preenchido" style={{ width: `${porcento}%` }} />
+      </div>
+      {pulados && <p className="barra-captura-nota">{pulados}</p>}
+    </div>
+  )
+}
+
 function ListaDeClientes({ modelo }) {
   const { resumo, recarregar: recarregarResumo } = useResumo()
   const { dados, erro: erroLista, recarregar } = useApi('/api/clientes')
   const selecao = useSelecao(`captura-${modelo}`)
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
+  const [pulados, setPulados] = useState(null)
   const [enviando, setEnviando] = useState(false)
   const [busca, setBusca] = useState('')
   const [trocando, setTrocando] = useState(null)
@@ -164,6 +182,7 @@ function ListaDeClientes({ modelo }) {
     setEnviando(true)
     setErro(null)
     setAviso(null)
+    setPulados(null)
     try {
       const esperando = marcados.filter((c) => liberadoEm(c, modelo))
       if (esperando.length === marcados.length) {
@@ -172,8 +191,7 @@ function ListaDeClientes({ modelo }) {
         return
       }
       await api.post('/api/captura', { cnpjs: marcados.map((c) => c.cnpj), modelos: [modelo] })
-      const pulados = esperando.length ? ` ${plural(esperando.length, 'cliente consultado', 'clientes consultados')} há menos de 1 hora fica${esperando.length === 1 ? '' : 'm'} para depois.` : ''
-      setAviso(`Captura de ${rotulo} de ${plural(marcados.length - esperando.length, 'cliente', 'clientes')} iniciada.${pulados} Acompanhe na coluna Última captura.`)
+      if (esperando.length) setPulados(`${plural(esperando.length, 'cliente consultado', 'clientes consultados')} há menos de 1 hora fica${esperando.length === 1 ? '' : 'm'} para depois.`)
     } catch (e) {
       setErro(e.message)
     } finally {
@@ -295,6 +313,7 @@ function ListaDeClientes({ modelo }) {
           {aviso}
         </div>
       )}
+      {(capturando || enviando) && <BarraDaCaptura progresso={resumo?.capturaProgresso} pulados={pulados} />}
       {erroLista && (
         <div className="faixa faixa-erro" role="alert">
           {erroLista}
@@ -336,7 +355,13 @@ function ListaDeClientes({ modelo }) {
               Desligar todos
             </button>
           </div>
-          <button type="button" className="botao botao-verde" onClick={capturar} disabled={!marcados.length || capturando || enviando}>
+          <button
+            type="button"
+            className="botao botao-verde"
+            onClick={capturar}
+            disabled={!marcados.length || capturando || enviando || !!resumo?.pastaPendente}
+            title={resumo?.pastaPendente ? 'Escolha a pasta principal' : undefined}
+          >
             {capturando || enviando ? rotuloDaCaptura(resumo?.capturaProgresso) : `⟳ Capturar ${rotulo} (${inteiro(marcados.length)})`}
           </button>
         </div>

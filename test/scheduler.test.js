@@ -130,6 +130,92 @@ test('agendador com o ciclo real e a SEFAZ simulada', async (t) => {
   assert.equal(amb.db.prepare("SELECT COUNT(*) n FROM notas WHERE status = 'completa'").get().n, 2)
 })
 
+test('agendador: podeCapturar falso pula agendado e inicio, registra no log e não chama o ciclo', async () => {
+  const infos = []
+  const logger = { ...silencioso, info: (m, c) => infos.push([m, c?.origem]) }
+  const ciclo = cicloFalso()
+  let pode = false
+  const ag = criarAgendador({ ciclo, config, logger, cron: cronFalso(), atrasoInicialMs: false, podeCapturar: () => pode })
+  for (const origem of ['agendado', 'inicio']) {
+    const r = await ag.executarAgora(origem)
+    assert.equal(r.ok, true)
+    assert.match(r.pulado, /pasta/)
+    assert.deepEqual(r.clientes, [])
+  }
+  assert.equal(ciclo.chamadas.length, 0)
+  assert.equal(ag.estado().rodandoAgora, false)
+  assert.equal(infos.filter(([m]) => /pasta/i.test(m)).length, 2)
+  // Painel e bandeja também são barrados, com o motivo em pulado.
+  for (const origem of ['painel', 'bandeja']) {
+    const r = await ag.executarAgora(origem)
+    assert.equal(r.ok, true)
+    assert.match(r.pulado, /pasta/)
+    assert.deepEqual(r.clientes, [])
+  }
+  assert.equal(ciclo.chamadas.length, 0)
+  const ag2 = criarAgendador({ ciclo, config, logger, cron: cronFalso(), podeCapturar: () => false, motivoPulo: () => 'Escolha a pasta principal na tela Pastas antes de capturar.' })
+  assert.equal((await ag2.executarAgora('bandeja')).pulado, 'Escolha a pasta principal na tela Pastas antes de capturar.')
+  // Com a condição satisfeita o ciclo roda.
+  pode = true
+  await ag.executarAgora('agendado')
+  assert.equal(ciclo.chamadas.length, 1)
+})
+
+function ctxComPastas({ temPasta, movendo }) {
+  const ciclo = cicloFalso()
+  const pastas = { temPasta: () => temPasta.valor, movendoAgora: () => movendo.valor }
+  return { ctx: { config: { ...config, tpAmb: '2', sefazMock: true }, logger: silencioso, ciclo, pastas }, ciclo }
+}
+
+test('iniciarServidor com exigirPasta: sem pasta o ciclo agendado não roda; com pasta roda', async () => {
+  const temPasta = { valor: false }
+  const { ctx, ciclo } = ctxComPastas({ temPasta, movendo: { valor: false } })
+  const cron = cronFalso()
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron, comPainel: false, exigirPasta: true })
+  await cron.tarefas[0].fn()
+  assert.equal(ciclo.chamadas.length, 0)
+  temPasta.valor = true
+  await cron.tarefas[0].fn()
+  assert.equal(ciclo.chamadas.length, 1)
+  await s.parar()
+})
+
+test('iniciarServidor: troca de pasta em andamento impede o ciclo agendado, com ou sem exigirPasta', async () => {
+  for (const exigirPasta of [false, true]) {
+    const movendo = { valor: true }
+    const { ctx, ciclo } = ctxComPastas({ temPasta: { valor: true }, movendo })
+    const cron = cronFalso()
+    const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron, comPainel: false, exigirPasta })
+    await cron.tarefas[0].fn()
+    assert.equal(ciclo.chamadas.length, 0, `exigirPasta=${exigirPasta}`)
+    movendo.valor = false
+    await cron.tarefas[0].fn()
+    assert.equal(ciclo.chamadas.length, 1)
+    await s.parar()
+  }
+})
+
+test('iniciarServidor: o agendador devolve o motivo em pulado (bandeja e painel também)', async () => {
+  const movendo = { valor: true }
+  const { ctx, ciclo } = ctxComPastas({ temPasta: { valor: false }, movendo })
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron: cronFalso(), comPainel: false, exigirPasta: true })
+  assert.match((await s.agendador.executarAgora('bandeja')).pulado, /sendo trocada/)
+  movendo.valor = false
+  assert.equal((await s.agendador.executarAgora('bandeja')).pulado, 'Escolha a pasta principal na tela Pastas antes de capturar.')
+  assert.equal((await s.agendador.executarAgora('painel')).pulado, 'Escolha a pasta principal na tela Pastas antes de capturar.')
+  assert.equal(ciclo.chamadas.length, 0)
+  await s.parar()
+})
+
+test('iniciarServidor sem exigirPasta e sem troca: nada muda (sem pasta, o ciclo roda)', async () => {
+  const { ctx, ciclo } = ctxComPastas({ temPasta: { valor: false }, movendo: { valor: false } })
+  const cron = cronFalso()
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron, comPainel: false })
+  await cron.tarefas[0].fn()
+  assert.equal(ciclo.chamadas.length, 1)
+  await s.parar()
+})
+
 test('iniciarServidor sobe o agendador e para sem erro', async () => {
   const cron = cronFalso()
   const ctx = { config: { ...config, tpAmb: '2', sefazMock: true }, logger: silencioso, ciclo: cicloFalso() }
@@ -258,4 +344,134 @@ test('como o app abre (sem atraso pedido): não captura ao iniciar, só no horá
   await cron.tarefas[0].fn()
   await new Promise((r) => setImmediate(r))
   assert.equal(ciclo.chamadas.length, 1, 'no horário, captura')
+})
+
+test('iniciarServidor agenda a organização da pasta 30 s depois de abrir, com conferência, e a para ao fechar', async () => {
+  const cron = cronFalso()
+  const agendados = []
+  const relogio = { depois: (fn, ms) => (agendados.push({ fn, ms }), () => {}), aCada: () => () => {} }
+  const chamadas = []
+  const organizador = { agendar: (o) => chamadas.push(['agendar', o]), parar: async () => chamadas.push(['parar']) }
+  const ctx = { config: { ...config, tpAmb: '2', sefazMock: true }, logger: silencioso, ciclo: cicloFalso(), organizador }
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron, comPainel: false, relogio })
+  const item = agendados.find((a) => a.ms === 30e3)
+  item.fn()
+  assert.deepEqual(chamadas, [['agendar', { conferirArquivos: true }]])
+  await s.parar()
+  assert.deepEqual(chamadas.at(-1), ['parar'])
+})
+
+test('iniciarServidor liga o fim do ciclo ao organizador', async () => {
+  const cron = cronFalso()
+  const chamadas = []
+  const ctx = { config: { ...config, tpAmb: '2', sefazMock: true }, logger: silencioso, ciclo: cicloFalso(), deps: {}, organizador: { agendar: (...a) => chamadas.push(a), parar: async () => {} } }
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron, comPainel: false })
+  ctx.deps.aoTerminarCiclo()
+  assert.deepEqual(chamadas, [[]])
+  await s.parar()
+})
+
+test('I8: horário pulado por falta de pasta: warn e chamada de aoPularSemPasta; troca em andamento segue em info e sem aviso', async () => {
+  const logs = { info: [], warn: [] }
+  const logger = { info: (m) => logs.info.push(m), warn: (m) => logs.warn.push(m), error() {} }
+  const movendo = { valor: false }
+  const { ctx, ciclo } = ctxComPastas({ temPasta: { valor: false }, movendo })
+  ctx.logger = logger
+  const pulos = []
+  const cron = cronFalso()
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron, comPainel: false, exigirPasta: true, aoPularSemPasta: () => pulos.push(1) })
+  await cron.tarefas[0].fn()
+  assert.equal(pulos.length, 1)
+  assert.ok(logs.warn.some((m) => /captura ignorada/.test(m)))
+  // Quem pediu à mão recebe o motivo na resposta: sem notificação repetida.
+  await s.agendador.executarAgora('bandeja')
+  assert.equal(pulos.length, 1)
+  logs.info.length = 0
+  logs.warn.length = 0
+  movendo.valor = true
+  await cron.tarefas[0].fn()
+  assert.equal(pulos.length, 1)
+  assert.ok(logs.info.some((m) => /captura ignorada/.test(m)))
+  assert.ok(!logs.warn.some((m) => /captura ignorada/.test(m)))
+  assert.equal(ciclo.chamadas.length, 0)
+  await s.parar()
+})
+
+test('I8: erro em aoPularSemPasta não derruba o agendador', async () => {
+  const { ctx } = ctxComPastas({ temPasta: { valor: false }, movendo: { valor: false } })
+  const cron = cronFalso()
+  const s = await iniciarServidor(ctx, {
+    atrasoInicialMs: false,
+    cron,
+    comPainel: false,
+    exigirPasta: true,
+    aoPularSemPasta: () => {
+      throw new Error('sem notificação')
+    },
+  })
+  const r = await cron.tarefas[0].fn()
+  assert.match(r.pulado, /Escolha a pasta principal/)
+  await s.parar()
+})
+
+test('I6: parar() para a troca de pasta antes de fechar o resto', async () => {
+  const chamadas = []
+  const { ctx } = ctxComPastas({ temPasta: { valor: true }, movendo: { valor: false } })
+  ctx.pastas.pararTroca = async () => {
+    await new Promise((r) => setImmediate(r))
+    chamadas.push('pararTroca')
+  }
+  ctx.organizador = { agendar() {}, parar: async () => chamadas.push('organizador') }
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron: cronFalso(), comPainel: false, relogio: { depois: () => () => {}, aCada: () => () => {} } })
+  await s.parar()
+  assert.deepEqual(chamadas, ['pararTroca', 'organizador'])
+})
+
+test('saída: pararTroca e passada que nunca terminam: 30 s cada, log, e segue fechando', async () => {
+  const limites = []
+  const relogio = { depois: (fn, ms) => (limites.push({ fn, ms }), () => {}), aCada: () => () => {} }
+  const avisos = []
+  const organizadorParado = []
+  const ctx = {
+    config: { ...config, tpAmb: '2', sefazMock: true },
+    logger: { ...silencioso, warn: (m) => avisos.push(m) },
+    ciclo: cicloFalso(),
+    pastas: { movendoAgora: () => false, temPasta: () => true, pararTroca: () => new Promise(() => {}) },
+    organizador: { agendar() {}, parar: () => (organizadorParado.push(1), new Promise(() => {})) },
+    backup: { fazerBackup() {}, aguardar: async () => avisos.push('backup aguardado') },
+  }
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron: cronFalso(), comPainel: false, relogio })
+  const antes = limites.length
+  let fechou = false
+  const fim = s.parar().then(() => (fechou = true))
+  const tique = () => new Promise((r) => setImmediate(r))
+  await tique()
+  assert.deepEqual(limites.slice(antes).map((l) => l.ms), [30e3])
+  assert.equal(fechou, false)
+  limites[antes].fn()
+  await tique()
+  assert.deepEqual(organizadorParado, [1])
+  assert.deepEqual(limites.slice(antes).map((l) => l.ms), [30e3, 30e3])
+  assert.equal(fechou, false)
+  limites[antes + 1].fn()
+  await fim
+  assert.equal(avisos.filter((m) => /30 s/.test(m)).length, 2)
+  assert.ok(avisos.includes('backup aguardado'), 'segue fechando')
+})
+
+test('saída: espera que termina a tempo cancela o limite e não avisa', async () => {
+  const cancelados = []
+  const relogio = { depois: (fn, ms) => () => cancelados.push(ms), aCada: () => () => {} }
+  const avisos = []
+  const ctx = {
+    config: { ...config, tpAmb: '2', sefazMock: true },
+    logger: { ...silencioso, warn: (m) => avisos.push(m) },
+    ciclo: cicloFalso(),
+    pastas: { movendoAgora: () => false, temPasta: () => true, pararTroca: async () => {} },
+    organizador: { agendar() {}, parar: async () => {} },
+  }
+  const s = await iniciarServidor(ctx, { atrasoInicialMs: false, cron: cronFalso(), comPainel: false, relogio })
+  await s.parar()
+  assert.equal(cancelados.filter((ms) => ms === 30e3).length, 3, 'a organização de abertura e os dois limites')
+  assert.deepEqual(avisos, [])
 })

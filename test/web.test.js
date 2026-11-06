@@ -3,6 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const fsp = require('node:fs/promises')
 const os = require('node:os')
 const path = require('node:path')
 const http = require('node:http')
@@ -13,6 +14,7 @@ const { carregarConfig } = require('../src/config')
 const { abrirBanco } = require('../src/db')
 const { criarAgendador } = require('../src/scheduler')
 const { criarSefazMock, CNPJ_MOCK_OK, CNPJ_MOCK_656 } = require('../src/sefaz/mock-client')
+const { criarGrupos } = require('../src/services/pastaOrganizada')
 const { gerarPfx } = require('./apoio/certificado')
 const { silencioso, inserirNotas } = require('./apoio/ambiente')
 const { lerZip } = require('./apoio/zip')
@@ -684,7 +686,7 @@ test('backup: trocar a pasta fora do próprio PC é recusado', async (t) => {
 
 const xmlsEm = (pasta) => (fs.existsSync(pasta) ? fs.readdirSync(pasta, { recursive: true }).filter((n) => n.endsWith('.xml')) : [])
 
-test('pastas: troca a dos XMLs levando os arquivos, as notas continuam abrindo, volta para a padrão', async (t) => {
+test('pastas: troca a dos XMLs levando os arquivos, as notas continuam abrindo', async (t) => {
   const { pedir, ctx } = await montar(t)
   await ctx.ciclo.executarCiclo()
   const padrao = ctx.config.pastaXmls
@@ -713,10 +715,7 @@ test('pastas: troca a dos XMLs levando os arquivos, as notas continuam abrindo, 
   assert.equal((await pedir(`/api/notas/${nota.id}/xml`)).status, 200)
   assert.equal(ctx.db.prepare("SELECT valor FROM sistema WHERE chave = 'pasta_xmls'").get().valor, nova)
 
-  const volta = await pedir('/api/pastas', { method: 'POST', body: { tipo: 'xmls', pasta: '' } })
-  assert.equal(volta.corpo.estado.pastas[0].ehPadrao, true)
-  assert.deepEqual(xmlsEm(padrao).sort(), antes.sort())
-  assert.equal((await pedir(`/api/notas/${nota.id}/xml`)).status, 200)
+  assert.equal((await pedir('/api/pastas', { method: 'POST', body: { tipo: 'xmls', pasta: '' } })).status, 400, 'não há volta para a padrão')
 })
 
 test('pastas: a escolha salva vale ao abrir de novo; trocar fora do próprio PC é recusado', async (t) => {
@@ -1495,61 +1494,371 @@ async function appComPastas(t, ctx, opcoes) {
   return (caminho, body) => fetch(`http://127.0.0.1:${servidor.address().port}${caminho}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Painel': '1' }, body: JSON.stringify(body ?? {}) }).then(async (r) => ({ status: r.status, corpo: await r.json() }))
 }
 
-test('pasta principal: cria SMART FISCAL com Notas e Arquivos SPED, leva tudo e volta para a padrão', async (t) => {
-  const { ctx, pedir } = await montar(t)
-  const cliente = ctx.db.prepare('SELECT * FROM clientes LIMIT 1').get()
-  const rel = path.join('NF-e', 'Exemplo', '2026', 'Outubro', 'Entradas', 'a-nfe.xml')
-  gravarXml(ctx, rel, '<a/>')
-  const nota = ctx.db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia, caminho_xml) VALUES (?, 'a', 'completa', '2026-10', ?)").run(cliente.id, rel).lastInsertRowid
+const novaBase = (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-principal-'))
   t.after(() => fs.rmSync(base, { recursive: true, force: true }))
-  const { pedidos, motor } = await motorFalso(t)
-  const post = await appComPastas(t, ctx, { estoque: () => motor })
+  return base
+}
+const MARCA = '.smart-fiscal'
 
+// Nota completa com o XML gravado, como a captura deixa.
+function notaComXml(ctx, chave, rel = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', `${chave}-nfe.xml`)) {
+  const cliente = ctx.db.prepare('SELECT * FROM clientes LIMIT 1').get()
+  gravarXml(ctx, rel, `<${chave}/>`)
+  const id = ctx.db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia, caminho_xml) VALUES (?, ?, 'completa', '2026-10', ?)").run(cliente.id, chave, rel).lastInsertRowid
+  return { id, rel }
+}
+
+test('pasta principal: pasta vazia é aceita, as empresas ficam direto nela e ganha a marca', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { id, rel } = notaComXml(ctx, 'a')
+  const base = novaBase(t)
+  const post = await appComPastas(t, ctx, {})
+
+  assert.equal(ctx.pastas.temPasta(), false)
   assert.equal((await pedir('/api/pastas')).corpo.principal, null)
   assert.equal((await post('/api/pastas/principal', { pasta: 'relativa' })).status, 400)
 
   const r = await post('/api/pastas/principal', { pasta: base })
   assert.equal(r.status, 200, JSON.stringify(r.corpo))
-  const raiz = path.join(base, 'SMART FISCAL')
-  assert.equal(r.corpo.estado.principal, raiz)
-  assert.ok(fs.existsSync(path.join(raiz, 'Notas', rel)))
-  assert.equal(ctx.config.pastaXmls, path.join(raiz, 'Notas'))
-  assert.deepEqual(pedidos.at(-1), { rota: '/api/pasta', token: 'tk', dados: { pasta_saida: path.join(raiz, 'Arquivos SPED'), levar: true } })
-  assert.match(r.corpo.mensagem, /1 XML/)
-  assert.match(r.corpo.mensagem, /2 arquivos do SPED/)
-  assert.equal((await pedir(`/api/notas/${nota}/xml`)).status, 200)
+  assert.equal(r.corpo.estado.principal, base)
+  assert.equal(ctx.config.pastaXmls, base, 'sem SMART FISCAL nem Notas')
+  assert.ok(fs.existsSync(path.join(base, MARCA)))
+  assert.ok(fs.existsSync(path.join(base, rel)))
+  assert.ok(!fs.existsSync(path.join(base, 'SMART FISCAL')))
+  assert.match(r.corpo.mensagem, /^Pasta principal: .*\. 1 arquivo levado\.$/)
+  assert.equal(ctx.pastas.temPasta(), true)
+  assert.equal((await pedir(`/api/notas/${id}/xml`)).status, 200)
 
-  // Escolher a própria pasta SMART FISCAL não cria outra dentro dela.
-  const mesma = await post('/api/pastas/principal', { pasta: raiz })
-  assert.equal(mesma.corpo.estado.principal, raiz)
-  assert.ok(!fs.existsSync(path.join(raiz, 'SMART FISCAL')))
-
-  const volta = await post('/api/pastas/principal', { pasta: '' })
-  assert.equal(volta.corpo.estado.principal, null)
-  assert.equal(pedidos.at(-1).dados.pasta_saida, '')
-  assert.equal((await pedir(`/api/notas/${nota}/xml`)).status, 200)
-  assert.ok(!fs.existsSync(raiz), 'a pasta vazia não fica para trás')
+  // Escolher a mesma pasta outra vez não copia nada.
+  const mesma = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(mesma.status, 200)
+  assert.match(mesma.corpo.mensagem, /0 arquivos levados/)
 })
 
-test('pasta principal: erro no SPED não desfaz as notas e avisa; escolher de novo tenta outra vez', async (t) => {
+test('pasta principal: pasta com outros arquivos e sem marca é recusada e nada é copiado', async (t) => {
   const { ctx } = await montar(t)
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-principal-'))
-  t.after(() => fs.rmSync(base, { recursive: true, force: true }))
-  let falhar = true
-  const { pedidos, motor } = await motorFalso(t, () => (falhar ? { erro: 'disco cheio' } : { movidos: 0 }))
+  const { rel } = notaComXml(ctx, 'a')
+  const base = novaBase(t)
+  fs.writeFileSync(path.join(base, 'de-alguem.xml'), 'x')
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 400)
+  assert.match(r.corpo.erro, /não está vazia/)
+  assert.equal(fs.existsSync(path.join(base, MARCA)), false)
+  assert.deepEqual(fs.readdirSync(base), ['de-alguem.xml'])
+  assert.ok(fs.existsSync(path.join(ctx.config.pastaXmls, rel)), 'continua na pasta antiga')
+  // O caminho genérico passa pela mesma validação.
+  const generico = await post('/api/pastas', { tipo: 'xmls', pasta: base })
+  assert.equal(generico.status, 400)
+  assert.match(generico.corpo.erro, /não está vazia/)
+})
+
+test('pasta principal: com EEXIST, origem diferente fica e igual sai; o destino nunca é sobrescrito', async (t) => {
+  const { ctx } = await montar(t)
+  const diferente = notaComXml(ctx, 'a').rel
+  const igual = notaComXml(ctx, 'b').rel
+  const antiga = ctx.config.pastaXmls
+  const base = novaBase(t)
+  fs.writeFileSync(path.join(base, MARCA), '')
+  fs.mkdirSync(path.join(base, path.dirname(diferente)), { recursive: true })
+  fs.writeFileSync(path.join(base, diferente), 'ja-estava')
+  fs.writeFileSync(path.join(base, igual), '<b/>')
+  fs.writeFileSync(path.join(base, 'outro.txt'), 'fica')
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.equal(fs.readFileSync(path.join(base, diferente), 'utf8'), 'ja-estava', 'destino não é sobrescrito')
+  assert.equal(fs.readFileSync(path.join(antiga, diferente), 'utf8'), '<a/>', 'origem diferente fica')
+  assert.ok(!fs.existsSync(path.join(antiga, igual)), 'origem idêntica ao destino sai')
+  assert.equal(fs.readFileSync(path.join(base, igual), 'utf8'), '<b/>')
+  assert.equal(fs.readFileSync(path.join(base, 'outro.txt'), 'utf8'), 'fica')
+  assert.match(r.corpo.mensagem, /1 arquivo levado/)
+})
+
+test('pasta principal: sobra truncada no destino não faz apagar a origem, nem ao repetir a troca', async (t) => {
+  const { ctx } = await montar(t)
+  const { rel } = notaComXml(ctx, 'a')
+  const antiga = ctx.config.pastaXmls
+  const base = novaBase(t)
+  fs.writeFileSync(path.join(base, MARCA), '')
+  fs.mkdirSync(path.join(base, path.dirname(rel)), { recursive: true })
+  fs.writeFileSync(path.join(base, rel), '<a') // cópia cortada de uma tentativa antiga
+  const post = await appComPastas(t, ctx, {})
+  for (let i = 0; i < 2; i++) {
+    assert.equal((await post('/api/pastas/principal', { pasta: base })).status, 200)
+    assert.equal(fs.readFileSync(path.join(antiga, rel), 'utf8'), '<a/>')
+    assert.equal(fs.readFileSync(path.join(base, rel), 'utf8'), '<a')
+  }
+})
+
+test('pasta principal: falha no meio da cópia deixa banco, config e origem intactos e limpa o que criou', async (t) => {
+  const { ctx } = await montar(t)
+  const a = notaComXml(ctx, 'a').rel
+  const b = notaComXml(ctx, 'b').rel
+  const antiga = ctx.config.pastaXmls
+  const base = novaBase(t)
+  const original = fsp.copyFile
+  let chamadas = 0
+  t.mock.method(fsp, 'copyFile', async (...args) => {
+    if (++chamadas === 2) throw Object.assign(new Error('falhou'), { code: 'ENOSPC' })
+    return original(...args)
+  })
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 400)
+  assert.match(r.corpo.erro, /Nada mudou/)
+  assert.equal(chamadas, 2)
+  const valor = (chave) => ctx.db.prepare('SELECT valor FROM sistema WHERE chave = ?').get(chave)?.valor
+  assert.equal(valor('pasta_xmls'), undefined)
+  assert.equal(valor('pasta_principal'), undefined)
+  assert.equal(ctx.config.pastaXmls, antiga)
+  for (const rel of [a, b]) assert.ok(fs.existsSync(path.join(antiga, rel)))
+  assert.deepEqual(fs.readdirSync(base, { recursive: true, withFileTypes: true }).filter((i) => i.isFile()).map((i) => i.name), [MARCA], 'só a marca; sem .tmp nem cópias')
+  // Repetir a troca continua de onde parou.
+  t.mock.restoreAll()
+  assert.equal((await post('/api/pastas/principal', { pasta: base })).status, 200)
+  for (const rel of [a, b]) assert.ok(fs.existsSync(path.join(base, rel)))
+  assert.equal(valor('pasta_principal'), base)
+})
+
+test('pasta principal: nenhuma captura começa durante a troca (409)', async (t) => {
+  const { ctx } = await montar(t)
+  notaComXml(ctx, 'a')
+  const base = novaBase(t)
+  const original = fsp.copyFile
+  let soltar
+  const portao = new Promise((r) => (soltar = r))
+  let dentro
+  const entrou = new Promise((r) => (dentro = r))
+  t.mock.method(fsp, 'copyFile', async (...args) => {
+    dentro()
+    await portao
+    return original(...args)
+  })
+  const post = await appComPastas(t, ctx, {})
+  const troca = post('/api/pastas/principal', { pasta: base })
+  await entrou
+  assert.equal(ctx.pastas.movendoAgora(), true)
+  assert.equal((await post('/api/captura', {})).status, 409)
+  soltar()
+  assert.equal((await troca).status, 200)
+  assert.equal(ctx.pastas.movendoAgora(), false)
+})
+
+test('exigirPasta sem pasta: captura responde 409 e resumo traz pastaPendente', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const post = await appComPastas(t, ctx, { exigirPasta: true })
+  const C = CNPJ_MOCK_OK
+  for (const corpo of [{ cnpjs: [C], modelos: ['nfe'] }, { cnpj: C }, {}]) {
+    const r = await post('/api/captura', corpo)
+    assert.equal(r.status, 409, JSON.stringify(corpo))
+    assert.match(r.corpo.erro, /Escolha a pasta principal na tela Pastas antes de capturar\./)
+  }
+  assert.ok(!ctx.ciclo.cicloEmAndamento())
+  // O painel de teste padrão (sem exigirPasta) não traz a pendência.
+  assert.equal((await pedir('/api/resumo')).corpo.pastaPendente, false)
+})
+
+test('exigirPasta: resumo traz pastaPendente verdadeiro sem pasta', async (t) => {
+  const { ctx } = await montar(t)
+  const agendador = criarAgendador({ ciclo: ctx.ciclo, config: ctx.config, logger: silencioso, automacao: ctx.automacao, atrasoInicialMs: false })
+  const pastaPainel = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-painel-'))
+  fs.writeFileSync(path.join(pastaPainel, 'index.html'), '<!doctype html>')
+  const servidor = criarApp({ ctx, agendador, pastaPainel, exigirPasta: true }).listen(0, '127.0.0.1')
+  await new Promise((r) => servidor.once('listening', r))
+  t.after(() => new Promise((r) => servidor.close(r)).then(() => fs.rmSync(pastaPainel, { recursive: true, force: true })))
+  const resumo = () => fetch(`http://127.0.0.1:${servidor.address().port}/api/resumo`).then((r) => r.json())
+  assert.equal((await resumo()).pastaPendente, true)
+  await ctx.pastas.mudarPrincipal(novaBase(t))
+  assert.equal((await resumo()).pastaPendente, false)
+})
+
+test('exigirPasta com pasta: captura segue', async (t) => {
+  const { ctx } = await montar(t)
+  await ctx.pastas.mudarPrincipal(novaBase(t))
+  const post = await appComPastas(t, ctx, { exigirPasta: true })
+  const r = await post('/api/captura', { cnpjs: [CNPJ_MOCK_OK], modelos: ['nfe'] })
+  assert.equal(r.status, 202, JSON.stringify(r.corpo))
+  const r2 = await post('/api/captura', { cnpj: CNPJ_MOCK_OK })
+  assert.ok([202, 409].includes(r2.status))
+  await ctx.ciclo.parar()
+})
+
+test('sem exigirPasta (terminal e testes): captura sem pasta escolhida segue como antes', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  assert.equal(ctx.pastas.temPasta(), false)
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/captura', { cnpjs: [CNPJ_MOCK_OK], modelos: ['nfe'] })
+  assert.equal(r.status, 202, JSON.stringify(r.corpo))
+  assert.equal((await pedir('/api/resumo')).corpo.pastaPendente, false)
+  await ctx.ciclo.parar()
+})
+
+test('pasta principal: duas trocas simultâneas, a segunda é recusada antes de qualquer espera', async (t) => {
+  const { ctx } = await montar(t)
+  notaComXml(ctx, 'a')
+  const a = novaBase(t)
+  const b = novaBase(t)
+  const primeira = ctx.pastas.mudarPrincipal(a)
+  assert.equal(ctx.pastas.movendoAgora(), true, 'marcado de forma síncrona, antes do primeiro await')
+  await assert.rejects(ctx.pastas.mudarPrincipal(b), /A pasta já está sendo trocada\./)
+  assert.equal((await primeira).mudou, true)
+  assert.equal(ctx.pastas.movendoAgora(), false)
+  assert.equal(ctx.config.pastaXmls, a)
+  assert.deepEqual(fs.readdirSync(b), [], 'a segunda não tocou na pasta')
+})
+
+test('pasta principal: troca recusada por validação não deixa a marca de movendo presa', async (t) => {
+  const { ctx } = await montar(t)
+  await assert.rejects(ctx.pastas.mudarPrincipal('relativa'), /endereço completo/)
+  assert.equal(ctx.pastas.movendoAgora(), false)
+})
+
+test('pasta principal: sem pasta_principal, escolher a pasta atual a adota com a marca', async (t) => {
+  const { ctx } = await montar(t)
+  const atual = novaBase(t)
+  ctx.config.pastaXmls = atual
+  const post = await appComPastas(t, ctx, {})
+  assert.equal(ctx.pastas.temPasta(), false)
+  const r = await post('/api/pastas/principal', { pasta: atual })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.ok(fs.existsSync(path.join(atual, MARCA)))
+  assert.equal(r.corpo.estado.principal, atual)
+  assert.match(r.corpo.mensagem, /0 arquivos levados/)
+  assert.equal(ctx.pastas.temPasta(), true)
+  // Agora que já é a principal, escolher de novo não faz nada.
+  assert.equal((await ctx.pastas.mudarPrincipal(atual)).mudou, false)
+
+  // Pasta atual com outras coisas e sem marca continua recusada.
+  const outra = novaBase(t)
+  fs.writeFileSync(path.join(outra, 'de-alguem.txt'), 'x')
+  ctx.db.prepare("DELETE FROM sistema WHERE chave = 'pasta_principal'").run()
+  ctx.config.pastaXmls = outra
+  assert.equal((await post('/api/pastas/principal', { pasta: outra })).status, 400)
+})
+
+test('pasta principal: valor vazio é recusado, não há volta para a pasta padrão', async (t) => {
+  const { ctx } = await montar(t)
+  const base = novaBase(t)
+  const post = await appComPastas(t, ctx, {})
+  await post('/api/pastas/principal', { pasta: base })
+  for (const [rota, corpo] of [['/api/pastas/principal', { pasta: '' }], ['/api/pastas', { tipo: 'xmls', pasta: '' }]]) {
+    const r = await post(rota, corpo)
+    assert.equal(r.status, 400)
+    assert.match(r.corpo.erro, /Escolha a pasta/)
+  }
+  assert.equal(ctx.config.pastaXmls, base)
+})
+
+test('pasta principal: na pasta antiga sem marca só sai o que foi copiado', async (t) => {
+  const { ctx } = await montar(t)
+  const { rel } = notaComXml(ctx, 'a')
+  const antiga = ctx.config.pastaXmls
+  gravarXml(ctx, path.join('Exemplo', 'sem-registro.xml'), '<s/>')
+  gravarXml(ctx, path.join('Exemplo', 'de-alguem.xml'), '<d/>')
+  fs.mkdirSync(path.join(antiga, 'PastaAlheia'), { recursive: true })
+  const base = novaBase(t)
+  const post = await appComPastas(t, ctx, {})
+  assert.equal((await post('/api/pastas/principal', { pasta: base })).status, 200)
+  assert.ok(fs.existsSync(path.join(base, rel)))
+  assert.ok(!fs.existsSync(path.join(antiga, rel)), 'o copiado sai da antiga')
+  assert.ok(fs.existsSync(path.join(antiga, 'Exemplo', 'sem-registro.xml')), 'xml sem registro fica')
+  assert.ok(!fs.existsSync(path.join(base, 'Exemplo', 'sem-registro.xml')))
+  assert.ok(fs.existsSync(path.join(antiga, 'Exemplo', 'de-alguem.xml')), 'de-alguem.xml fica na antiga')
+  assert.ok(!fs.existsSync(path.join(base, 'Exemplo', 'de-alguem.xml')))
+  assert.ok(fs.existsSync(path.join(antiga, 'PastaAlheia')), 'pasta vazia alheia fica')
+  assert.ok(!fs.existsSync(path.join(antiga, 'Exemplo', '2026')), 'só as pastas de onde saiu viram vazias e somem')
+})
+
+test('pasta principal: resumo em Resumos é levado de uma origem sem marca', async (t) => {
+  const { ctx } = await montar(t)
+  const rel = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'Resumos', '12345678901234567890-resumo.xml')
+  gravarXml(ctx, rel, '<r/>')
+  const antiga = ctx.config.pastaXmls
+  const base = novaBase(t)
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.match(r.corpo.mensagem, /1 arquivo levado/)
+  assert.equal(fs.readFileSync(path.join(base, rel), 'utf8'), '<r/>')
+  assert.ok(!fs.existsSync(path.join(antiga, rel)))
+})
+
+test('pasta principal: com marca leva xml, pdf, xlsx e zip; sem marca, só os xml do banco', async (t) => {
+  const { ctx } = await montar(t)
+  const post = await appComPastas(t, ctx, {})
+  const a = novaBase(t)
+  const b = novaBase(t)
+  await ctx.organizador.parar() // a geração em segundo plano não mexe nas contagens desta troca
+  const { rel } = notaComXml(ctx, 'a')
+  assert.equal((await post('/api/pastas/principal', { pasta: a })).status, 200)
+  const dir = path.join(a, path.dirname(rel))
+  for (const nome of ['x.pdf', 'y.xlsx', 'z.zip', 'w.xml.tmp', 'leia.txt']) fs.writeFileSync(path.join(dir, nome), nome)
+  const r = await post('/api/pastas/principal', { pasta: b })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.match(r.corpo.mensagem, /4 arquivos levados/)
+  for (const nome of ['x.pdf', 'y.xlsx', 'z.zip', path.basename(rel)]) assert.ok(fs.existsSync(path.join(b, path.dirname(rel), nome)), nome)
+  assert.ok(!fs.existsSync(path.join(b, path.dirname(rel), 'w.xml.tmp')))
+  assert.ok(!fs.existsSync(path.join(b, path.dirname(rel), 'leia.txt')))
+  assert.ok(fs.existsSync(path.join(dir, 'leia.txt')) && fs.existsSync(path.join(dir, 'w.xml.tmp')), 'o que não é do app fica')
+})
+
+test('pasta principal: o SPED não é levado ao trocar de pasta', async (t) => {
+  const { ctx } = await montar(t)
+  const { pedidos, motor } = await motorFalso(t)
+  const base = novaBase(t)
   const post = await appComPastas(t, ctx, { estoque: () => motor })
   const r = await post('/api/pastas/principal', { pasta: base })
   assert.equal(r.status, 200)
-  assert.match(r.corpo.erroSped, /disco cheio/)
-  assert.equal(ctx.config.pastaXmls, path.join(base, 'SMART FISCAL', 'Notas'))
-  falhar = false
-  const depois = await post('/api/pastas/principal', { pasta: base })
-  assert.equal(depois.corpo.erroSped, undefined)
-  assert.equal(pedidos.length, 2)
+  assert.equal(pedidos.length, 0)
+  assert.equal(r.corpo.erroSped, undefined)
+})
 
-  const semMotor = await appComPastas(t, ctx, { estoque: () => ({ erro: 'parado' }) })
-  assert.match((await semMotor('/api/pastas/principal', { pasta: base })).corpo.erroSped, /motor do SPED/)
+test('pasta principal: origem indisponível com notas registradas recusa a troca; sem nada registrado, troca', async (t) => {
+  const { ctx } = await montar(t)
+  const post = await appComPastas(t, ctx, {})
+  const a = novaBase(t)
+  const b = novaBase(t)
+  assert.equal((await post('/api/pastas/principal', { pasta: a })).status, 200)
+  notaComXml(ctx, 'a')
+  fs.rmSync(a, { recursive: true, force: true })
+  const r = await post('/api/pastas/principal', { pasta: b })
+  assert.equal(r.status, 400)
+  assert.match(r.corpo.erro, /nada foi mudado/)
+  assert.equal(ctx.config.pastaXmls, a)
+  assert.deepEqual(fs.readdirSync(b), [])
+  ctx.db.prepare('DELETE FROM notas').run()
+  assert.equal((await post('/api/pastas/principal', { pasta: b })).status, 200)
+  assert.equal(ctx.config.pastaXmls, b)
+})
+
+test('pasta principal: falha na cópia volta para a pasta antiga e não perde nada', async (t) => {
+  const { ctx } = await montar(t)
+  const { rel } = notaComXml(ctx, 'a')
+  const antiga = ctx.config.pastaXmls
+  const base = novaBase(t)
+  t.mock.method(fsp, 'copyFile', async () => {
+    throw Object.assign(new Error('falhou'), { code: 'EIO' })
+  })
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 400)
+  assert.match(r.corpo.erro, /Nada mudou/)
+  assert.equal(ctx.config.pastaXmls, antiga)
+  assert.ok(fs.existsSync(path.join(antiga, rel)))
+  assert.equal(ctx.pastas.temPasta(), false)
+})
+
+test('pasta principal: a antiga …\\SMART FISCAL conta como pasta e a troca usa a regra sem marca', async (t) => {
+  const { ctx } = await montar(t)
+  const base = novaBase(t)
+  ctx.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(path.join(base, 'SMART FISCAL'))
+  assert.equal(ctx.pastas.temPasta(), true)
+  const nova = novaBase(t)
+  const post = await appComPastas(t, ctx, {})
+  assert.equal((await post('/api/pastas/principal', { pasta: nova })).status, 200)
+  assert.equal(ctx.pastas.estado().principal, nova)
 })
 
 test('pasta principal: janela de escolher pasta só no app; fora do próprio PC é recusado', async (t) => {
@@ -1629,4 +1938,244 @@ test('cadastro sem certificado fora do próprio PC é recusado', async (t) => {
   const { ctx } = await montar(t)
   const post = await appComPastas(t, ctx, { ehLocal: () => false })
   assert.equal((await post('/api/clientes', { cnpj: '27865757000102', razao: 'X', uf: 'CE', semCertificado: true })).status, 403)
+})
+
+test('GET /api/pastas traz a organização da pasta', async (t) => {
+  const { pedir } = await montar(t)
+  const r = await pedir('/api/pastas')
+  assert.deepEqual(r.corpo.organizacao, { situacao: 'parada', feitos: 0, total: 0, atual: null, falhas: 0, ultimoErro: null })
+})
+
+test('editar nome pausa a geração, move a pasta e os nomes são refeitos; excluir remove as linhas de pasta_grupos e mantém os arquivos', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const { db, config } = ctx
+  const pausas = []
+  const real = ctx.organizador.pausarDurante
+  ctx.organizador.pausarDurante = (fn) => (pausas.push(1), real(fn))
+  const cliente = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
+  const relativo = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a.xml')
+  fs.mkdirSync(path.join(config.pastaXmls, path.dirname(relativo)), { recursive: true })
+  fs.writeFileSync(path.join(config.pastaXmls, relativo), '<x/>')
+  db.prepare("INSERT INTO notas (cliente_id, chave, modelo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'completa', '2026-10', ?)").run(cliente.id, '3'.repeat(44), relativo)
+  // Pasta principal escolhida: a geração roda.
+  db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(config.pastaXmls)
+  ctx.organizador.agendar()
+  await ctx.organizador.aguardar()
+  const grupo = (nome) => path.join(config.pastaXmls, nome, '2026', 'Outubro', 'NF-e')
+  assert.ok(fs.existsSync(path.join(grupo('Exemplo'), 'Exemplo NF-e Outubro 2026.zip')))
+
+  const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'Comercial Exemplo Ltda', uf: 'CE', apelido: 'Nome Novo' } })
+  assert.equal(r.status, 200)
+  assert.equal(pausas.length, 1)
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, 'Nome Novo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a.xml')))
+  await ctx.organizador.aguardar()
+  const nomes = fs.readdirSync(grupo('Nome Novo'))
+  assert.ok(nomes.includes('Nome Novo NF-e Outubro 2026.zip'), nomes.join())
+  assert.ok(nomes.includes('Relatorio NF-e Outubro 2026.xlsx'))
+  assert.ok(!nomes.includes('Exemplo NF-e Outubro 2026.zip'))
+
+  const ex = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/excluir`, { method: 'POST', body: {} })
+  assert.equal(ex.status, 200)
+  assert.equal(pausas.length, 2)
+  assert.equal(db.prepare('SELECT COUNT(*) FROM pasta_grupos WHERE cliente_id = ?').pluck().get(cliente.id), 0)
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, 'Nome Novo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a.xml')))
+})
+
+test('captura que começa durante a espera da pausa: editar, excluir e trocar de pasta respondem 409', async (t) => {
+  const { pedir, ctx } = await montar(t)
+  const post = await appComPastas(t, ctx, {})
+  const real = ctx.organizador.pausarDurante
+  // Simula a captura que começa enquanto a geração ainda está parando.
+  ctx.organizador.pausarDurante = (fn) => real(() => ((ctx.ciclo.cicloEmAndamento = () => 'em andamento'), fn()))
+  const antes = ctx.db.prepare('SELECT apelido FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).apelido
+  const e = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'X Ltda', uf: 'CE', apelido: 'Outro' } })
+  assert.equal(e.status, 409)
+  assert.equal(ctx.db.prepare('SELECT apelido FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK).apelido, antes)
+  assert.equal((await pedir(`/api/clientes/${CNPJ_MOCK_OK}/excluir`, { method: 'POST', body: {} })).status, 409)
+  assert.ok(ctx.db.prepare('SELECT 1 FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK))
+  const base = novaBase(t)
+  assert.equal((await post('/api/pastas/principal', { pasta: base })).status, 409)
+  assert.equal((await post('/api/pastas', { tipo: 'xmls', pasta: base })).status, 409)
+  assert.equal(ctx.pastas.temPasta(), false)
+})
+
+test('contexto sem servidor: o fim do ciclo não dispara a geração', async (t) => {
+  const { ctx } = await montar(t)
+  let agendou = 0
+  ctx.organizador.agendar = () => agendou++
+  await ctx.ciclo.executarCiclo({ cnpj: CNPJ_MOCK_OK })
+  assert.equal(agendou, 0)
+})
+
+test('trocar para outra pasta, com origem sem marca: a pasta nova ganha relatórios e ZIP', async (t) => {
+  const { ctx } = await montar(t)
+  const post = await appComPastas(t, ctx, {})
+  const { rel } = notaComXml(ctx, 'a')
+  const grupos = criarGrupos({ db: ctx.db })
+  grupos.pendentes().forEach((g) => grupos.marcarPronto(g))
+  const b = novaBase(t)
+  assert.equal((await post('/api/pastas/principal', { pasta: b })).status, 200)
+  await ctx.organizador.aguardar()
+  const dir = path.join(b, 'Exemplo', '2026', 'Outubro', 'NF-e')
+  const nomes = fs.readdirSync(dir)
+  assert.ok(nomes.includes('Relatorio NF-e Outubro 2026.xlsx'), nomes.join())
+  assert.ok(nomes.includes('Relatorio NF-e Outubro 2026.pdf'))
+  assert.ok(nomes.includes('Exemplo NF-e Outubro 2026.zip'))
+  assert.ok(fs.existsSync(path.join(b, rel)))
+})
+
+test('I5: a rota inclui os avisos na mensagem e confere os arquivos depois da troca', async (t) => {
+  const { ctx } = await montar(t)
+  const presa = notaComXml(ctx, 'a').rel
+  const antiga = ctx.config.pastaXmls
+  const base = novaBase(t)
+  const original = fsp.rm
+  t.mock.method(fsp, 'rm', async (arquivo, ...resto) => {
+    if (arquivo === path.join(antiga, presa)) throw Object.assign(new Error('preso'), { code: 'EBUSY' })
+    return original(arquivo, ...resto)
+  })
+  const pedidos = []
+  const agendar = ctx.organizador.agendar
+  ctx.organizador.agendar = (o) => (pedidos.push(o), agendar(o))
+  const post = await appComPastas(t, ctx, {})
+  const r = await post('/api/pastas/principal', { pasta: base })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.match(r.corpo.mensagem, /1 arquivo levado\. 1 arquivo não saiu da pasta antiga\. Pode apagá-lo depois\.$/)
+  assert.ok(pedidos.some((o) => o?.conferirArquivos))
+  await ctx.organizador.aguardar()
+})
+
+test('I5: agendar({ conferirArquivos }) roda também quando a troca falha', async (t) => {
+  const { ctx } = await montar(t)
+  const pedidos = []
+  const agendar = ctx.organizador.agendar
+  ctx.organizador.agendar = (o) => (pedidos.push(o), agendar(o))
+  const post = await appComPastas(t, ctx, {})
+  assert.equal((await post('/api/pastas/principal', { pasta: 'relativa' })).status, 400)
+  assert.ok(pedidos.some((o) => o?.conferirArquivos))
+  await ctx.organizador.aguardar()
+})
+
+test('M16: clique duplo na troca responde "A pasta já está sendo trocada."', async (t) => {
+  const { ctx } = await montar(t)
+  notaComXml(ctx, 'a')
+  const base = novaBase(t)
+  const original = fsp.copyFile
+  let soltar
+  const portao = new Promise((r) => (soltar = r))
+  let dentro
+  const entrou = new Promise((r) => (dentro = r))
+  t.mock.method(fsp, 'copyFile', async (...args) => {
+    dentro()
+    await portao
+    return original(...args)
+  })
+  const post = await appComPastas(t, ctx, {})
+  const troca = post('/api/pastas/principal', { pasta: base })
+  await entrou
+  for (const [rota, corpo] of [['/api/pastas/principal', { pasta: base }], ['/api/pastas', { tipo: 'xmls', pasta: base }]]) {
+    const r = await post(rota, corpo)
+    assert.equal(r.status, 409)
+    assert.equal(r.corpo.erro, 'A pasta já está sendo trocada.')
+  }
+  soltar()
+  assert.equal((await troca).status, 200)
+})
+
+test('I7: GET /api/pastas responde o andamento durante a troca sem olhar o disco', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  notaComXml(ctx, 'a')
+  notaComXml(ctx, 'b')
+  const base = novaBase(t)
+  const original = fsp.copyFile
+  let soltar
+  const portao = new Promise((r) => (soltar = r))
+  let dentro
+  const entrou = new Promise((r) => (dentro = r))
+  let n = 0
+  t.mock.method(fsp, 'copyFile', async (...args) => {
+    if (++n === 2) {
+      dentro()
+      await portao
+    }
+    return original(...args)
+  })
+  const post = await appComPastas(t, ctx, {})
+  const troca = post('/api/pastas/principal', { pasta: base })
+  await entrou
+  const leituras = []
+  for (const nome of ['readdirSync', 'statSync']) t.mock.method(fs, nome, (...a) => leituras.push([nome, a[0]]) && [])
+  const lidoAntes = fsp.readdir
+  t.mock.method(fsp, 'readdir', (...a) => (leituras.push(['readdir', a[0]]), lidoAntes(...a)))
+  const r = await pedir('/api/pastas')
+  const lidas = [...leituras]
+  t.mock.restoreAll()
+  assert.deepEqual(r.corpo.movendo, { tipo: 'xmls', feitos: 1, total: 2, fase: 'copiando' })
+  assert.deepEqual(lidas.filter(([, p]) => String(p).startsWith(base) || String(p).startsWith(ctx.config.pastaXmls)), [])
+  soltar()
+  assert.equal((await troca).status, 200)
+})
+
+test('M3: abrir com a pasta fora do ar responde com mensagem clara e não recria a pasta', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const fora = path.join(novaBase(t), 'sumiu')
+  ctx.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(fora)
+  for (const tipo of ['principal', 'xmls']) {
+    if (tipo === 'xmls') ctx.config.pastaXmls = fora
+    const r = await pedir('/api/pastas/abrir', { method: 'POST', body: { tipo } })
+    assert.equal(r.status, 409)
+    assert.match(r.corpo.erro, /não está acessível/)
+    assert.ok(r.corpo.erro.includes(fora))
+    assert.ok(!fs.existsSync(fora))
+  }
+})
+
+test('I1: com captura rodando a pasta da empresa não muda de lugar; o grupo fica pendente e volta depois', async (t) => {
+  const { ctx } = await montar(t)
+  const { db, config } = ctx
+  const rel = notaComXml(ctx, 'a'.repeat(44)).rel
+  db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(config.pastaXmls)
+  db.prepare('UPDATE clientes SET apelido = ? WHERE cnpj = ?').run('Nome Novo', CNPJ_MOCK_OK)
+  const emAndamento = ctx.ciclo.cicloEmAndamento
+  ctx.ciclo.cicloEmAndamento = () => 'em andamento'
+  ctx.organizador.agendar()
+  await ctx.organizador.aguardar()
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, rel)), 'a pasta fica onde está')
+  assert.equal(ctx.organizador.estado().falhas, 1)
+  assert.match(ctx.organizador.estado().ultimoErro, /captura em andamento/)
+  assert.doesNotMatch(ctx.organizador.estado().ultimoErro, /Feche/)
+  assert.equal(db.prepare('SELECT COUNT(*) FROM pasta_grupos').pluck().get(), 0)
+  ctx.ciclo.cicloEmAndamento = emAndamento
+  ctx.organizador.agendar()
+  await ctx.organizador.aguardar()
+  assert.ok(!fs.existsSync(path.join(config.pastaXmls, 'Exemplo')))
+  assert.equal(db.prepare('SELECT COUNT(*) FROM pasta_grupos').pluck().get(), 1)
+})
+
+test('I-1: GET /api/pastas traz a última troca: o erro de verdade e o sucesso com avisos', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { rel } = notaComXml(ctx, 'a')
+  const post = await appComPastas(t, ctx, {})
+  assert.equal((await pedir('/api/pastas')).corpo.ultimaTroca, null)
+
+  const original = fsp.rm
+  const presa = path.join(ctx.config.pastaXmls, rel)
+  t.mock.method(fsp, 'rm', async (arquivo, ...resto) => {
+    if (String(arquivo) === presa) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+    return original(arquivo, ...resto)
+  })
+  const base = novaBase(t)
+  assert.equal((await post('/api/pastas/principal', { pasta: base })).status, 200)
+  const certa = (await pedir('/api/pastas')).corpo.ultimaTroca
+  assert.equal(certa.ok, true)
+  assert.equal(certa.tipo, 'xmls')
+  assert.ok(certa.mensagem.includes(base))
+  assert.deepEqual(certa.avisos, ['1 arquivo não saiu da pasta antiga. Pode apagá-lo depois.'])
+
+  const r = await post('/api/pastas/principal', { pasta: path.join(base, 'dentro') })
+  assert.equal(r.status, 400)
+  const errada = (await pedir('/api/pastas')).corpo.ultimaTroca
+  assert.equal(errada.ok, false)
+  assert.equal(errada.mensagem, r.corpo.erro)
+  assert.deepEqual(errada.avisos, [])
 })

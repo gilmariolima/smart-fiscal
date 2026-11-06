@@ -12,11 +12,15 @@ const { criarAgendador } = require('./scheduler')
  * @param {object} [opcoes.relogio] { depois(fn, ms), aCada(fn, ms) } → função que cancela (injetável nos testes)
  * @param {Function} [opcoes.estoque] () => motor do SPED, para onde o painel repassa /estoque
  * @param {object} [opcoes.atualizacao] { estado(), verificar() } da atualização automática do app
+ * @param {boolean} [opcoes.exigirPasta] sem pasta principal escolhida nada captura (o app passa true; terminal e testes, não)
+ * @param {Function} [opcoes.aoPularSemPasta] chamado a cada horário de captura pulado por falta de pasta
  * @returns {Promise<{ agendador, painel, parar: () => Promise<void> }>}
  */
 const BACKUP_INICIAL_MS = 60e3
 const BACKUP_INTERVALO_MS = 3600e3
 const CONFERENCIA_INICIAL_MS = 20e3
+const ORGANIZACAO_INICIAL_MS = 30e3
+const LIMITE_AO_FECHAR_MS = 30e3
 
 const relogioReal = {
   depois: (fn, ms) => {
@@ -29,12 +33,22 @@ const relogioReal = {
   },
 }
 
-async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque, atualizacao, escolherPasta } = {}) {
+async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, relogio = relogioReal, estoque, atualizacao, escolherPasta, exigirPasta = false, aoPularSemPasta } = {}) {
   const { config, logger } = ctx
   ctx.ciclo.encerrarOrfas()
-  const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, ...(cron ? { cron } : {}) })
+  // Nenhuma captura automática durante a troca de pasta; sem pasta escolhida, só quando exigirPasta.
+  const motivoPulo = () => {
+    if (ctx.pastas?.movendoAgora()) return 'A pasta está sendo trocada. Espere terminar para capturar.'
+    if (exigirPasta && !ctx.pastas?.temPasta()) return 'Escolha a pasta principal na tela Pastas antes de capturar.'
+    return null
+  }
+  const podeCapturar = () => motivoPulo() === null
+  const faltaPasta = () => !ctx.pastas?.movendoAgora() && exigirPasta && !ctx.pastas?.temPasta()
+  // Depois de cada ciclo de captura, a pasta organizada é atualizada em segundo plano.
+  if (ctx.deps && ctx.organizador) ctx.deps.aoTerminarCiclo = () => ctx.organizador.agendar()
+  const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, podeCapturar, motivoPulo, faltaPasta, ...(aoPularSemPasta ? { aoPularSemPasta } : {}), ...(cron ? { cron } : {}) })
   let painel = null
-  if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta })
+  if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirPasta })
   agendador.iniciar()
 
   // Backup: 1 min depois de ligar e a cada hora; o serviço só copia se houver pasta escolhida
@@ -45,6 +59,7 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
     cancelarBackup.push(relogio.depois(backup, BACKUP_INICIAL_MS), relogio.aCada(backup, BACKUP_INTERVALO_MS))
   }
   if (ctx.conferenciaXmls) cancelarBackup.push(relogio.depois(() => ctx.conferenciaXmls.conferir(), CONFERENCIA_INICIAL_MS))
+  if (ctx.organizador) cancelarBackup.push(relogio.depois(() => ctx.organizador.agendar({ conferirArquivos: true }), ORGANIZACAO_INICIAL_MS))
   logger.info('Servidor iniciado', {
     ambiente: config.tpAmb === '1' ? 'produção' : 'homologação',
     sefazSimulada: config.sefazMock,
@@ -52,17 +67,36 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
     painel: painel?.url || null,
   })
 
+  // Rede travada não pode prender o fechamento do app: estourou o limite, segue fechando.
+  function comLimite(espera, oQue) {
+    if (!espera) return undefined
+    return new Promise((resolve) => {
+      const cancelar = relogio.depois(() => {
+        logger.warn(`${oQue} passou de ${LIMITE_AO_FECHAR_MS / 1000} s ao fechar: seguindo sem esperar`)
+        resolve()
+      }, LIMITE_AO_FECHAR_MS)
+      const fim = () => {
+        cancelar()
+        resolve()
+      }
+      espera.then(fim, fim)
+    })
+  }
+
   let parando = null
   function parar() {
     parando ||= (async () => {
       logger.info('Encerrando o servidor')
       // Pede a parada antes de tudo; a captura pelo painel não passa pelo agendador e também precisa terminar antes de o banco fechar.
       const fimDoCiclo = ctx.ciclo.parar()
+      const fimDaTroca = ctx.pastas?.pararTroca?.()
       if (painel) await painel.fechar()
       for (const cancelar of cancelarBackup) cancelar()
       await agendador.parar()
       await fimDoCiclo
+      await comLimite(fimDaTroca, 'A troca de pasta')
       await ctx.conferenciaXmls?.parar()
+      await comLimite(ctx.organizador?.parar(), 'A organização da pasta')
       if (ctx.backup) await ctx.backup.aguardar()
       logger.info('Servidor encerrado')
     })()

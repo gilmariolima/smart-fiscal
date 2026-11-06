@@ -100,6 +100,54 @@ test('um documento com gzip quebrado não derruba o lote', async () => {
   assert.equal(r.documentos[1].xml, xml)
 })
 
+test('conexão derrubada pelo ADN: espera e tenta de novo até dar certo', async () => {
+  const derrubada = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+  const respostas = [derrubada, new Error('socket hang up'), new Error('1:error:1e000065:Cipher functions:OPENSSL_internal:BAD_DECRYPT:x'), { status: 200, corpo: '{"StatusProcessamento":"NENHUM_DOCUMENTO_LOCALIZADO"}' }]
+  const esperas = []
+  const r = await criarClienteAdn({
+    cnpj: CNPJ_MOCK_OK,
+    requisitar: async () => {
+      const proxima = respostas.shift()
+      if (proxima instanceof Error) throw proxima
+      return proxima
+    },
+    dormir: async (ms) => esperas.push(ms),
+  }).consultarLote('0')
+  assert.equal(r.ok, true)
+  assert.deepEqual(esperas, [5000, 15000, 30000])
+})
+
+test('conexão derrubada sempre: desiste depois de 3 esperas e guarda o motivo', async () => {
+  let pedidos = 0
+  const r = await criarClienteAdn({
+    cnpj: CNPJ_MOCK_OK,
+    requisitar: async () => {
+      pedidos++
+      throw Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+    },
+    dormir: async () => {},
+  }).consultarLote('0')
+  assert.equal(pedidos, 4)
+  assert.equal(r.ok, false)
+  assert.equal(r.erro, 'Sem conexão com o ADN: read ECONNRESET')
+})
+
+test('sem internet (DNS) não insiste: a próxima captura tenta de novo', async () => {
+  let pedidos = 0
+  const esperas = []
+  const r = await criarClienteAdn({
+    cnpj: CNPJ_MOCK_OK,
+    requisitar: async () => {
+      pedidos++
+      throw Object.assign(new Error('getaddrinfo ENOTFOUND adn.nfse.gov.br'), { code: 'ENOTFOUND' })
+    },
+    dormir: async (ms) => esperas.push(ms),
+  }).consultarLote('0')
+  assert.equal(pedidos, 1)
+  assert.deepEqual(esperas, [])
+  assert.match(r.erro, /Sem conexão com o ADN: getaddrinfo ENOTFOUND/)
+})
+
 test('429: espera e tenta de novo até dar certo', async () => {
   const respostas = [{ status: 429, corpo: '' }, { status: 429, corpo: '' }, { status: 200, corpo: '{"StatusProcessamento":"NENHUM_DOCUMENTO_LOCALIZADO"}' }]
   const esperas = []

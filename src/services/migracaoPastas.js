@@ -10,7 +10,9 @@
 // <Tipo>/<Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Direção>/...
 // Terceira mudança (migrarLayoutEmpresaPrimeiro): para <Cliente>/[fora-da-carteira/]<Tipo>/AAAA/<Mês>/<Direção>/...,
 // Quarta mudança (migrarLayoutAnoMes): para <Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Tipo>/<Direção>/...,
-// a mesma ordem das telas e da exportação. Quem vem de antes passa por todas, em sequência.
+// a mesma ordem das telas e da exportação.
+// Quinta mudança (migrarLayoutPastaXml): para <Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Tipo>/XML/<Direção>/...,
+// deixando o lado do PDF. Quem vem de antes passa por todas, em sequência.
 
 const fs = require('node:fs')
 const path = require('node:path')
@@ -20,6 +22,7 @@ const VERSAO = '2'
 const VERSAO_LAYOUT = '3'
 const VERSAO_EMPRESA = '4'
 const VERSAO_ANO_MES = '5'
+const VERSAO_XML = '6'
 const PASTA_CLIENTE = /^(\d{14})(_.*)?$/
 const PASTA_MES = /^(\d{4}-\d{2}|sem-data)$/
 const ARQUIVO = /^(\d+)-(nfe|resumo|evento-\d+-\d+)\.xml$/
@@ -33,6 +36,11 @@ const CAMINHO_V3 = new RegExp(`^([^/]+)/(?:(fora-da-carteira)/)?((?:\\d{4}/(?:${
 const QUANDO = `(?:\\d{4}/(?:${MESES.join('|')})|sem-data)`
 const CAMINHO_V4 = new RegExp(`^(?:(fora-da-carteira)/)?(NF-e|NFS-e|CT-e)/(${QUANDO})/((?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+)$`)
 const CAMINHO_V5 = new RegExp(`^(?:fora-da-carteira/)?${QUANDO}/(?:NF-e|NFS-e|CT-e)/(?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+$`)
+// Versão 6: o mesmo com XML/ entre o tipo e a direção.
+const CAMINHO_V6 = new RegExp(`^(?:fora-da-carteira/)?${QUANDO}/(?:NF-e|NFS-e|CT-e)/XML/(?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+$`)
+// O que a pasta organizada gera ao lado do XML (em nova tentativa da migração): não é arquivo fora do padrão.
+const GERADO_NO_GRUPO = new RegExp(`^(?:fora-da-carteira/)?${QUANDO}/(?:NF-e|NFS-e|CT-e)/(?:PDF/.+|[^/]+\\.(?:xlsx|pdf|zip|tmp))$`, 'i')
+const CAMINHO_V5_PARTES = new RegExp(`^(?:(fora-da-carteira)/)?(${QUANDO})/(NF-e|NFS-e|CT-e)/((?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+)$`)
 
 const mesmoConteudo = (a, b) => fs.readFileSync(a).equals(fs.readFileSync(b))
 const barras = (rel) => rel.replace(/\\/g, '/')
@@ -192,7 +200,7 @@ function removerSeVazia(pasta) {
 function migrarLayoutDasTelas({ db, pastaXmls, logger, fsOps = {} }) {
   const resultado = { movidos: 0, ignorados: [], pendentes: [] }
   const lerVersao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'")
-  if ([VERSAO_LAYOUT, VERSAO_EMPRESA, VERSAO_ANO_MES].includes(lerVersao.get()?.valor)) return resultado
+  if ([VERSAO_LAYOUT, VERSAO_EMPRESA, VERSAO_ANO_MES, VERSAO_XML].includes(lerVersao.get()?.valor)) return resultado
   try {
     executarLayout({ db, pastaXmls, logger, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
   } catch (e) {
@@ -340,7 +348,7 @@ function executarAnoMes({ db, pastaXmls, logger, ops, resultado }) {
       const dentro = barras(path.relative(pastaCliente, antigo))
       const m = CAMINHO_V4.exec(dentro)
       if (!m) {
-        if (!CAMINHO_V5.test(dentro)) resultado.ignorados.push(antigo)
+        if (!CAMINHO_V5.test(dentro) && !CAMINHO_V6.test(dentro) && !GERADO_NO_GRUPO.test(dentro)) resultado.ignorados.push(antigo)
         continue
       }
       const [, fora, tipo, quando, resto] = m
@@ -358,6 +366,59 @@ function executarAnoMes({ db, pastaXmls, logger, ops, resultado }) {
   if (resultado.movidos) logger.info('XMLs organizados por ano e mês', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
 }
 
+/**
+ * Leva os XMLs para <Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Tipo>/XML/... Só roda depois da mudança anterior terminar.
+ * Quem já está no formato novo fica como está (notas gravadas enquanto um arquivo travado segura a mudança).
+ * @returns {{ movidos: number, ignorados: string[], pendentes: string[], erro?: string }}
+ */
+function migrarLayoutPastaXml({ db, pastaXmls, logger, fsOps = {} }) {
+  const resultado = { movidos: 0, ignorados: [], pendentes: [] }
+  if (db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get()?.valor !== VERSAO_ANO_MES) return resultado
+  try {
+    executarPastaXml({ db, pastaXmls, logger, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
+  } catch (e) {
+    resultado.erro = e.message
+    logger.error('Falha ao separar os XMLs em pasta própria; tenta de novo na próxima abertura', { erro: e.message })
+  }
+  return resultado
+}
+
+function executarPastaXml({ db, pastaXmls, logger, ops, resultado }) {
+  const gravarVersao = () => db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_XML)
+  if (!fs.existsSync(pastaXmls)) {
+    pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
+    return
+  }
+
+  const movimentos = []
+  const percorrer = (pastaCliente, relativa) => {
+    for (const nome of ops.readdirSync(path.join(pastaXmls, relativa))) {
+      const antigo = path.join(relativa, nome)
+      if (fs.statSync(path.join(pastaXmls, antigo)).isDirectory()) {
+        percorrer(pastaCliente, antigo)
+        continue
+      }
+      const dentro = barras(path.relative(pastaCliente, antigo))
+      const m = CAMINHO_V5_PARTES.exec(dentro)
+      if (!m) {
+        if (!CAMINHO_V6.test(dentro) && !GERADO_NO_GRUPO.test(dentro)) resultado.ignorados.push(antigo)
+        continue
+      }
+      const [, fora, quando, tipo, resto] = m
+      movimentos.push({ antigo, novo: path.join(pastaCliente, ...(fora ? [fora] : []), quando, tipo, PASTAS.xml, resto) })
+    }
+  }
+  const clientes = ops.readdirSync(pastaXmls).filter((c) => fs.statSync(path.join(pastaXmls, c)).isDirectory())
+  for (const c of clientes) percorrer(c, c)
+
+  aplicarMovimentos({ db, pastaXmls, logger, ops, resultado, movimentos })
+  for (const c of clientes) removerVaziasDentro(path.join(pastaXmls, c))
+
+  if (resultado.ignorados.length) logger.warn('Arquivos fora do padrão ficaram na pasta antiga', { arquivos: resultado.ignorados })
+  if (!resultado.pendentes.length) gravarVersao()
+  if (resultado.movidos) logger.info('XMLs separados em pasta própria', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
+}
+
 // Apaga as subpastas que ficaram vazias, de baixo para cima, e a própria pasta se esvaziar.
 function removerVaziasDentro(pasta) {
   try {
@@ -370,4 +431,20 @@ function removerVaziasDentro(pasta) {
   removerSeVazia(pasta)
 }
 
-module.exports = { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes }
+/**
+ * Todas as mudanças, em ordem; quem já está na versão de uma delas passa direto. Só uma tentativa: o que faltar fica para a próxima.
+ * @returns {{ movidos: number, pendentes: number, ignorados: number, erros: string[] }}
+ */
+function migrarLayouts({ db, pastaXmls, logger, fsOps = {} }) {
+  const total = { movidos: 0, pendentes: 0, ignorados: 0, erros: [] }
+  for (const migrar of [migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml]) {
+    const r = migrar({ db, pastaXmls, logger, fsOps })
+    total.movidos += r.movidos
+    total.pendentes += r.pendentes.length
+    total.ignorados += r.ignorados.length
+    if (r.erro) total.erros.push(r.erro)
+  }
+  return total
+}
+
+module.exports = { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml, migrarLayouts, VERSAO_XML }

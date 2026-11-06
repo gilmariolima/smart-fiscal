@@ -57,8 +57,9 @@ function iguaisSemVazarTempo(a, b) {
  * @param {object} deps.agendador  criarAgendador(...)
  * @param {Function} [deps.ehLocal] (req) => o pedido veio do próprio computador (troca nos testes)
  * @param {Function} [deps.estoque] () => motor do SPED ({ porta, token } ou { erro }), para onde vai /estoque
+ * @param {boolean} [deps.exigirPasta] sem pasta principal escolhida a captura é recusada (o app passa true)
  */
-function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal = (req) => ENDERECOS_LOCAIS.has(req.socket.remoteAddress), pastaPainel = path.join(__dirname, 'dist') }) {
+function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirPasta = false, ehLocal = (req) => ENDERECOS_LOCAIS.has(req.socket.remoteAddress), pastaPainel = path.join(__dirname, 'dist') }) {
   const { db, config, logger } = ctx
   const app = express()
   app.disable('x-powered-by')
@@ -189,7 +190,12 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
   // Quem a captura do painel está processando e quem espera (para o painel mostrar o andamento).
   const andamento = { atual: null, fila: [] }
   function capturaOcupada() {
-    return !!(capturaManual || agendador.estado().rodandoAgora || ctx.ciclo.cicloEmAndamento())
+    return !!(capturaManual || agendador.estado().rodandoAgora || ctx.ciclo.cicloEmAndamento() || ctx.pastas.movendoAgora())
+  }
+
+  const pastaPendente = () => exigirPasta && !ctx.pastas.temPasta()
+  function exigirPastaEscolhida() {
+    if (pastaPendente()) throw new ErroHttp(409, 'Escolha a pasta principal na tela Pastas antes de capturar.')
   }
 
   app.get('/api/resumo', (req, res) => {
@@ -203,6 +209,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
       agendador: agendador.estado(),
       ultimaCaptura: sql.ultimaCaptura.get()?.fim ?? null,
       capturaEmAndamento: capturaOcupada(),
+      pastaPendente: pastaPendente(),
       capturaProgresso: ctx.ciclo.progresso(),
       limites: { consultasChavePorCiclo: config.maxConsultasChavePorCiclo, tentativasDownload: config.maxTentativasDownload },
     })
@@ -567,6 +574,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
       if (!cliente.cert_arquivo) throw new ErroHttp(400, `Cliente ${cnpj} está sem certificado: cadastre o A1 para capturar.`)
       if (cliente.papel === 'escritorio' && !cliente.tambem_cliente) throw new ErroHttp(400, 'O escritório é capturado sempre junto; não o marque na lista.')
     }
+    exigirPastaEscolhida()
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
     const escritorio = ctx.clientes.obterEscritorio()
     const marcados = new Set(cnpjs)
@@ -600,6 +608,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
     const alvo = cnpj ? sql.clientePorCnpj.get(cnpj) : null
     if (cnpj && !alvo) throw new ErroHttp(404, 'Cliente não cadastrado.')
     if (alvo && !alvo.cert_arquivo) throw new ErroHttp(400, 'Cliente sem certificado: cadastre o A1 para capturar.')
+    exigirPastaEscolhida()
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
     const execucao = cnpj ? ctx.ciclo.executarCiclo({ cnpj }) : agendador.executarAgora('painel')
     capturaManual = Promise.resolve(execucao)
@@ -780,18 +789,29 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
     res.json(recibo(r))
   })
 
-  app.post('/api/clientes/:cnpj/editar', (req, res) => {
+  app.post('/api/clientes/:cnpj/editar', async (req, res) => {
     exigirLocal(req)
     if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para editar o cliente.')
     const b = req.body || {}
-    const r = comoErroHttp(() => ctx.clientes.editar(req.params.cnpj, { cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), apelido: String(b.apelido || '') }))
+    // A geração pausa entre arquivos enquanto a pasta da empresa é movida; a captura pode ter começado na espera.
+    const r = await ctx.organizador.pausarDurante(() => {
+      if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para editar o cliente.')
+      return comoErroHttp(() => ctx.clientes.editar(req.params.cnpj, { cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), apelido: String(b.apelido || '') }))
+    })
     res.json({ ok: true, cnpj: r.cliente.cnpj, avisos: r.avisos, mensagem: 'Dados do cliente salvos.' })
   })
 
-  app.post('/api/clientes/:cnpj/excluir', (req, res) => {
+  app.post('/api/clientes/:cnpj/excluir', async (req, res) => {
     exigirLocal(req)
     if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para excluir o cliente.')
-    const r = comoErroHttp(() => ctx.clientes.excluir(req.params.cnpj))
+    const r = await ctx.organizador.pausarDurante(() => {
+      if (capturaOcupada()) throw new ErroHttp(409, 'Há uma captura em andamento. Aguarde terminar para excluir o cliente.')
+      return comoErroHttp(() => {
+        const excluido = ctx.clientes.excluir(req.params.cnpj)
+        ctx.organizador.removerCliente(excluido.cliente.id)
+        return excluido
+      })
+    })
     res.json({ ok: true, notas: r.notas, mensagem: `${r.cliente.apelido || r.cliente.razao_social} excluído.` })
   })
 
@@ -902,21 +922,41 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
   // ---------- pastas dos XMLs e das exportações ----------
 
   app.get('/api/pastas', (req, res) => {
-    res.json(ctx.pastas.estado())
+    res.json({ ...ctx.pastas.estado(), organizacao: ctx.organizador.estado() })
   })
+
+  // Dentro da pausa da geração: refaz a checagem da captura e, depois da troca, confere os arquivos da pasta nova
+  // (sem a marca do Smart Fiscal só os XMLs são levados, e o banco ainda diz que PDFs, relatórios e ZIPs estão prontos).
+  async function trocarPastaXmls(trocar, nome) {
+    recusarDurante(nome)
+    try {
+      return await trocar()
+    } finally {
+      ctx.organizador.agendar({ conferirArquivos: true })
+    }
+  }
+
+  function recusarDurante(nome) {
+    if (ctx.pastas.movendoAgora()) throw new ErroHttp(409, 'A pasta já está sendo trocada.')
+    if (capturaOcupada()) throw new ErroHttp(409, `Espere a captura terminar para mudar a pasta ${nome}.`)
+  }
+
+  const comAvisos = (mensagem, r) => [mensagem, ...(r.avisos || [])].join(' ')
 
   app.post('/api/pastas', async (req, res) => {
     exigirLocal(req)
     const tipo = String(req.body?.tipo || '')
-    if (tipo === 'xmls' && capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para mudar a pasta dos XMLs.')
+    if (tipo === 'xmls') recusarDurante('dos XMLs')
     let r
     try {
-      r = await ctx.pastas.mudar(tipo, req.body?.pasta)
+      // A pasta dos XMLs é a da geração: ela pausa durante a cópia e retoma depois.
+      r = tipo === 'xmls' ? await ctx.organizador.pausarDurante(() => trocarPastaXmls(() => ctx.pastas.mudar(tipo, req.body?.pasta), 'dos XMLs')) : await ctx.pastas.mudar(tipo, req.body?.pasta)
     } catch (e) {
+      if (e instanceof ErroHttp) throw e
       throw new ErroHttp(400, e.message)
     }
     const mensagem = !r.mudou ? 'A pasta continua a mesma.' : r.movidos ? `Pasta trocada: ${r.movidos.toLocaleString('pt-BR')} arquivo(s) levado(s) para ${r.pasta}.` : `Pasta trocada para ${r.pasta}.`
-    res.json({ ok: true, mensagem, estado: ctx.pastas.estado() })
+    res.json({ ok: true, mensagem: comAvisos(mensagem, r), estado: ctx.pastas.estado() })
   })
 
   // A janela de pastas do Windows só existe no app instalado; fora dele a tela mostra um campo de texto.
@@ -928,53 +968,38 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
 
   const plural = (n, um, varios) => `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`
 
-  // Leva os arquivos do SPED: quem cuida deles é o motor em Python.
-  async function levarSped(pastaSped) {
-    const motor = estoque?.()
-    if (!motor?.porta) return { erro: `O motor do SPED não está ligado (${motor?.erro || 'sem motor'}).` }
-    try {
-      const r = await fetch(`http://127.0.0.1:${motor.porta}/api/pasta`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Estoque-Token': motor.token },
-        body: JSON.stringify({ pasta_saida: pastaSped, levar: true }),
-      })
-      const corpo = await r.json()
-      return corpo.erro ? { erro: corpo.erro } : { movidos: corpo.movidos || 0 }
-    } catch (e) {
-      logger.error('Motor do SPED não respondeu ao levar os arquivos', { erro: e.message })
-      return { erro: 'O motor do SPED não respondeu.' }
-    }
-  }
-
   app.post('/api/pastas/principal', async (req, res) => {
     exigirLocal(req)
-    if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para mudar a pasta principal.')
+    recusarDurante('principal')
     let r
     try {
-      r = await ctx.pastas.mudarPrincipal(req.body?.pasta)
+      r = await ctx.organizador.pausarDurante(() => trocarPastaXmls(() => ctx.pastas.mudarPrincipal(req.body?.pasta), 'principal'))
     } catch (e) {
+      if (e instanceof ErroHttp) throw e
       throw new ErroHttp(400, e.message)
     }
-    // As notas já foram: se o SPED falhar, elas ficam na pasta nova e escolher de novo tenta só o que faltou.
-    const sped = await levarSped(r.pastaSped)
-    if (!sped.erro) await ctx.pastas.limparPrincipalAntiga(r.anterior)
-    const partes = [plural(r.movidos, 'XML', 'XMLs')]
-    if (!sped.erro) partes.push(plural(sped.movidos, 'arquivo do SPED', 'arquivos do SPED'))
-    const lugar = r.raiz ? `Pasta principal: ${r.raiz}.` : 'Voltou para a pasta padrão.'
     res.json({
       ok: true,
-      mensagem: `${lugar} ${partes.join(' e ')} ${r.movidos + (sped.movidos || 0) === 1 ? 'levado' : 'levados'}.`,
-      ...(sped.erro ? { erroSped: `As notas foram, mas os arquivos do SPED não: ${sped.erro} Escolha a pasta de novo para tentar outra vez.` } : {}),
+      mensagem: r.interrompida ? `A troca foi interrompida. Nada mudou: continua em ${r.raiz}.` : comAvisos(`Pasta principal: ${r.raiz}. ${plural(r.movidos, 'arquivo levado', 'arquivos levados')}.`, r),
       estado: ctx.pastas.estado(),
     })
   })
 
-  app.post('/api/pastas/abrir', (req, res) => {
+  app.post('/api/pastas/abrir', async (req, res) => {
     exigirLocal(req)
     const estado = ctx.pastas.estado()
     const pasta = req.body?.tipo === 'principal' ? estado.principal || estado.pastas.find((p) => p.tipo === 'xmls').pasta : estado.pastas.find((p) => p.tipo === req.body?.tipo)?.pasta
     if (!pasta) throw new ErroHttp(404, 'Pasta desconhecida.')
-    fs.mkdirSync(pasta, { recursive: true })
+    // A pasta de exportações padrão só nasce na primeira exportação; a escolhida não pode ser recriada se a rede caiu.
+    const padraoLocal = estado.pastas.some((p) => p.tipo === 'exports' && p.ehPadrao && p.pasta === pasta)
+    if (padraoLocal) fs.mkdirSync(pasta, { recursive: true })
+    else {
+      const existe = await fs.promises.stat(pasta).then(
+        (s) => s.isDirectory(),
+        () => false,
+      )
+      if (!existe) throw new ErroHttp(409, `A pasta ${pasta} não está acessível. Confira se o disco ou a rede estão conectados.`)
+    }
     abrirNoExplorador(pasta)
     res.json({ ok: true })
   })
@@ -1004,9 +1029,9 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, ehLocal
 }
 
 /** Sobe o painel em PAINEL_HOST:PAINEL_PORTA. */
-function iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta }) {
+function iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirPasta }) {
   const { config, logger } = ctx
-  const app = criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta })
+  const app = criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirPasta })
   return new Promise((resolve, reject) => {
     const servidor = app.listen(config.painelPorta, config.painelHost)
     servidor.once('error', (e) => {

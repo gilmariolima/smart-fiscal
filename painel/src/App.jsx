@@ -1,4 +1,5 @@
-import { createHashRouter, Navigate, Outlet, RouterProvider } from 'react-router'
+import { useEffect } from 'react'
+import { createHashRouter, Navigate, Outlet, RouterProvider, useNavigate } from 'react-router'
 import FaixaErro from './componentes/FaixaErro.jsx'
 import MenuLateral from './layout/MenuLateral.jsx'
 import { ResumoProvider, useResumo } from './layout/ResumoProvider.jsx'
@@ -38,8 +39,17 @@ function FaixaAmbiente() {
   )
 }
 
+// Só na primeira vez em que o resumo chega sem pasta: leva à tela Pastas e depois deixa navegar.
+let levouParaPastas = false
+
 function Estrutura() {
-  const { erro } = useResumo()
+  const { resumo, erro } = useResumo()
+  const navegar = useNavigate()
+  useEffect(() => {
+    if (levouParaPastas || !resumo?.pastaPendente) return
+    levouParaPastas = true
+    navegar('/pastas', { replace: true })
+  }, [resumo, navegar])
   return (
     <div className="estrutura">
       <FaixaAmbiente />

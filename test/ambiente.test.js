@@ -59,8 +59,13 @@ test('passar para produção zera a fila, apaga notas, eventos e XMLs de teste e
   const config = { ...deps.config, ...PRODUCAO }
   assert.deepEqual(previaProducao(db), { ambienteBanco: 'homologacao', clientes: 1, notas: 2, eventos: 1 })
 
+  const cliente = db.prepare('SELECT id FROM clientes').pluck().get()
+  db.prepare("INSERT INTO pasta_grupos (cliente_id, competencia, modelo, assinatura, eventos, gerado_em) VALUES (?, '2026-10', 'nfe', 'x', 0, 'y')").run(cliente)
+  db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?)').run(`pasta_pendente:${cliente}`, 'Antiga')
   const r = passarParaProducao({ db, config, logger: silencioso })
+  assert.equal(db.prepare("SELECT COUNT(*) FROM sistema WHERE chave LIKE 'pasta_pendente:%'").pluck().get(), 0)
   assert.deepEqual(r, { clientes: 1, notas: 2, eventos: 1, xmls: 1 })
+  assert.equal(db.prepare('SELECT COUNT(*) FROM pasta_grupos').pluck().get(), 0, 'M12: as notas de teste não contam mais como geradas')
   assert.equal(fs.existsSync(arquivoXml), false)
   const c = db.prepare('SELECT * FROM clientes').get()
   assert.equal(c.ult_nsu, '000000000000000')

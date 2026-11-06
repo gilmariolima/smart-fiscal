@@ -5,9 +5,14 @@ const path = require('node:path')
 const { criptografar } = require('../crypto')
 const { lerCertificado, diasParaVencer } = require('../certificado')
 const { dadosUf } = require('../sefaz/uf')
-const { pastaDoClienteNoDisco } = require('./armazenamento')
+const { pastaDoClienteNoDisco, pastasDoClienteNoBanco, chavePastaPendente, pastasPendentesDoCliente } = require('./armazenamento')
+const { VERSAO_XML } = require('./migracaoPastas')
+const { nomearSemSobrescreverSync } = require('./copiaDePastas')
 
 const DIAS_ALERTA_CERT = 30
+const ARQUIVOS_NA_MENSAGEM = 3
+// Erros de arquivo aberto no Windows: só neles faz sentido pedir para fechar.
+const TRAVAMENTO = new Set(['EBUSY', 'EPERM', 'EACCES'])
 
 // Colunas seguras para exibir: nunca inclui cert_senha_enc.
 const COLUNAS_PUBLICAS = `id, cnpj, razao_social, apelido, uf, cert_arquivo, cert_validade, ativo, papel, ult_nsu, max_nsu,
@@ -38,6 +43,40 @@ function cnpjValido(cnpj) {
   }
   const d1 = dv(c.slice(0, 12))
   return d1 === Number(c[12]) && dv(c.slice(0, 12) + d1) === Number(c[13])
+}
+
+const barraNormal = (caminho) => caminho.replace(/\\/g, '/')
+
+function listaDeNomes(nomes) {
+  const resto = nomes.length - ARQUIVOS_NA_MENSAGEM
+  return `"${nomes.slice(0, ARQUIVOS_NA_MENSAGEM).join('", "')}"${resto > 0 ? ` e mais ${resto}` : ''}`
+}
+
+function mesmoConteudo(a, b) {
+  return fs.statSync(a).size === fs.statSync(b).size && fs.readFileSync(a).equals(fs.readFileSync(b))
+}
+
+// XML em qualquer pasta XML\ da empresa: é o que prende o grupo. Relatório, ZIP e PDF são refeitos.
+const ehXmlGuardado = (rel) => /(^|\/)xml\/.+\.xml$/i.test(barraNormal(rel))
+
+/** Tudo dentro da pasta; pasta que não existe não tem nada. Outro erro de leitura lança. */
+function arvoreDe(pasta) {
+  try {
+    return fs.readdirSync(pasta, { recursive: true, withFileTypes: true })
+  } catch (e) {
+    if (e.code === 'ENOENT') return []
+    throw e
+  }
+}
+
+/** Dois nomes do mesmo arquivo físico: o conteúdo já está no destino. Sem `ino`, sem o par ou com conteúdo diferente, não dá para afirmar. */
+function mesmoArquivoFisico(a, b) {
+  try {
+    const [inoA, inoB] = [a, b].map((c) => fs.statSync(c, { bigint: true }).ino)
+    return Boolean(inoA) && inoA === inoB && mesmoConteudo(a, b)
+  } catch {
+    return false
+  }
 }
 
 function criarServicoClientes({ db, config, logger, agora = () => new Date() }) {
@@ -71,8 +110,14 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
       AND chave NOT IN (SELECT chave FROM notas WHERE cliente_id <> @id)`),
     caminhosNotas: db.prepare('SELECT id, caminho_xml FROM notas WHERE caminho_xml IS NOT NULL'),
     caminhosEventos: db.prepare('SELECT id, caminho_xml FROM eventos WHERE caminho_xml IS NOT NULL'),
+    caminhosDeOutros: db.prepare(`SELECT caminho_xml FROM notas WHERE cliente_id <> @id AND caminho_xml IS NOT NULL
+      UNION SELECT e.caminho_xml FROM eventos e JOIN notas n ON n.chave = e.chave WHERE n.cliente_id <> @id AND e.caminho_xml IS NOT NULL`).pluck(),
     caminhoNota: db.prepare('UPDATE notas SET caminho_xml = ? WHERE id = ?'),
     caminhoEvento: db.prepare('UPDATE eventos SET caminho_xml = ? WHERE id = ?'),
+    outroNaPasta: db.prepare("SELECT 1 FROM notas WHERE cliente_id <> ? AND lower(substr(replace(caminho_xml, char(92), '/'), 1, ?)) = lower(?) LIMIT 1"),
+    layout: db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").pluck(),
+    gravarSistema: db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor'),
+    apagarSistema: db.prepare('DELETE FROM sistema WHERE chave = ?'),
   }
 
   /** Abre o .pfx e confere senha, validade e raiz do CNPJ. Lança Error com a mensagem para o usuário. */
@@ -206,6 +251,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     if (!atual) throw new Error('Escritório não cadastrado.')
     if (sql.notasDe.get(atual.id).n) throw new Error('O escritório tem notas no próprio nome; não dá para excluir.')
     db.transaction(() => {
+      sql.apagarSistema.run(chavePastaPendente(atual.id))
       sql.apagarExecucoes.run(atual.id)
       sql.apagar.run(atual.id)
     })()
@@ -216,15 +262,15 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   // O nome da pasta vem do nome do cliente. Banco primeiro, depois a pasta; se ela não mudar (aberta no Windows, por exemplo),
   // o banco volta e os XMLs continuam acessíveis onde estão.
-  function moverPastaDoCliente(antiga, nova) {
+  function moverPastaDoCliente(antiga, nova, aoFalhar = () => {}) {
     if (antiga === nova) return null
     const origem = path.join(config.pastaXmls, antiga)
     const destino = path.join(config.pastaXmls, nova)
     if (!fs.existsSync(origem)) return null
     const aviso = `Os XMLs antigos continuam na pasta "${antiga}"; os novos vão para "${nova}".`
     if (antiga.toLowerCase() !== nova.toLowerCase() && fs.existsSync(destino)) return aviso
-    const prefixo = antiga + path.sep
-    const dentro = (r) => r.caminho_xml.startsWith(prefixo)
+    const prefixo = `${antiga}/`
+    const dentro = (r) => r.caminho_xml.replace(/\\/g, '/').startsWith(prefixo)
     const notas = sql.caminhosNotas.all().filter(dentro)
     const eventos = sql.caminhosEventos.all().filter(dentro)
     const apontar = db.transaction((de, para) => {
@@ -241,8 +287,239 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
         for (const r of eventos) sql.caminhoEvento.run(r.caminho_xml, r.id)
       })()
       logger.warn('Pasta do cliente não renomeada', { erro: e.message })
+      aoFalhar(e)
       return aviso
     }
+  }
+
+  // Notas e eventos dentro da pasta, por caminho relativo a ela (com /, em minúsculas).
+  function linhasDaPasta(pasta) {
+    const prefixo = `${pasta}/`.toLowerCase()
+    const porArquivo = new Map()
+    const juntar = (linhas, atualizar) => {
+      for (const { id, caminho_xml: caminho } of linhas) {
+        const normal = barraNormal(caminho).toLowerCase()
+        if (!normal.startsWith(prefixo)) continue
+        const chave = normal.slice(prefixo.length)
+        if (!porArquivo.has(chave)) porArquivo.set(chave, [])
+        porArquivo.get(chave).push({ id, caminho, atualizar })
+      }
+    }
+    juntar(sql.caminhosNotas.all(), sql.caminhoNota)
+    juntar(sql.caminhosEventos.all(), sql.caminhoEvento)
+    return porArquivo
+  }
+
+  /**
+   * Leva arquivo a arquivo o que está em `antiga` para `nova`, sem sobrescrever, com o banco acompanhando cada arquivo.
+   * O que não sair agora (aberto, conteúdo diferente) fica onde está, e o banco dele também.
+   * XML que continuar em `antiga`, com ou sem linha no banco, fica em `pasta_pendente:<cliente_id>` e prende os grupos do cliente.
+   * Arquivo gerado (relatório, ZIP, PDF) só sai depois de comparado e, se não sair, fica lá sem prender nada.
+   * @returns {string[]} problemas para o grupo rejeitar
+   */
+  function juntarPastas(clienteId, antiga, nova) {
+    const origem = path.join(config.pastaXmls, antiga)
+    const destino = path.join(config.pastaXmls, nova)
+    const porArquivo = linhasDaPasta(antiga)
+    const apontar = db.transaction((linhas) => {
+      for (const l of linhas) l.atualizar.run(nova + l.caminho.slice(antiga.length), l.id)
+    })
+    let itens
+    try {
+      itens = arvoreDe(origem)
+    } catch (e) {
+      marcarPendente(clienteId, antiga, true)
+      return [semLerAPasta(antiga, nova, e)]
+    }
+    const conflitos = []
+    const semIdentidade = []
+    const motivos = new Map()
+    const naoApagados = []
+
+    for (const item of itens) {
+      if (!item.isFile() || item.name.toLowerCase().endsWith('.tmp')) continue
+      const de = path.join(item.parentPath, item.name)
+      const rel = path.relative(origem, de)
+      const para = path.join(destino, rel)
+      const chave = barraNormal(rel).toLowerCase()
+      const linhas = porArquivo.get(chave) || []
+      porArquivo.delete(chave)
+      try {
+        fs.mkdirSync(path.dirname(para), { recursive: true })
+        const nomeNovo = nomearSemSobrescreverSync(de, para)
+        if (!nomeNovo) {
+          const [inoDe, inoPara] = [de, para].map((a) => fs.statSync(a, { bigint: true }).ino)
+          if (inoDe && inoDe === inoPara && mesmoConteudo(de, para)) {
+            // Dois nomes do mesmo arquivo, talvez a mesma pasta por junction: nenhum sai.
+            // O conteúdo também é comparado: há disco que repete o ino para arquivos diferentes.
+            apontar(linhas)
+            continue
+          }
+          if (!mesmoConteudo(de, para)) {
+            if (linhas.length || ehXmlGuardado(rel)) conflitos.push(rel)
+            else logger.warn('Arquivo mantido na pasta antiga da empresa: conteúdo diferente na nova', { antiga, nova, arquivo: rel })
+            continue
+          }
+          if (!inoDe || !inoPara) {
+            apontar(linhas)
+            if (linhas.length || ehXmlGuardado(rel)) semIdentidade.push(rel)
+            else logger.warn('Arquivo mantido nas duas pastas da empresa: o disco não informa a identidade dele', { antiga, nova, arquivo: rel })
+            continue
+          }
+        }
+        // O arquivo já está no destino: daqui em diante, falhar só deixa a sobra na origem.
+        apontar(linhas)
+        try {
+          fs.unlinkSync(de)
+        } catch (e) {
+          motivos.set(rel, e.code)
+          naoApagados.push(rel)
+        }
+      } catch (e) {
+        motivos.set(rel, e.code)
+        logger.warn('Arquivo não saiu da pasta antiga da empresa', { arquivo: de, erro: e.code || e.message })
+      }
+    }
+    if (naoApagados.length) logger.warn('Arquivos não apagados da pasta antiga da empresa: já estão na nova', { antiga, nova, arquivos: naoApagados.length, erro: motivos.get(naoApagados[0]) })
+
+    // Quem sobrou no banco sem arquivo na origem: vale o destino, se o arquivo está lá.
+    const perdidos = []
+    for (const linhas of porArquivo.values()) {
+      const rel = barraNormal(linhas[0].caminho).slice(antiga.length + 1)
+      if (fs.existsSync(path.join(origem, rel))) continue
+      if (fs.existsSync(path.join(destino, rel))) apontar(linhas)
+      else perdidos.push(rel)
+    }
+
+    const pastas = itens.filter((i) => i.isDirectory()).map((i) => path.join(i.parentPath, i.name))
+    for (const d of [...pastas.sort((a, b) => b.length - a.length), origem]) {
+      try {
+        fs.rmdirSync(d)
+      } catch {} // pasta com arquivos ou que já não existe fica como está
+    }
+
+    const inicio = `A pasta da empresa está como "${antiga}" e deveria ser "${nova}".`
+    const problemas = []
+    if (conflitos.length) problemas.push(`${inicio} Estão nas duas com conteúdo diferente, e os dois foram mantidos: ${listaDeNomes(conflitos)}.`)
+    if (semIdentidade.length) problemas.push(`${inicio} O disco não informa a identidade destes arquivos e não dá para garantir que são duas pastas de verdade, então os dois lados foram mantidos: ${listaDeNomes(semIdentidade)}.`)
+    if (perdidos.length) problemas.push(`${inicio} Não estão em nenhuma das duas: ${listaDeNomes(perdidos)}.`)
+    problemas.push(...conferirSobra(clienteId, antiga, nova, { jaDitos: [...conflitos, ...semIdentidade], motivoDe: (rel) => motivos.get(rel) }))
+    return problemas
+  }
+
+  function marcarPendente(clienteId, pasta, resta) {
+    const lista = pastasPendentesDoCliente(db, clienteId).filter((p) => p.toLowerCase() !== pasta.toLowerCase())
+    if (resta) lista.push(pasta)
+    if (lista.length) sql.gravarSistema.run(chavePastaPendente(clienteId), lista.join('\n'))
+    else sql.apagarSistema.run(chavePastaPendente(clienteId))
+  }
+
+  const semLerAPasta = (antiga, nova, e) => `A pasta da empresa está como "${antiga}" e deveria ser "${nova}". Não consegui ler a pasta antiga (${e.code || e.message}); o Smart Fiscal tenta de novo na próxima captura.`
+
+  /**
+   * Grava ou remove a pendência conforme o XML que restou na pasta antiga.
+   * XML com par de mesmo `ino` no destino não conta: o conteúdo já está lá, e nenhum dos dois nomes é apagado.
+   * @param {object} [opcoes]
+   * @param {string[]} [opcoes.jaDitos] arquivos que outro problema já cita
+   * @param {(rel: string) => string|undefined} [opcoes.motivoDe] código do erro que impediu o arquivo de sair
+   * @returns {string[]} problemas para o grupo rejeitar
+   */
+  function conferirSobra(clienteId, antiga, nova, { jaDitos = [], motivoDe = () => undefined } = {}) {
+    const origem = path.join(config.pastaXmls, antiga)
+    const destino = path.join(config.pastaXmls, nova)
+    let xmls
+    try {
+      xmls = xmlsDe(antiga)
+    } catch (e) {
+      marcarPendente(clienteId, antiga, true)
+      return [semLerAPasta(antiga, nova, e)]
+    }
+    const restam = xmls.filter((rel) => !mesmoArquivoFisico(path.join(origem, rel), path.join(destino, rel)))
+    if (restam.length < xmls.length) logger.warn('Arquivos mantidos nas duas pastas da empresa: são o mesmo arquivo', { antiga, nova, arquivos: xmls.length - restam.length })
+    marcarPendente(clienteId, antiga, restam.length > 0)
+    const inicio = `A pasta da empresa está como "${antiga}" e deveria ser "${nova}".`
+    const porMotivo = Map.groupBy(restam.filter((rel) => !jaDitos.includes(rel)), motivoDe)
+    const travados = [...porMotivo].filter(([motivo]) => TRAVAMENTO.has(motivo)).flatMap(([, nomes]) => nomes)
+    const problemas = []
+    if (travados.length) problemas.push(`${inicio} Feche os arquivos abertos dessa pasta; o Smart Fiscal tenta de novo na próxima captura. Ainda lá: ${listaDeNomes(travados)}.`)
+    for (const [motivo, nomes] of porMotivo) {
+      if (!TRAVAMENTO.has(motivo)) problemas.push(`${inicio} Não consegui tirar da pasta antiga (${motivo || 'motivo não informado'}); o Smart Fiscal tenta de novo na próxima captura. Ainda lá: ${listaDeNomes(nomes)}.`)
+    }
+    return problemas
+  }
+
+  /** XML guardado na pasta, relativo a ela. Pasta que não existe não tem nenhum; outro erro de leitura lança. */
+  function xmlsDe(pasta) {
+    const raiz = path.join(config.pastaXmls, pasta)
+    return arvoreDe(raiz)
+      .filter((i) => i.isFile())
+      .map((i) => path.relative(raiz, path.join(i.parentPath, i.name)))
+      .filter(ehXmlGuardado)
+  }
+
+  /**
+   * Pendência numa pasta que já não tem nota do cliente, ao lado de notas de outro: sai sem mover nada se todo XML que restou é de outro cliente.
+   * @returns {string[]} problemas para o grupo rejeitar
+   */
+  function resolverChaveNaPastaDeOutro(cliente, pasta, esperada) {
+    let xmls
+    try {
+      xmls = xmlsDe(pasta)
+    } catch (e) {
+      return [semLerAPasta(pasta, esperada, e)]
+    }
+    const deOutros = new Set(sql.caminhosDeOutros.all({ id: cliente.id }).map((c) => barraNormal(c).toLowerCase()))
+    const semDono = xmls.filter((rel) => !deOutros.has(barraNormal(path.join(pasta, rel)).toLowerCase()))
+    if (!semDono.length) {
+      marcarPendente(cliente.id, pasta, false)
+      return []
+    }
+    logger.warn('Pendência mantida: a pasta tem notas de outro cliente e XML que não é dele', { pasta, esperada, arquivos: semDono.length })
+    return [`A pasta da empresa está como "${pasta}" e deveria ser "${esperada}". Uma das duas tem notas de outra empresa, e na pasta antiga ainda há XML que não é dela: ${listaDeNomes(semDono)}. O Smart Fiscal não mexe nisso sozinho: confira essa pasta.`]
+  }
+
+  /**
+   * Leva para a pasta calculada as notas do cliente que estão em outra pasta (rename que falhou, homônimo, escritório renomeado)
+   * e o que ficou na pasta pendente: move a pasta, junta com a que já existe ou, se a origem sumiu, reaponta o banco.
+   * Formato antigo de pastas fica como está; pasta com notas de outro cliente também, e o motivo vai nos problemas.
+   * Quem chama confere o resultado.
+   * @returns {string[]} problemas para o grupo rejeitar
+   */
+  function reconciliarPasta(cliente) {
+    if (sql.layout.get() !== VERSAO_XML) return []
+    // Raiz fora do ar faz toda pasta parecer sumida, e a pendência se perderia.
+    if (!fs.existsSync(config.pastaXmls)) return ['A pasta principal está indisponível: a pasta da empresa fica como está.']
+    const esperada = pastaDoClienteNoDisco(cliente, sql.listar.all())
+    const temOutroCliente = (pasta) => sql.outroNaPasta.get(cliente.id, pasta.length + 1, `${pasta}/`)
+    const problemas = []
+    const vistas = new Set()
+    const noBanco = pastasDoClienteNoBanco(db, cliente.id)
+    for (const pasta of [...noBanco, ...pastasPendentesDoCliente(db, cliente.id)]) {
+      if (vistas.has(pasta.toLowerCase())) continue
+      vistas.add(pasta.toLowerCase())
+      if (pasta.toLowerCase() === esperada.toLowerCase()) {
+        marcarPendente(cliente.id, pasta, false)
+        continue
+      }
+      if (temOutroCliente(pasta) || temOutroCliente(esperada)) {
+        if (!noBanco.some((p) => p.toLowerCase() === pasta.toLowerCase())) {
+          problemas.push(...resolverChaveNaPastaDeOutro(cliente, pasta, esperada))
+          continue
+        }
+        logger.warn('Pasta do cliente não mexida: tem notas de outro cliente', { pasta, esperada })
+        problemas.push(`A pasta da empresa está como "${pasta}" e deveria ser "${esperada}". Uma das duas tem notas de outra empresa, e o Smart Fiscal não mexe nelas sozinho: confira essas pastas.`)
+        continue
+      }
+      if (fs.existsSync(path.join(config.pastaXmls, pasta)) && !fs.existsSync(path.join(config.pastaXmls, esperada))) {
+        let erroAoMover
+        const aviso = moverPastaDoCliente(pasta, esperada, (e) => (erroAoMover = e))
+        if (aviso) logger.warn('Pasta do cliente segue com outro nome', { pasta, esperada })
+        problemas.push(...conferirSobra(cliente.id, pasta, esperada, { motivoDe: () => erroAoMover?.code }))
+      } else {
+        problemas.push(...juntarPastas(cliente.id, pasta, esperada))
+      }
+    }
+    return problemas
   }
 
   /**
@@ -292,6 +569,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     db.transaction(() => {
       sql.apagarEventos.run({ id: atual.id })
       sql.apagarNotas.run(atual.id)
+      sql.apagarSistema.run(chavePastaPendente(atual.id))
       sql.apagarExecucoes.run(atual.id)
       sql.apagar.run(atual.id)
     })()
@@ -362,7 +640,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado, reconciliarPasta }
 }
 
 module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }

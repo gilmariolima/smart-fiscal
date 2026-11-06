@@ -11,6 +11,8 @@ const { competenciaDe } = require('./extracao')
 const UMA_HORA = 3600e3
 const TAMANHO_LOTE = 50 // o ADN entrega até 50 documentos por consulta
 const MAX_LOTES_POR_CICLO = 500
+const CONSULTAS_POR_GRUPO = 50
+const DESCANSO_MS = 30e3
 const CANCELAMENTOS = new Set(['101101', '105102']) // cancelamento e cancelamento por substituição
 
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -55,6 +57,18 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
 
   // Execução de captura em andamento: cada NFS-e recebida guarda o id dela (link "Ver notas").
   let capturaAtual = null
+  // Com muitas consultas em sequência (muitos clientes ou muitos lotes) o ADN derruba a conexão:
+  // pausa antes de cada consulta, inclusive ao trocar de cliente, e um descanso a cada grupo.
+  let consultas = 0
+  const consultasPorGrupo = config.adnConsultasPorGrupo || CONSULTAS_POR_GRUPO
+  async function aguardarVez() {
+    if (consultas > 0) await dormir(config.intervaloEntreChamadasMs)
+    if (consultas > 0 && consultas % consultasPorGrupo === 0) {
+      logger.info('Descanso entre grupos de consultas ao ADN', { consultas })
+      await dormir(config.adnDescansoMs ?? DESCANSO_MS)
+    }
+    consultas++
+  }
 
   function gravarNota(cliente, doc) {
     const d = dadosNfse(doc.xml)
@@ -146,7 +160,7 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
       const adn = fabricaAdn(cliente)
       let nsu = String(cliente.nfse_ult_nsu || '0')
       while (resultado.lotes < MAX_LOTES_POR_CICLO) {
-        if (resultado.lotes > 0) await dormir(config.intervaloEntreChamadasMs)
+        await aguardarVez()
         if (deveParar()) {
           logger.info('Captura de NFS-e interrompida: app fechando; continua na próxima', { cnpj: cliente.cnpj, nsu })
           return fechar()

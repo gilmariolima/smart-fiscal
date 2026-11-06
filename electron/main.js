@@ -7,7 +7,7 @@
 // O app fica no ícone perto do relógio: fechar a janela não desliga a busca automática de
 // notas; para desligar, "Sair" no menu do ícone.
 
-const { app, BrowserWindow, Menu, Tray, Notification, dialog, nativeImage, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, Notification, dialog, nativeImage, powerSaveBlocker, shell } = require('electron')
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -32,6 +32,9 @@ let encerrado = false
 let pasta = null
 let prefs = {}
 let atualizacao = null
+let saidaConfirmada = false
+let perguntandoSaida = false
+let bloqueioDeSuspensao = null
 
 // ---------- preferências do app (não são configuração do sistema: essa fica no .env) ----------
 
@@ -192,9 +195,12 @@ function dataHora(iso) {
   return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+const pastaPendente = () => Boolean(servidor && ctx && !ctx.pastas.temPasta())
+
 function textoEstado() {
   const e = servidor?.agendador.estado()
   if (!e) return NOME
+  if (pastaPendente()) return `${NOME}: Escolha a pasta: captura parada`
   if (e.rodandoAgora) return `${NOME}: buscando notas…`
   if (!e.automatica) return `${NOME}: busca automática de notas desligada`
   return `${NOME}: próxima busca de notas ${dataHora(e.proximaExecucao)}`
@@ -210,7 +216,8 @@ async function buscarAgora() {
   const r = await servidor.agendador.executarAgora('bandeja')
   if (!servidor) return // o app fechou durante a busca
   const u = servidor.agendador.estado().ultimaExecucao
-  if (!r.ok) notificar('A busca não foi feita', r.erro || 'Veja os detalhes no painel.')
+  if (r.pulado) notificar('A busca não foi feita', r.pulado)
+  else if (!r.ok) notificar('A busca não foi feita', r.erro || 'Veja os detalhes no painel.')
   else if (u?.clientesComErro) notificar('Busca concluída com erros', `${u.clientesComErro} de ${u.clientes} cliente(s) com erro. Veja no painel.`)
   else notificar('Busca concluída', `${u?.clientes ?? 0} cliente(s) consultado(s).`)
   atualizarBandeja()
@@ -251,6 +258,72 @@ function criarBandeja() {
     }
     atualizarBandeja()
   }, 30e3).unref()
+}
+
+// ---------- abertura e troca de pasta ----------
+
+// A migração dos XMLs roda ao abrir e trava o processo principal: depois de atualizar, mostra algo antes dela.
+async function mostrarAbertura() {
+  if (prefs.ultimaVersao === app.getVersion()) return null
+  const abertura = new BrowserWindow({
+    title: NOME,
+    width: 420,
+    height: 120,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    backgroundColor: '#ffffff',
+    icon: caminhoIcone(),
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
+  })
+  const html = '<!doctype html><meta charset="utf-8"><title>Smart Fiscal</title>'
+    + '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;font:15px \'Segoe UI\',sans-serif;color:#1f2937">'
+    + 'Organizando os arquivos do Smart Fiscal…'
+  await new Promise((resolve) => {
+    abertura.webContents.once('did-finish-load', resolve)
+    abertura.webContents.once('did-fail-load', resolve)
+    abertura.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(resolve)
+  })
+  // Um tique para a janela chegar à tela antes de o processo principal travar.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  return abertura
+}
+
+function fecharAbertura(abertura) {
+  if (abertura && !abertura.isDestroyed()) abertura.destroy()
+}
+
+// Troca longa pela rede: o Windows não pode suspender o app no meio.
+function bloquearSuspensaoNaTroca(trocando) {
+  if (trocando && bloqueioDeSuspensao === null) bloqueioDeSuspensao = powerSaveBlocker.start('prevent-app-suspension')
+  if (!trocando && bloqueioDeSuspensao !== null) {
+    powerSaveBlocker.stop(bloqueioDeSuspensao)
+    bloqueioDeSuspensao = null
+  }
+}
+
+async function confirmarSaidaNaTroca() {
+  if (perguntandoSaida) return
+  perguntandoSaida = true
+  const opcoes = {
+    type: 'warning',
+    title: NOME,
+    message: 'A pasta ainda está sendo trocada. Se fechar agora, a troca é interrompida e nada se perde; depois é só escolher a pasta de novo para continuar.',
+    buttons: ['Continuar a troca', 'Fechar'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  }
+  let response = 0
+  try {
+    ;({ response } = await (janela && janela.isVisible() ? dialog.showMessageBox(janela, opcoes) : dialog.showMessageBox(opcoes)))
+  } finally {
+    perguntandoSaida = false
+  }
+  if (response !== 1) return
+  saidaConfirmada = true
+  sair()
 }
 
 // ---------- erros ao ligar ----------
@@ -392,6 +465,7 @@ function prepararAtualizacao() {
       titulo: NOME,
       perguntar: (opcoes) => (janela ? dialog.showMessageBox(janela, opcoes) : dialog.showMessageBox(opcoes)),
       sair,
+      motivoParaNaoInstalar: () => (ctx?.pastas.movendoAgora() ? 'A pasta está sendo trocada.' : null),
       log: path.join(pasta, 'atualizacao.log'),
     })
   } catch {
@@ -407,11 +481,13 @@ async function iniciar() {
   app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
   Menu.setApplicationMenu(null)
   prefs = lerPrefs()
+  let abertura = null
 
   try {
     pasta = pastaDados()
     const copiados = await trazerDadosAnteriores()
     if (encerrado) return
+    abertura = await mostrarAbertura()
     const partes = subpastas(pasta)
     fs.mkdirSync(partes.estoque, { recursive: true })
     const env = prepararEnv(partes.notas, path.join(RAIZ, '.env.example'))
@@ -429,11 +505,17 @@ async function iniciar() {
     if (producao) ctx.logger.warn('Banco das notas passado de homologação para produção', producao)
     if (copiados.length) ctx.logger.info('Dados dos apps anteriores copiados', { copiados })
     if (motorEstoque?.erro) ctx.logger.error('Motor do SPED', { erro: motorEstoque.erro })
+    ctx.pastas.aoMudarTroca(bloquearSuspensaoNaTroca)
     servidor = await iniciarServidor(ctx, {
+      exigirPasta: true,
+      aoPularSemPasta: () => {
+        notificar(NOME, 'Escolha a pasta principal: a captura deste horário não foi feita.')
+        atualizarBandeja()
+      },
       estoque: () => motorEstoque,
       // Janela de pastas do Windows, para a tela Pastas; devolve null se cancelar.
       escolherPasta: async () => {
-        const opcoes = { title: 'Onde vai ficar a pasta SMART FISCAL?', buttonLabel: 'Escolher esta pasta', properties: ['openDirectory', 'createDirectory'] }
+        const opcoes = { title: 'Escolha a pasta principal do Smart Fiscal', buttonLabel: 'Escolher esta pasta', properties: ['openDirectory', 'createDirectory'] }
         const r = await (janela ? dialog.showOpenDialog(janela, opcoes) : dialog.showOpenDialog(opcoes))
         return r.canceled ? null : r.filePaths[0]
       },
@@ -448,7 +530,13 @@ async function iniciar() {
     // Primeira vez: liga junto com o Windows (a busca automática de notas depende disso).
     if (prefs.iniciarComWindows === undefined) definirInicioComWindows(true)
     criarBandeja()
-    if (!process.argv.includes(ARG_OCULTO)) abrirJanela()
+    // Sem pasta a captura está parada: a janela abre mesmo quando o app liga junto com o Windows.
+    if (!process.argv.includes(ARG_OCULTO) || pastaPendente()) abrirJanela()
+    // Maximizada, a janela aparece antes do ready-to-show: quem fecha a abertura é a página carregada.
+    if (janela) janela.webContents.once('did-finish-load', () => fecharAbertura(abertura))
+    else fecharAbertura(abertura)
+    setTimeout(() => fecharAbertura(abertura), 10e3).unref()
+    salvarPrefs({ ultimaVersao: app.getVersion() })
     prepararAtualizacao()
 
     if (janela && (copiados.length || env.criado) && !janela.isVisible()) await new Promise((r) => janela.once('show', r))
@@ -480,6 +568,7 @@ async function iniciar() {
       if (response === 0) shell.showItemInFolder(env.arquivo)
     }
   } catch (e) {
+    fecharAbertura(abertura)
     if (ctx) {
       try {
         ctx.fechar()
@@ -534,8 +623,14 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('before-quit', (e) => {
-    saindo = true
     if (encerrado) return
+    if (!saidaConfirmada && ctx?.pastas.movendoAgora()) {
+      e.preventDefault()
+      saindo = false
+      confirmarSaidaNaTroca().catch((erro) => ctx?.logger.error('Falha ao perguntar sobre a saída', { erro: erro.message }))
+      return
+    }
+    saindo = true
     e.preventDefault()
     if (bandeja) bandeja.setToolTip(`${NOME}: encerrando…`)
     if (janela) janela.hide()

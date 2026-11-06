@@ -268,3 +268,28 @@ test('publicação: o pacote publica no GitHub deste repositório e leva o elect
   assert.ok(pacote.dependencies['electron-updater'], 'electron-updater tem de ir em dependencies, não em devDependencies')
   assert.match(pacote.scripts.pacote, /--publish never/)
 })
+
+test('I6: atualização: durante a troca de pasta, instalar é recusado com aviso', async () => {
+  const atualizador = atualizadorFalso()
+  let saiu = 0
+  let trocando = true
+  const perguntas = []
+  const a = criarAtualizacao({
+    atualizador,
+    perguntar: async (o) => {
+      perguntas.push(o)
+      return { response: 0 }
+    },
+    sair: () => saiu++,
+    motivoParaNaoInstalar: () => (trocando ? 'A pasta está sendo trocada.' : null),
+  })
+  await atualizador.ouvintes['update-downloaded']({ version: '1.2.0' })
+  assert.equal(saiu, 0)
+  assert.equal(perguntas.length, 1)
+  assert.match(perguntas[0].detail, /A pasta está sendo trocada\./)
+  assert.deepEqual(perguntas[0].buttons, ['OK'])
+  trocando = false
+  await a.verificar()
+  await new Promise((r) => setImmediate(r))
+  assert.equal(saiu, 1, 'terminada a troca, o botão oferece reiniciar de novo')
+})

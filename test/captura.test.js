@@ -73,7 +73,7 @@ test('laço de NSU: processa os lotes, grava ultNSU e espera 1 h com a fila zera
   assert.equal(ev[0].tp_evento, '110111')
   assert.equal(ev[0].chave, beta.chave)
 
-  const pasta = 'Cliente 1/2026/Outubro/NF-e/Entradas'
+  const pasta = 'Cliente 1/2026/Outubro/NF-e/XML/Entradas'
   assert.deepEqual(arquivos(pastaXmls), [
     `${pasta}/Resumos/${alfa.chave}-resumo.xml`,
     `${pasta}/Eventos/${beta.chave}-evento-110111-1.xml`,
@@ -335,7 +335,7 @@ test('escritório: saída, entrada que completa resumo, fora da carteira e resNF
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas').get().n, antes + 2)
 
   assert.equal(nota(f1).length, 0)
-  const pastaFora = new RegExp(`^Cliente 2 Ltda/fora-da-carteira/\\d{4}/[^/]+/NF-e/Entradas/${f1}-nfe\\.xml$`)
+  const pastaFora = new RegExp(`^Cliente 2 Ltda/fora-da-carteira/\\d{4}/[^/]+/NF-e/XML/Entradas/${f1}-nfe\\.xml$`)
   assert.ok(arquivos(pastaXmls).some((f) => pastaFora.test(f)), 'XML fora da carteira na pasta do escritório')
 
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(ids[1]).n, 0)

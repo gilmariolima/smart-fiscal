@@ -17,8 +17,9 @@ const { decodificarXml } = require('../services/extracaoNfse')
 const PRODUCAO = 'https://adn.nfse.gov.br'
 const HOMOLOGACAO = 'https://adn.producaorestrita.nfse.gov.br'
 const TIMEOUT_MS = 60e3
-// HTTP 429: o ADN limita as consultas. Espera e tenta de novo; depois disso desiste até a próxima captura.
-const ESPERAS_429_MS = [5000, 15000, 30000]
+// HTTP 429 ou conexão derrubada: o ADN limita as consultas. Espera e tenta de novo; depois disso desiste até a próxima captura.
+const ESPERAS_MS = [5000, 15000, 30000]
+const CONEXAO_DERRUBADA = /ECONNRESET|EPIPE|socket hang up|BAD_DECRYPT/i
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function agenteDoCertificado(pfx, passphrase) {
@@ -72,11 +73,13 @@ function criarClienteAdn({ cnpj, pfx, passphrase, producao = true, requisitar, d
       try {
         r = await pedir(`${base}/contribuintes/DFe/${Number(nsu) || 0}?lote=true&cnpjConsulta=${cnpj}`)
       } catch (e) {
-        return falha(`Sem conexão com o ADN: ${e.message}`)
+        if (!CONEXAO_DERRUBADA.test(`${e.code} ${e.message}`) || tentativa >= ESPERAS_MS.length) return falha(`Sem conexão com o ADN: ${e.message}`)
+        await dormir(ESPERAS_MS[tentativa])
+        continue
       }
       if (r.status !== 429) break
-      if (tentativa >= ESPERAS_429_MS.length) return falha('ADN pediu para esperar (HTTP 429): consultas demais. Tenta de novo na próxima captura.')
-      await dormir(ESPERAS_429_MS[tentativa])
+      if (tentativa >= ESPERAS_MS.length) return falha('ADN pediu para esperar (HTTP 429): consultas demais. Tenta de novo na próxima captura.')
+      await dormir(ESPERAS_MS[tentativa])
     }
     let json = null
     try {

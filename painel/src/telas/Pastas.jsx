@@ -1,36 +1,136 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { api } from '../api.js'
 import Pagina from '../layout/Pagina.jsx'
 import { useResumo } from '../layout/ResumoProvider.jsx'
 import { useApi } from '../useApi.js'
+import { inteiro, plural } from '../formato.js'
 
-// #/pastas: o escritório escolhe um lugar só; nele ficam SMART FISCAL\Notas e SMART FISCAL\Arquivos SPED.
+const INTERVALO_ANDAMENTO = 5000
+const SEM_NUMEROS = { feitos: 0, total: 0, fase: 'copiando' }
+// Troca cujo resultado ainda não apareceu: sobrevive a sair desta tela e voltar.
+let resultadoPendente = false
+
+function Barra({ rotulo, feitos, total }) {
+  const porcento = total ? Math.min(100, Math.round((feitos / total) * 100)) : 0
+  return (
+    <div className="barra-captura-trilho" role="progressbar" aria-label={rotulo} aria-valuemin={0} aria-valuemax={100} aria-valuenow={porcento}>
+      <div className="barra-captura-preenchido" style={{ width: `${porcento}%` }} />
+    </div>
+  )
+}
+
+// Andamento da troca de pasta: primeiro copia, depois apaga da pasta antiga.
+function AndamentoDaTroca({ troca }) {
+  const { feitos, total, fase } = troca
+  return (
+    <div className="barra-captura" role="status">
+      <div className="barra-captura-texto">
+        <strong>{total ? `Trocando de pasta: ${inteiro(feitos)} de ${inteiro(total)}` : 'Trocando de pasta…'}</strong>
+      </div>
+      <Barra rotulo="Andamento da troca de pasta" feitos={feitos} total={total} />
+      <p className="barra-captura-nota">{fase === 'apagando' ? 'Tirando os arquivos da pasta antiga.' : 'Copiando os arquivos para a pasta nova.'}</p>
+    </div>
+  )
+}
+
+// Andamento da organização da pasta, nas classes da barra da captura.
+function AndamentoDaPasta({ organizacao }) {
+  const { situacao, feitos, total, atual, falhas, ultimoErro } = organizacao
+  if (situacao === 'parada' && !falhas) return null
+  return (
+    <div className="barra-captura" role="status">
+      {situacao === 'organizando' && (
+        <>
+          <div className="barra-captura-texto">
+            <strong>{`Organizando a pasta: ${inteiro(feitos)} de ${inteiro(total)}`}</strong>
+          </div>
+          <Barra rotulo="Andamento da organização" feitos={feitos} total={total} />
+          {atual && <p className="barra-captura-nota">{atual}</p>}
+        </>
+      )}
+      {situacao === 'conferindo' && (
+        <>
+          <div className="barra-captura-texto">
+            <strong>{`Conferindo a pasta: ${inteiro(feitos)} de ${inteiro(total)}`}</strong>
+          </div>
+          <Barra rotulo="Andamento da conferência" feitos={feitos} total={total} />
+        </>
+      )}
+      {situacao === 'indisponivel' && <p className="barra-captura-nota">Pasta indisponível. A organização continua na próxima captura ou abertura do app.</p>}
+      {!!falhas && (
+        <p className="barra-captura-nota">
+          {plural(falhas, 'mês ficou', 'meses ficaram')} para depois.{ultimoErro ? ` Último erro: ${ultimoErro}` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// #/pastas: o escritório escolhe a pasta onde ficam as empresas e as notas.
 export default function Pastas() {
   const { dados: estado, erro: erroCarga, recarregar } = useApi('/api/pastas')
   const { dados: backup } = useApi('/api/backup')
-  const { resumo } = useResumo()
+  const { resumo, recarregar: recarregarResumo } = useResumo()
   const [ocupado, setOcupado] = useState(false)
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
   // Fora do app instalado não há janela de pastas: vale digitar o endereço.
   const [texto, setTexto] = useState(null)
+  const telaAberta = useRef(false)
+  const respostaNaTela = useRef(false)
   const soNoPc = resumo && !resumo.cadastroLiberado
 
+  // Atualiza o andamento só enquanto há o que mostrar; recarregar mantém os dados na tela.
+  const trocando = !!estado?.movendo
+  const emAndamento = ocupado || trocando || ['organizando', 'conferindo'].includes(estado?.organizacao?.situacao)
+  useEffect(() => {
+    if (!emAndamento) return undefined
+    const timer = setInterval(recarregar, INTERVALO_ANDAMENTO)
+    return () => clearInterval(timer)
+  }, [emAndamento, recarregar])
+
+  useEffect(() => {
+    telaAberta.current = true
+    return () => {
+      telaAberta.current = false
+    }
+  }, [])
+
+  // Troca que terminou sem a resposta do POST nesta tela (a pessoa saiu e voltou): quem conta o resultado é o estado.
+  const ultimaTroca = estado?.ultimaTroca
+  useEffect(() => {
+    if (trocando && !respostaNaTela.current) resultadoPendente = true
+    if (!trocando && !ocupado) respostaNaTela.current = false
+    if (trocando || ocupado || !resultadoPendente || !ultimaTroca) return
+    resultadoPendente = false
+    if (ultimaTroca.ok) setAviso([ultimaTroca.mensagem, ...ultimaTroca.avisos].join(' '))
+    else setErro(ultimaTroca.mensagem)
+    recarregarResumo()
+  }, [trocando, ocupado, ultimaTroca, recarregarResumo])
+
   async function salvar(pasta) {
+    resultadoPendente = true
     setOcupado(true)
     setErro(null)
     setAviso(null)
+    // Saiu da tela antes da resposta: o resultado continua pendente para quando voltar.
+    const respondeu = () => {
+      respostaNaTela.current = true
+      if (telaAberta.current) resultadoPendente = false
+    }
     try {
       const r = await api.post('/api/pastas/principal', { pasta })
+      respondeu()
       setAviso(r.mensagem)
-      if (r.erroSped) setErro(r.erroSped)
       setTexto(null)
     } catch (e) {
+      respondeu()
       setErro(e.message)
     } finally {
       setOcupado(false)
       recarregar()
+      recarregarResumo()
     }
   }
 
@@ -57,16 +157,19 @@ export default function Pastas() {
   if (!estado) return <Pagina titulo="Pastas" subtitulo={erroCarga ? '' : 'Carregando…'} erro={erroCarga} />
 
   const atual = estado.principal
-  const movendo = ocupado || !!estado.movendo
+  const movendo = ocupado || trocando
+  const troca = estado.movendo || (ocupado ? SEM_NUMEROS : null)
 
   return (
-    <Pagina titulo="Pastas" subtitulo="Escolha onde vai ficar a pasta SMART FISCAL, com as notas e os arquivos do SPED." erro={erro} aoFecharErro={() => setErro(null)} aviso={aviso}>
+    <Pagina titulo="Pastas" subtitulo="Escolha a pasta onde ficam as empresas e as notas." erro={erro || erroCarga} aoFecharErro={() => setErro(null)} aviso={aviso}>
       <section className="formulario" aria-label="Pasta principal">
         <strong className="formulario-titulo">Pasta principal</strong>
         <p className="formulario-nota">
-          Pode ser em outro disco ou na rede. Ao trocar, as notas e os arquivos do SPED que já existem vão junto. Dentro dela: <span className="mono">Notas</span>, por empresa, ano, mês e tipo, e{' '}
-          <span className="mono">Arquivos SPED</span>.
+          Pode ser em outro disco ou na rede. Ao trocar, o que já existe vai junto. Empresa, ano, mês e tipo, com XML, PDF, relatórios e ZIP.
         </p>
+        {!atual && <p className="formulario-nota">{soNoPc ? 'A pasta é escolhida no computador do escritório.' : 'Escolha a pasta principal para começar a capturar.'}</p>}
+        {troca && <AndamentoDaTroca troca={troca} />}
+        {atual && !troca && estado.organizacao && <AndamentoDaPasta organizacao={estado.organizacao} />}
         {texto !== null ? (
           <form
             onSubmit={(e) => {
@@ -89,21 +192,20 @@ export default function Pastas() {
           </form>
         ) : (
           <>
-            <p className="pasta-atual pasta-principal">
-              <i className="fa-solid fa-folder" /> {atual ? <span className="mono">{atual}</span> : 'Ainda na pasta de dados do Smart Fiscal (padrão)'}
-            </p>
+            {atual && (
+              <p className="pasta-atual pasta-principal">
+                <i className="fa-solid fa-folder" /> <span className="mono">{atual}</span>
+              </p>
+            )}
             <div className="formulario-acoes">
               {!soNoPc && (
                 <button type="button" className="botao botao-azul" onClick={escolher} disabled={movendo}>
-                  {movendo ? 'Movendo…' : 'Escolher pasta'}
+                  {movendo ? 'Movendo…' : atual ? 'Trocar pasta' : 'Escolher pasta'}
                 </button>
               )}
-              <button type="button" className="botao botao-claro" onClick={abrir} disabled={soNoPc}>
-                <i className="fa-solid fa-folder-open" /> Abrir
-              </button>
-              {!soNoPc && atual && (
-                <button type="button" className="botao botao-claro" onClick={() => salvar('')} disabled={movendo}>
-                  Usar a pasta padrão
+              {atual && (
+                <button type="button" className="botao botao-claro" onClick={abrir} disabled={soNoPc}>
+                  <i className="fa-solid fa-folder-open" /> Abrir
                 </button>
               )}
             </div>

@@ -76,6 +76,8 @@ function passarParaProducao({ db, config, logger }) {
   const r = db.transaction(() => {
     const eventos = db.prepare('DELETE FROM eventos').run().changes
     const notas = db.prepare('DELETE FROM notas').run().changes
+    db.prepare('DELETE FROM pasta_grupos').run()
+    db.prepare("DELETE FROM sistema WHERE chave LIKE 'pasta_pendente:%'").run()
     const clientes = db.prepare(`UPDATE clientes SET ult_nsu = ?, max_nsu = NULL, proxima_consulta = NULL, bloqueado_ate = NULL,
       ultima_consulta = NULL, ultimo_erro = NULL`).run(NSU_ZERO).changes
     gravarAmbiente(db, 'producao')

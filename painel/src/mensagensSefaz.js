@@ -78,7 +78,7 @@ export function explicarSefaz({ cStat, xMotivo, erro } = {}) {
       dica: 'O app foi fechado antes de terminar. Nenhuma nota se perde: a próxima captura continua de onde parou.',
     }
   }
-  // BAD_DECRYPT: o ADN derruba a conexão quando o certificado venceu; não é falta de internet.
+  // BAD_DECRYPT: já tentou de novo e o ADN segue derrubando; costuma ser certificado vencido.
   if (/recusou o certificado|HTTP 403|BAD_DECRYPT/i.test(texto)) {
     return {
       cor: 'vermelha',
@@ -86,10 +86,17 @@ export function explicarSefaz({ cStat, xMotivo, erro } = {}) {
       dica: 'Confira se é o certificado A1 do próprio CNPJ e se está no prazo.',
     }
   }
+  if (/ADN.*(ECONNRESET|EPIPE|socket hang up)/i.test(texto)) {
+    return {
+      cor: 'ambar',
+      titulo: 'Servidor da NFS-e derrubou a conexão',
+      dica: 'O ADN encerrou a consulta mesmo depois de novas tentativas. Não é a internet. Nenhuma nota se perde: a próxima captura tenta de novo.',
+    }
+  }
   if (SEM_CONEXAO.test(texto)) {
     return {
       cor: 'ambar',
-      titulo: 'Sem conexão com a SEFAZ',
+      titulo: /ADN/.test(texto) ? 'Sem conexão com o ADN (NFS-e)' : 'Sem conexão com a SEFAZ',
       dica: 'Confira a internet deste computador. A próxima captura tenta de novo.',
     }
   }

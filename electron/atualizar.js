@@ -15,8 +15,9 @@ const fs = require('node:fs')
  * @param {() => void} o.sair  fecha o app (app.quit), que para os motores e chama instalarAoSair
  * @param {string} [o.log]  arquivo onde anotar o que aconteceu
  * @param {string} [o.titulo]  nome do app nas mensagens
+ * @param {() => string|null} [o.motivoParaNaoInstalar]  texto do motivo enquanto reiniciar não pode (troca de pasta em andamento)
  */
-function criarAtualizacao({ atualizador, perguntar, sair, log, titulo = 'Smart Fiscal' }) {
+function criarAtualizacao({ atualizador, perguntar, sair, log, titulo = 'Smart Fiscal', motivoParaNaoInstalar = () => null }) {
   let baixada = null // versão pronta para instalar
   let reabrir = false
   // O que o painel mostra ao lado da versão
@@ -55,6 +56,19 @@ function criarAtualizacao({ atualizador, perguntar, sair, log, titulo = 'Smart F
   })
 
   async function oferecerReinicio(versao) {
+    const motivo = motivoParaNaoInstalar()
+    if (motivo) {
+      anotar('info', `versão ${versao} não oferecida agora: ${motivo}`)
+      await perguntar({
+        type: 'info',
+        title: titulo,
+        message: `A versão ${versao} do ${titulo} está pronta, mas ainda não dá para instalar.`,
+        detail: `${motivo} Quando terminar, clique em "Verificar atualizações" para instalar.`,
+        buttons: ['OK'],
+        noLink: true,
+      })
+      return
+    }
     const { response } = await perguntar({
       type: 'info',
       title: titulo,

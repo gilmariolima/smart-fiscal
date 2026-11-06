@@ -143,6 +143,11 @@ function criarServicoCiclo(deps) {
       andamento = null
       emCurso = null
       liberar()
+      try {
+        deps.aoTerminarCiclo?.()
+      } catch (e) {
+        logger.error('Erro ao avisar o fim do ciclo', { erro: e.message })
+      }
     }
   }
 

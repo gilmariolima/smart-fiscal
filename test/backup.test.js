@@ -42,13 +42,14 @@ function montar(t, { semPasta = false, comEstoque = false } = {}) {
     fs.writeFileSync(path.join(pastaEstoque, 'painel.token'), 'token')
   }
   let agora = new Date('2026-10-13T15:00:00Z')
+  const avisos = []
   const servico = criarServicoBackup({
     db: amb.db,
     config: { ...amb.deps.config, raiz, pastaCerts, pastaBackup, pastaEstoque },
-    logger: silencioso,
+    logger: { ...silencioso, warn: (m) => avisos.push(m) },
     agora: () => agora,
   })
-  return { amb, base, raiz, servico, pastaBackup, gravarXml, avancar: (ms) => (agora = new Date(agora.getTime() + ms)), definir: (d) => (agora = new Date(d)) }
+  return { amb, base, raiz, servico, pastaBackup, pastaEstoque, avisos, gravarXml, avancar: (ms) => (agora = new Date(agora.getTime() + ms)), definir: (d) => (agora = new Date(d)) }
 }
 
 const diarios = (pastaBackup) => fs.readdirSync(path.join(pastaBackup, 'diarios')).sort()
@@ -188,24 +189,84 @@ test('pasta escolhida na tela: vale mais que o .env, testa a gravação e "nenhu
   assert.equal((await m.servico.fazerBackup()).desligado, true)
 })
 
-test('com pasta principal, o backup leva os arquivos do SPED que saíram da pasta de dados e nunca apaga', async (t) => {
+test('espelho copia só .xml', async (t) => {
   const m = montar(t)
-  const fora = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-principal-'))
+  m.gravarXml('11222333000181_Exemplo/2026-10/1-nfe.pdf', 'pdf')
+  m.gravarXml('11222333000181_Exemplo/2026-10/.smart-fiscal', '')
+  m.gravarXml('11222333000181_Exemplo/2026-10/1.xlsx', 'x')
+  const r = await m.servico.fazerBackup()
+  assert.equal(r.xmlsNovos, 2)
+  const espelho = path.join(m.pastaBackup, 'xmls', '11222333000181_Exemplo', '2026-10')
+  assert.deepEqual(fs.readdirSync(espelho).sort(), ['1-nfe.xml', '2-nfe.xml'])
+})
+
+test('I10: pasta_saida do motor fora da pasta de dados é espelhada em sped, sem depender do nome da pasta principal', async (t) => {
+  const m = montar(t, { comEstoque: true })
+  const fora = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-sped-'))
   t.after(() => fs.rmSync(fora, { recursive: true, force: true }))
-  const raiz = path.join(fora, 'SMART FISCAL')
-  const arquivo = path.join(raiz, 'Arquivos SPED', '11222333000181_X', '2026-10', 'SPED_1.txt')
+  const arquivo = path.join(fora, '11222333000181_X', '2026-10', 'SPED_1.txt')
   fs.mkdirSync(path.dirname(arquivo), { recursive: true })
   fs.writeFileSync(arquivo, '|0000|')
-  m.amb.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(raiz)
-
-  const r = await m.servico.fazerBackup()
-  assert.equal(r.ok, true)
+  fs.writeFileSync(path.join(m.pastaEstoque, 'config.json'), JSON.stringify({ pasta_saida: fora }))
+  m.amb.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(path.join(fora, 'Contabilidade'))
+  assert.equal((await m.servico.fazerBackup()).ok, true)
   const copia = path.join(m.pastaBackup, 'sped', '11222333000181_X', '2026-10', 'SPED_1.txt')
   assert.equal(fs.readFileSync(copia, 'utf8'), '|0000|')
-
+  // O backup leva e nunca apaga.
   fs.rmSync(arquivo)
   await m.servico.fazerBackup({ forcar: true })
   assert.ok(fs.existsSync(copia), 'apagado do PC continua no backup')
+})
+
+test('I10: pasta_saida dentro da pasta de dados ou sem pasta_saida: a cópia do dia já leva, sem espelho nem aviso', async (t) => {
+  const m = montar(t, { comEstoque: true })
+  for (const config of [{ pasta_saida: path.join(m.pastaEstoque, 'saida') }, { pasta_saida: path.join(m.raiz, 'x') }, {}]) {
+    fs.writeFileSync(path.join(m.pastaEstoque, 'config.json'), JSON.stringify(config))
+    assert.equal((await m.servico.fazerBackup({ forcar: true })).ok, true)
+    assert.ok(!fs.existsSync(path.join(m.pastaBackup, 'sped')))
+  }
+  assert.deepEqual(m.avisos, [])
+})
+
+test('I10: config.json ausente ou inválido: sem espelho, com aviso no log, e o backup termina', async (t) => {
+  const m = montar(t, { comEstoque: true })
+  assert.equal((await m.servico.fazerBackup()).ok, true)
+  assert.ok(!fs.existsSync(path.join(m.pastaBackup, 'sped')))
+  assert.match(m.avisos.at(-1), /config\.json/)
+  const antes = m.avisos.length
+  for (const invalido of ['{ruim', '[]', 'null']) {
+    fs.writeFileSync(path.join(m.pastaEstoque, 'config.json'), invalido)
+    assert.equal((await m.servico.fazerBackup({ forcar: true })).ok, true, invalido)
+    assert.ok(!fs.existsSync(path.join(m.pastaBackup, 'sped')))
+  }
+  assert.equal(m.avisos.length, antes + 3)
+})
+
+test('I10: pasta_saida fora do ar: aviso no log e a cópia do dia sai', async (t) => {
+  const m = montar(t, { comEstoque: true })
+  const fora = path.join(os.tmpdir(), `nfe-sped-sumiu-${process.pid}`)
+  fs.writeFileSync(path.join(m.pastaEstoque, 'config.json'), JSON.stringify({ pasta_saida: fora }))
+  const r = await m.servico.fazerBackup()
+  assert.equal(r.ok, true)
+  assert.ok(fs.existsSync(path.join(m.pastaBackup, 'diarios', r.dia, 'nfe.db')))
+  assert.ok(m.avisos.some((a) => /SPED/.test(a)), m.avisos.join('|'))
+})
+
+test('I10: erro no espelho do SPED avisa e não impede a cópia do dia', async (t) => {
+  const m = montar(t, { comEstoque: true })
+  const fora = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-sped-'))
+  t.after(() => fs.rmSync(fora, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(fora, 'SPED_1.txt'), '|0000|')
+  fs.writeFileSync(path.join(m.pastaEstoque, 'config.json'), JSON.stringify({ pasta_saida: fora }))
+  const original = fs.promises.copyFile
+  t.mock.method(fs.promises, 'copyFile', async (de, ...resto) => {
+    if (String(de).startsWith(fora)) throw Object.assign(new Error('EIO'), { code: 'EIO' })
+    return original(de, ...resto)
+  })
+  const r = await m.servico.fazerBackup()
+  assert.equal(r.ok, true)
+  assert.ok(fs.existsSync(path.join(m.pastaBackup, 'diarios', r.dia, 'nfe.db')))
+  assert.ok(m.avisos.some((a) => /SPED/.test(a)), m.avisos.join('|'))
 })
 
 test('sem pasta principal não há pasta sped no backup: o SPED vai na cópia do dia', async (t) => {

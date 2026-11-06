@@ -19,7 +19,8 @@ const { verificarAmbiente } = require('./ambiente')
 const { criarAutomacao } = require('./services/automacao')
 const { criarServicoBackup } = require('./services/backup')
 const { criarServicoPastas } = require('./services/pastas')
-const { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes } = require('./services/migracaoPastas')
+const { criarOrganizador } = require('./services/pastaOrganizada')
+const { migrarLayouts } = require('./services/migracaoPastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
 function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, agora, verificarAmbiente: verificar = true } = {}) {
@@ -37,18 +38,24 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   if (agora) deps.agora = agora
   // Antes dos outros serviços: aplica as pastas escolhidas na tela Pastas.
   const pastas = criarServicoPastas(deps)
-  // Uma vez só: XMLs do formato antigo (AAAA-MM) para AAAA\MM\<modelo>\<direção>.
-  migrarPastas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
-  migrarLayoutDasTelas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
-  migrarLayoutEmpresaPrimeiro({ db: banco, pastaXmls: config.pastaXmls, logger: log })
-  migrarLayoutAnoMes({ db: banco, pastaXmls: config.pastaXmls, logger: log })
+  // Uma vez só: XMLs dos formatos antigos para o atual. O que ficar pendente, o organizador tenta de novo.
+  migrarLayouts({ db: banco, pastaXmls: config.pastaXmls, logger: log })
+  const clientes = criarServicoClientes(deps)
+  const ciclo = criarServicoCiclo(deps)
+  // Com captura rodando, a pasta da empresa não muda de lugar: o grupo fica pendente e volta no fim do ciclo.
+  const reconciliarPasta = (cliente) => {
+    if (ciclo.cicloEmAndamento()) return ['Há uma captura em andamento: a pasta da empresa não muda de lugar agora. O Smart Fiscal tenta de novo quando ela terminar.']
+    return clientes.reconciliarPasta(cliente)
+  }
+  // O servidor liga `deps.aoTerminarCiclo` ao organizador; a CLI fecha o banco logo após o ciclo e não gera nada.
+  const organizador = criarOrganizador({ db: banco, config, logger: log, pastas, reconciliarPasta, capturaEmAndamento: () => ciclo.cicloEmAndamento() })
   return {
     config,
     logger: log,
     db: banco,
     deps,
-    clientes: criarServicoClientes(deps),
-    ciclo: criarServicoCiclo(deps),
+    clientes,
+    ciclo,
     resumo: criarServicoResumo(deps),
     exportacao: criarServicoExportacao(deps),
     selecao: criarServicoSelecao(deps),
@@ -57,6 +64,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     backup: criarServicoBackup(deps),
     conferenciaXmls: criarConferenciaXmls(deps),
     pastas,
+    organizador,
     fechar: () => banco.close(),
   }
 }

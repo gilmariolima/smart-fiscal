@@ -6,7 +6,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { abrirBanco } = require('../src/db')
-const { migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes } = require('../src/services/migracaoPastas')
+const { migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml, VERSAO_XML } = require('../src/services/migracaoPastas')
 
 const silencioso = { info() {}, warn() {}, error() {} }
 const LUNA = '11222333000181'
@@ -370,4 +370,177 @@ test('por ano e mês: pasta de rede fora do ar tenta depois; erro inesperado nã
   assert.equal(r.erro, 'disco')
   assert.equal(erros.length, 1)
   assert.equal(versao(db), '4')
+})
+
+// ---------- da ordem empresa, ano, mês e tipo para a pasta XML dentro do tipo (versão 6) ----------
+
+function montarV5() {
+  const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-pastaxml-'))
+  const db = abrirBanco(':memory:')
+  const id = Number(db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, 'LUNA LTDA', 'Luna Materiais', 'CE', 'x.pfx', 'a:b:c')`).run(LUNA).lastInsertRowid)
+  db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pastas_layout', '5')").run()
+  const gravar = (rel, conteudo = '<x/>') => {
+    fs.mkdirSync(path.dirname(path.join(pastaXmls, rel)), { recursive: true })
+    fs.writeFileSync(path.join(pastaXmls, rel), conteudo)
+    return rel
+  }
+  const antigos = {
+    nfe: gravar(p('Luna Materiais', '2026', 'Outubro', 'NF-e', 'Entradas', 'a-nfe.xml'), '<nfe/>'),
+    cte: gravar(p('Luna Materiais', '2026', 'Março', 'CT-e', 'Outros', 'b-cte.xml')),
+    evento: gravar(p('Luna Materiais', '2026', 'Outubro', 'NFS-e', 'Saidas', 'Eventos', 'c-evento-110111-1.xml')),
+    resumo: gravar(p('Luna Materiais', '2026', 'Outubro', 'NF-e', 'Entradas', 'Resumos', 'd-resumo.xml')),
+    semData: gravar(p('Luna Materiais', 'sem-data', 'NF-e', 'Entradas', 'e-nfe.xml')),
+    fora: gravar(p('SM Smart', 'fora-da-carteira', '2026', 'Outubro', 'NF-e', 'Entradas', 'f-nfe.xml')),
+    estranho: gravar(p('Luna Materiais', 'leia-me.txt')),
+  }
+  db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia, caminho_xml) VALUES (?, 'a', 'completa', '2026-10', ?)").run(id, antigos.nfe)
+  db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES ('c', '110111', '1', ?)").run(antigos.evento)
+  return { db, pastaXmls, antigos, gravar, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
+}
+
+const comXml = {
+  nfe: p('Luna Materiais', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a-nfe.xml'),
+  cte: p('Luna Materiais', '2026', 'Março', 'CT-e', 'XML', 'Outros', 'b-cte.xml'),
+  evento: p('Luna Materiais', '2026', 'Outubro', 'NFS-e', 'XML', 'Saidas', 'Eventos', 'c-evento-110111-1.xml'),
+  resumo: p('Luna Materiais', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'Resumos', 'd-resumo.xml'),
+  semData: p('Luna Materiais', 'sem-data', 'NF-e', 'XML', 'Entradas', 'e-nfe.xml'),
+  fora: p('SM Smart', 'fora-da-carteira', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'f-nfe.xml'),
+}
+
+test('pasta XML: move para XML, atualiza o banco e grava a versão 6', (t) => {
+  const { db, pastaXmls, antigos, limpar } = montarV5()
+  t.after(limpar)
+  const r = migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso })
+  assert.equal(r.movidos, 6)
+  for (const rel of Object.values(comXml)) assert.ok(fs.existsSync(path.join(pastaXmls, rel)), rel)
+  assert.equal(fs.readFileSync(path.join(pastaXmls, comXml.nfe), 'utf8'), '<nfe/>')
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas').get().c, comXml.nfe)
+  assert.equal(db.prepare('SELECT caminho_xml c FROM eventos').get().c, comXml.evento)
+  assert.equal(versao(db), '6')
+  assert.equal(VERSAO_XML, '6')
+  assert.deepEqual(r.ignorados, [antigos.estranho])
+  assert.ok(fs.existsSync(path.join(pastaXmls, antigos.estranho)), 'fora do padrão fica onde está')
+  assert.ok(!fs.existsSync(path.join(pastaXmls, 'Luna Materiais', '2026', 'Outubro', 'NF-e', 'Entradas')), 'pasta antiga vazia some')
+})
+
+test('pasta XML: arquivo travado fica pendente, sem gravar versão, e a próxima abertura termina', (t) => {
+  const { db, pastaXmls, antigos, limpar } = montarV5()
+  t.after(limpar)
+  const travar = (de, para) => {
+    if (de.endsWith('a-nfe.xml')) throw Object.assign(new Error('travado'), { code: 'EBUSY' })
+    fs.renameSync(de, para)
+  }
+  const r = migrarLayoutPastaXml({ db, pastaXmls, fsOps: { renameSync: travar }, logger: silencioso })
+  assert.deepEqual(r.pendentes, [antigos.nfe])
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas').get().c, antigos.nfe)
+  assert.ok(fs.existsSync(path.join(pastaXmls, antigos.nfe)), 'o arquivo travado continua onde estava')
+  assert.equal(versao(db), '5')
+  const depois = migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso })
+  assert.equal(depois.movidos, 1)
+  assert.deepEqual(depois.ignorados, [antigos.estranho], 'os já movidos não contam como fora do padrão')
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas').get().c, comXml.nfe)
+  assert.equal(versao(db), '6')
+})
+
+test('pasta XML: destino diferente não é sobrescrito; mesmo conteúdo some da origem', (t) => {
+  const { db, pastaXmls, antigos, gravar, limpar } = montarV5()
+  t.after(limpar)
+  gravar(comXml.cte, '<outro-conteudo/>')
+  gravar(comXml.nfe, '<nfe/>')
+  const r = migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso })
+  assert.deepEqual(r.pendentes, [antigos.cte])
+  assert.equal(fs.readFileSync(path.join(pastaXmls, comXml.cte), 'utf8'), '<outro-conteudo/>')
+  assert.ok(fs.existsSync(path.join(pastaXmls, antigos.cte)), 'a origem não se perde')
+  assert.ok(!fs.existsSync(path.join(pastaXmls, antigos.nfe)))
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas').get().c, comXml.nfe)
+  assert.equal(versao(db), '5')
+})
+
+test('pasta XML: arquivo que já está no formato 6 fica como está', (t) => {
+  const { db, pastaXmls, gravar, limpar } = montarV5()
+  t.after(limpar)
+  const jaNovo = gravar(p('Luna Materiais', '2026', 'Outubro', 'NF-e', 'XML', 'Saidas', 'g-nfe.xml'), '<g/>')
+  const r = migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso })
+  assert.equal(r.movidos, 6)
+  assert.ok(!r.ignorados.includes(jaNovo))
+  assert.equal(fs.readFileSync(path.join(pastaXmls, jaNovo), 'utf8'), '<g/>')
+  assert.equal(versao(db), '6')
+})
+
+test('pasta XML: segunda abertura não faz nada', (t) => {
+  const { db, pastaXmls, limpar } = montarV5()
+  t.after(limpar)
+  migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso })
+  const r = migrarLayoutPastaXml({ db, pastaXmls, fsOps: { renameSync() { throw new Error('não devia mover') } }, logger: silencioso })
+  assert.equal(r.movidos, 0)
+})
+
+test('pasta XML: quem está na versão 5 passa; quem está em outra não', (t) => {
+  const { db, pastaXmls, antigos, limpar } = montarV5()
+  t.after(limpar)
+  for (const outra of ['3', '4']) {
+    db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(outra)
+    assert.equal(migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso }).movidos, 0)
+    assert.ok(fs.existsSync(path.join(pastaXmls, antigos.nfe)))
+    assert.equal(versao(db), outra)
+  }
+  db.prepare('DELETE FROM sistema WHERE chave = ?').run('pastas_layout')
+  assert.equal(migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso }).movidos, 0)
+  assert.equal(versao(db), undefined)
+})
+
+test('pasta XML: pasta indisponível não faz nada e tenta depois; erro inesperado não impede o app de abrir', (t) => {
+  const { db, pastaXmls, limpar } = montarV5()
+  t.after(limpar)
+  assert.equal(migrarLayoutPastaXml({ db, pastaXmls: path.join(pastaXmls, 'nao-existe'), logger: silencioso }).movidos, 0)
+  assert.equal(versao(db), '5', 'o banco conhece XMLs: espera a pasta voltar')
+  const erros = []
+  const r = migrarLayoutPastaXml({ db, pastaXmls, fsOps: { readdirSync() { throw new Error('disco') } }, logger: { ...silencioso, error: (m) => erros.push(m) } })
+  assert.equal(r.erro, 'disco')
+  assert.equal(erros.length, 1)
+  assert.equal(versao(db), '5')
+})
+
+test('pasta XML: do formato antigo passa por todas as mudanças e termina na versão 6; banco novo termina coerente', (t) => {
+  const { db, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  assert.equal(migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso }).movidos, 0, 'espera as anteriores')
+  migrarLayoutDasTelas({ db, pastaXmls, logger: silencioso })
+  migrarLayoutEmpresaPrimeiro({ db, pastaXmls, logger: silencioso })
+  migrarLayoutAnoMes({ db, pastaXmls, logger: silencioso })
+  migrarLayoutPastaXml({ db, pastaXmls, logger: silencioso })
+  assert.equal(versao(db), '6')
+  const rel = path.join('Luna Materiais', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a-nfe.xml')
+  assert.ok(fs.existsSync(path.join(pastaXmls, rel)))
+  assert.equal(db.prepare('SELECT caminho_xml c FROM notas').get().c, rel)
+  assert.ok(fs.existsSync(path.join(pastaXmls, 'SM Smart Auditoria Ltda', 'fora-da-carteira', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'f-nfe.xml')))
+  for (const migrar of [migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml]) {
+    assert.equal(migrar({ db, pastaXmls, fsOps: { renameSync() { throw new Error('não devia mover') } }, logger: silencioso }).movidos, 0)
+  }
+})
+
+test('pasta XML: banco novo, sem layout gravado e sem pasta, termina na versão 6', (t) => {
+  const vazio = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-vazio-'))
+  t.after(() => fs.rmSync(vazio, { recursive: true, force: true }))
+  const db = abrirBanco(':memory:')
+  const pastaXmls = path.join(vazio, 'nao-existe-ainda')
+  for (const migrar of [migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml]) migrar({ db, pastaXmls, logger: silencioso })
+  assert.equal(versao(db), '6')
+})
+
+test('M11: em nova tentativa, PDF e arquivos gerados não entram em ignorados; um arquivo estranho entra', (t) => {
+  const { db, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pastas_layout', '5') ON CONFLICT(chave) DO UPDATE SET valor = '5'").run()
+  const base = p('Foo', '2026', 'Novembro', 'NF-e')
+  const gerados = [p(base, 'PDF', 'Entradas', '1-nfe.pdf'), p(base, 'Relatorio NF-e Novembro 2026.xlsx'), p(base, 'Relatorio NF-e Novembro 2026.pdf'), p(base, 'Foo NF-e Novembro 2026.zip')]
+  const estranho = p(base, 'de-alguem.txt')
+  for (const rel of [...gerados, estranho]) {
+    fs.mkdirSync(path.dirname(path.join(pastaXmls, rel)), { recursive: true })
+    fs.writeFileSync(path.join(pastaXmls, rel), 'x')
+  }
+  const r = migrarLayoutPastaXml({ db, pastaXmls, logger: { info() {}, warn() {}, error() {} } })
+  assert.deepEqual(r.ignorados.filter((f) => f.startsWith('Foo')), [estranho])
+  assert.equal(versao(db), VERSAO_XML)
+  for (const rel of gerados) assert.ok(fs.existsSync(path.join(pastaXmls, rel)), rel)
 })

@@ -16,8 +16,12 @@ const nodeCron = require('node-cron')
  *                                     os horários dela substituem o cron do .env
  * @param {number|false} [deps.atrasoInicialMs] só o servidor pelo terminal roda um ciclo logo depois de iniciar; o app captura só nos horários
  * @param {Function} [deps.agendarUmaVez] setTimeout injetável
+ * @param {Function} [deps.podeCapturar] () => boolean; falso recusa o ciclo de qualquer origem (sem pasta escolhida ou pasta em troca)
+ * @param {Function} [deps.motivoPulo] () => texto do motivo, devolvido em `pulado` quando podeCapturar é falso
+ * @param {Function} [deps.faltaPasta] () => boolean; o pulo é por falta de pasta escolhida
+ * @param {Function} [deps.aoPularSemPasta] chamado a cada horário pulado por falta de pasta
  */
-function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atrasoInicialMs = false, agendarUmaVez = setTimeout, agora = () => new Date() }) {
+function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atrasoInicialMs = false, agendarUmaVez = setTimeout, agora = () => new Date(), podeCapturar = () => true, motivoPulo = () => 'sem pasta principal escolhida ou pasta em troca', faltaPasta = () => false, aoPularSemPasta = () => {} }) {
   let tarefas = []
   let iniciado = false
   let timerInicial = null
@@ -56,6 +60,19 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
     if ((origem === 'agendado' || origem === 'inicio') && !automatica()) {
       logger.info('Busca automática desligada; horário ignorado', { origem })
       return Promise.resolve({ ok: true, pulado: 'busca automática desligada', clientes: [] })
+    }
+    if (!podeCapturar()) {
+      const motivo = motivoPulo()
+      const semPasta = faltaPasta()
+      logger[semPasta ? 'warn' : 'info']('Sem pasta principal escolhida ou pasta em troca; captura ignorada', { origem, motivo })
+      if (semPasta && (origem === 'agendado' || origem === 'inicio')) {
+        try {
+          aoPularSemPasta()
+        } catch (e) {
+          logger.warn('Falha ao avisar da captura pulada', { erro: e.message })
+        }
+      }
+      return Promise.resolve({ ok: true, pulado: motivo, clientes: [] })
     }
     if (emExecucao) {
       logger.warn('Ciclo anterior ainda em andamento; disparo ignorado', { origem })

@@ -48,7 +48,7 @@ test('grava entradas e saídas nas pastas certas e marca a espera de 1 h', async
   assert.equal(n1.emitente_cnpj, PRESTADOR_MOCK)
   assert.equal(n1.destinatario_cnpj, CNPJ_MOCK_OK)
 
-  const base = 'Cliente 1/2026/Outubro/NFS-e'
+  const base = 'Cliente 1/2026/Outubro/NFS-e/XML'
   assert.deepEqual(arquivos(pastaXmls), [
     `${base}/Entradas/${n1.chave}-nfse.xml`,
     `${base}/Entradas/${n2.chave}-nfse.xml`,
@@ -145,4 +145,20 @@ test('documento ilegível vai para o log e não trava a fila', async (t) => {
   assert.equal(r.notas, 2)
   assert.equal(r.ignorados, 1)
   assert.equal(cliente(db, id).nfse_ult_nsu, '3', 'a fila anda')
+})
+
+test('descanso a cada grupo de consultas, contando lotes de todos os clientes', async () => {
+  const { servico, id, pausas, limpar } = montar({ config: { adnConsultasPorGrupo: 2, adnDescansoMs: 30000 } })
+  for (let i = 0; i < 4; i++) await servico.capturarCliente(id, { forcar: true })
+  assert.deepEqual(pausas, [2000, 2000, 30000, 2000])
+  limpar()
+})
+
+test('pausa também entre uma captura e outra', async () => {
+  const { servico, id, pausas, limpar } = montar()
+  await servico.capturarCliente(id, { forcar: true })
+  const antes = pausas.length
+  await servico.capturarCliente(id, { forcar: true })
+  assert.equal(pausas[antes], 2000)
+  limpar()
 })

@@ -2,7 +2,7 @@
 
 // Backup para outra pasta, escolhida na tela Backup (fica na tabela `sistema`) ou no PASTA_BACKUP do .env:
 //   xmls/                espelho dos XMLs: copia só os novos ou alterados e nunca apaga
-//   sped/                espelho de SMART FISCAL\Arquivos SPED, quando há pasta principal (fora da pasta de dados)
+//   sped/                espelho da pasta dos arquivos do SPED, quando o motor a tem fora da pasta de dados
 //   diarios/AAAA-MM-DD/  nfe.db (VACUUM INTO, consistente com o sistema rodando), certs/, .env
 //                        e estoque/ (dados do SPED, sem os logs)
 // Uma cópia diária por dia; guarda as MANTER_DIARIOS mais recentes.
@@ -25,6 +25,8 @@ const caminhoCompleto = (p) => path.win32.isAbsolute(p) || path.posix.isAbsolute
 
 // Data no horário de Brasília (-03:00), como as competências.
 const diaDe = (t) => new Date(t.getTime() - 3 * 3600e3).toISOString().slice(0, 10)
+
+const dentroDe = (base, p) => Boolean(base) && !path.relative(base, p).startsWith('..') && !path.isAbsolute(path.relative(base, p))
 
 function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
   const sql = {
@@ -57,8 +59,7 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
       return { pasta: null, avisos: [] }
     }
     if (!caminhoCompleto(pasta)) throw new Error('Informe o endereço completo da pasta, como D:\\Backup ou \\\\servidor\\backup.')
-    const dentro = (base) => base && !path.relative(base, pasta).startsWith('..') && !path.isAbsolute(path.relative(base, pasta))
-    if (dentro(config.raiz) || dentro(config.pastaEstoque)) throw new Error('A pasta do backup não pode ficar dentro da pasta de dados do Smart Fiscal.')
+    if (dentroDe(config.raiz, pasta) || dentroDe(config.pastaEstoque, pasta)) throw new Error('A pasta do backup não pode ficar dentro da pasta de dados do Smart Fiscal.')
     try {
       fs.mkdirSync(pasta, { recursive: true })
       const teste = path.join(pasta, `.teste-smart-fiscal-${process.pid}`)
@@ -78,7 +79,7 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
   }
 
   // Copia o que não existe no espelho ou mudou de tamanho (o resumo da nota vira o XML completo).
-  async function espelhar(pasta, destino) {
+  async function espelhar(pasta, destino, aceita = () => true) {
     let novos = 0
     let itens = []
     try {
@@ -87,7 +88,7 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
       if (e.code !== 'ENOENT') throw e
     }
     for (const item of itens) {
-      if (!item.isFile()) continue
+      if (!item.isFile() || !aceita(item.name)) continue
       const origem = path.join(item.parentPath, item.name)
       const alvo = path.join(destino, path.relative(pasta, origem))
       const [o, a] = await Promise.all([fsp.stat(origem), fsp.stat(alvo).catch(() => null)])
@@ -97,6 +98,35 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
       novos++
     }
     return novos
+  }
+
+  // Pasta do SPED que a cópia do dia não alcança: a que o motor grava fora da pasta de dados (config.json dele).
+  function pastaDoSpedFora() {
+    if (!config.pastaEstoque) return null
+    const arquivo = path.join(config.pastaEstoque, 'config.json')
+    let dados
+    try {
+      dados = JSON.parse(fs.readFileSync(arquivo, 'utf8'))
+      if (typeof dados !== 'object' || !dados || Array.isArray(dados)) throw new Error('não é um objeto')
+    } catch (e) {
+      logger.warn('Backup sem espelho do SPED: não consegui ler o config.json do motor', { arquivo, erro: e.code || e.message })
+      return null
+    }
+    const pasta = String(dados.pasta_saida || '').trim()
+    if (!pasta || dentroDe(config.raiz, pasta) || dentroDe(config.pastaEstoque, pasta)) return null
+    return pasta
+  }
+
+  // O espelho do SPED não pode impedir a cópia do banco.
+  async function espelharSped(pastaBackup) {
+    try {
+      const pasta = pastaDoSpedFora()
+      if (!pasta) return
+      await fsp.stat(pasta)
+      await espelhar(pasta, path.join(pastaBackup, 'sped'))
+    } catch (e) {
+      logger.warn('Backup sem espelho do SPED', { erro: e.code || e.message })
+    }
   }
 
   async function copiaDoDia(pastaDiarios, dia) {
@@ -138,10 +168,8 @@ function criarServicoBackup({ db, config, logger, agora = () => new Date() }) {
       } catch (e) {
         throw new Error(`Pasta de backup indisponível (${pastaBackup}): ${e.code || e.message}`)
       }
-      const xmlsNovos = await espelhar(config.pastaXmls, path.join(pastaBackup, 'xmls'))
-      // Na pasta principal, os arquivos do SPED estão fora da pasta de dados: a cópia do dia não os alcança.
-      const principal = sql.lerPasta.get('pasta_principal')?.valor
-      if (principal) await espelhar(path.join(principal, 'Arquivos SPED'), path.join(pastaBackup, 'sped'))
+      const xmlsNovos = await espelhar(config.pastaXmls, path.join(pastaBackup, 'xmls'), (nome) => nome.toLowerCase().endsWith('.xml'))
+      await espelharSped(pastaBackup)
       await copiaDoDia(pastaDiarios, dia)
       await rodizio(pastaDiarios)
       const resumo = `${xmlsNovos} ${xmlsNovos === 1 ? 'XML novo' : 'XMLs novos'}; cópia de ${dia.split('-').reverse().join('/')}`

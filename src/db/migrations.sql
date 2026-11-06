@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS execucoes (
   erro TEXT
 );
 
+-- Último estado gerado de cada grupo (empresa, mês, tipo) da pasta organizada: a assinatura diz se o grupo mudou.
+CREATE TABLE IF NOT EXISTS pasta_grupos (
+  cliente_id INTEGER NOT NULL,
+  competencia TEXT NOT NULL,          -- AAAA-MM
+  modelo TEXT NOT NULL,               -- nfe | nfse | cte
+  assinatura TEXT NOT NULL,
+  eventos INTEGER NOT NULL DEFAULT 0, -- eventos do grupo na última geração
+  gerado_em TEXT NOT NULL,            -- ISO
+  PRIMARY KEY (cliente_id, competencia, modelo)
+);
+
 -- Dados do próprio sistema (ex.: ambiente = homologacao | producao | simulada).
 CREATE TABLE IF NOT EXISTS sistema (
   chave TEXT PRIMARY KEY,
