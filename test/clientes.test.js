@@ -13,6 +13,7 @@ const { criarServicoResumo } = require('../src/services/resumo')
 const { descriptografar } = require('../src/crypto')
 const { gerarPfx } = require('./apoio/certificado')
 const { silencioso } = require('./apoio/ambiente')
+const { VERSAO_XML } = require('../src/services/migracaoPastas')
 
 const CNPJ = '11222333000181'
 const FILIAL = '11222333000262'
@@ -135,7 +136,7 @@ test('troca de certificado e ativação', (t) => {
   assert.throws(() => m.servico.definirAtivo(OUTRO, true), /não cadastrado/)
 })
 
-test('escritório: cadastra, recusa segundo e recusa CNPJ de cliente', (t) => {
+test('escritório: cadastra e recusa segundo', (t) => {
   const m = montar()
   t.after(m.limpar)
   assert.equal(m.servico.obterEscritorio(), null)
@@ -148,12 +149,62 @@ test('escritório: cadastra, recusa segundo e recusa CNPJ de cliente', (t) => {
   assert.ok(fs.existsSync(path.join(m.pastaCerts, `${CNPJ}.pfx`)))
 
   assert.throws(() => m.servico.cadastrarEscritorio({ cnpj: FILIAL, razao: 'Outro', uf: 'CE', pfx: certOk.pfx, senha: certOk.senha }), /Já existe um escritório cadastrado \(11222333000181\)\./)
+})
 
-  const m2 = montar()
-  t.after(m2.limpar)
-  m2.servico.cadastrar(dados())
-  assert.throws(() => m2.servico.cadastrarEscritorio({ cnpj: CNPJ, razao: 'Escritório', uf: 'CE', pfx: certOk.pfx, senha: certOk.senha }), /CNPJ 11222333000181 já cadastrado\./)
-  assert.equal(m2.servico.obterEscritorio(), null)
+test('cliente vira escritório na mesma linha: fila de NSU, notas e certificado continuam, e ele segue como cliente', (t) => {
+  const m = montar()
+  t.after(m.limpar)
+  const { cliente } = m.servico.cadastrar(dados())
+  m.db.prepare("UPDATE clientes SET ult_nsu = '000000000002161', nfse_ult_nsu = '75', cte_ult_nsu = '10', ativo = 0 WHERE id = ?").run(cliente.id)
+  m.db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia) VALUES (?, 'a', 'completa', '2026-11')").run(cliente.id)
+
+  const r = m.servico.cadastrarEscritorio({ cnpj: CNPJ, razao: 'Contabilidade Exemplo', uf: 'pe', pfx: certOk.pfx, senha: certOk.senha })
+
+  assert.equal(r.cliente.id, cliente.id)
+  assert.equal(r.cliente.papel, 'escritorio')
+  assert.equal(r.cliente.tambem_cliente, 1)
+  assert.equal(r.cliente.ativo, 1)
+  assert.equal(r.cliente.razao_social, 'Contabilidade Exemplo')
+  assert.equal(r.cliente.uf, 'PE')
+  assert.equal(r.cliente.ult_nsu, '000000000002161')
+  assert.equal(r.cliente.nfse_ult_nsu, '75')
+  assert.equal(r.cliente.cte_ult_nsu, '10')
+  assert.ok(r.certificado.validade)
+  assert.equal(m.db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(cliente.id).n, 1)
+  assert.equal(m.db.prepare('SELECT COUNT(*) n FROM clientes').get().n, 1)
+  assert.equal(m.servico.obterEscritorio().cnpj, CNPJ)
+  assert.throws(() => m.servico.cadastrarEscritorio({ cnpj: CNPJ, razao: 'X', uf: 'CE', pfx: certOk.pfx, senha: certOk.senha }), /Já existe um escritório/)
+})
+
+test('cliente vira escritório: certificado de outro CNPJ é recusado e nada muda', (t) => {
+  const m = montar()
+  t.after(m.limpar)
+  m.servico.cadastrar(dados())
+  const outro = gerarPfx({ cnpj: OUTRO })
+  assert.throws(() => m.servico.cadastrarEscritorio({ cnpj: CNPJ, razao: 'Contabilidade', uf: 'CE', pfx: outro.pfx, senha: outro.senha }))
+  assert.equal(m.servico.obterEscritorio(), null)
+  const linha = m.db.prepare('SELECT papel, apelido, razao_social FROM clientes').get()
+  assert.deepEqual({ ...linha }, { papel: 'cliente', apelido: 'Teste', razao_social: 'Empresa Teste Ltda' })
+})
+
+test('cliente vira escritório: a pasta acompanha o nome, com o banco', (t) => {
+  const m = montar()
+  t.after(m.limpar)
+  m.config.pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-xmls-'))
+  t.after(() => fs.rmSync(m.config.pastaXmls, { recursive: true, force: true }))
+  const { cliente } = m.servico.cadastrar(dados())
+  m.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pastas_layout', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run(VERSAO_XML)
+  const rel = path.join('Teste', '2026', '11-Novembro', 'NF-e', 'XML', 'Entradas', 'a-nfe.xml')
+  fs.mkdirSync(path.dirname(path.join(m.config.pastaXmls, rel)), { recursive: true })
+  fs.writeFileSync(path.join(m.config.pastaXmls, rel), '<a/>')
+  m.db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia, caminho_xml) VALUES (?, 'a', 'completa', '2026-11', ?)").run(cliente.id, rel)
+
+  const r = m.servico.cadastrarEscritorio({ cnpj: CNPJ, razao: 'Contabilidade Exemplo', uf: 'CE', pfx: certOk.pfx, senha: certOk.senha })
+
+  const novo = rel.replace('Teste', 'Contabilidade Exemplo')
+  assert.deepEqual(r.avisos, [])
+  assert.ok(fs.existsSync(path.join(m.config.pastaXmls, novo)))
+  assert.equal(m.db.prepare('SELECT caminho_xml c FROM notas').get().c, novo)
 })
 
 test('listar traz papel e nunca a senha', (t) => {

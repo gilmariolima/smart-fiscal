@@ -10,7 +10,7 @@ const path = require('node:path')
 const { abrirBanco } = require('../src/db')
 const { criarServicoPastas, MARCA } = require('../src/services/pastas')
 
-const REL = (n) => path.join('Foo', '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', `${n}-nfe.xml`)
+const REL = (n) => path.join('Foo', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', `${n}-nfe.xml`)
 
 function preparar(t, { marca = true, opcoes = {} } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-troca-'))

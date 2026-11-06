@@ -20,7 +20,7 @@ const { criarAutomacao } = require('./services/automacao')
 const { criarServicoBackup } = require('./services/backup')
 const { criarServicoPastas } = require('./services/pastas')
 const { criarOrganizador } = require('./services/pastaOrganizada')
-const { migrarLayouts } = require('./services/migracaoPastas')
+const { migrarLayouts, limparResumosDeNotasCompletas } = require('./services/migracaoPastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
 function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, agora, verificarAmbiente: verificar = true } = {}) {
@@ -40,8 +40,10 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   const pastas = criarServicoPastas(deps)
   // Uma vez só: XMLs dos formatos antigos para o atual. O que ficar pendente, o organizador tenta de novo.
   migrarLayouts({ db: banco, pastaXmls: config.pastaXmls, logger: log })
+  limparResumosDeNotasCompletas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
   const clientes = criarServicoClientes(deps)
   const ciclo = criarServicoCiclo(deps)
+  ciclo.corrigirNotasDoEscritorio()
   // Com captura rodando, a pasta da empresa não muda de lugar: o grupo fica pendente e volta no fim do ciclo.
   const reconciliarPasta = (cliente) => {
     if (ciclo.cicloEmAndamento()) return ['Há uma captura em andamento: a pasta da empresa não muda de lugar agora. O Smart Fiscal tenta de novo quando ela terminar.']

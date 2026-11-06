@@ -127,6 +127,9 @@ function abrirBanco(caminho) {
       const colunas = db.prepare("SELECT name FROM pragma_table_info('notas')").all().map((c) => c.name)
       if (colunas.length > 0 && !colunas.includes('tipo')) migrar(db, caminho)
     }
+    // Só registra o que já foi gerado: sem a direção, a tabela recomeça e a geração refaz relatórios e ZIP.
+    const colunasDosGrupos = db.prepare("SELECT name FROM pragma_table_info('pasta_grupos')").all().map((c) => c.name)
+    if (colunasDosGrupos.length && !colunasDosGrupos.includes('direcao')) db.exec('DROP TABLE pasta_grupos')
     db.exec(fs.readFileSync(MIGRATIONS, 'utf8'))
     // Colunas novas em bancos criados antes delas (o CREATE TABLE IF NOT EXISTS não as acrescenta).
     for (const [tabela, coluna, definicao] of COLUNAS_NOVAS) {

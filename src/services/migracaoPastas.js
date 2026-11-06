@@ -12,17 +12,29 @@
 // Quarta mudança (migrarLayoutAnoMes): para <Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Tipo>/<Direção>/...,
 // a mesma ordem das telas e da exportação.
 // Quinta mudança (migrarLayoutPastaXml): para <Cliente>/[fora-da-carteira/]AAAA/<Mês>/<Tipo>/XML/<Direção>/...,
-// deixando o lado do PDF. Quem vem de antes passa por todas, em sequência.
+// deixando o lado do PDF.
+// Sexta mudança (migrarLayoutMesNumerado): a pasta do mês ganha o número (11-Novembro).
+// Sétima mudança (migrarLayoutDirecao): a direção vem antes do tipo: <Cliente>/[fora-da-carteira/]AAAA/<MM-Mês>/<Direção>/<Tipo>/(XML|PDF)/...
+// Oitava mudança (migrarLayoutEventos): eventos e resumos saem de entradas e saídas: <MM-Mês>/Eventos e Resumos/<Tipo>/...
+// Nona mudança (migrarLayoutSemCliente): a pasta fora-da-carteira passa a se chamar Sem cliente cadastrado.
+// Quem vem de antes passa por todas, em sequência.
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { direcaoPelaChave, modeloPelaChave, pastaDoClienteNoDisco, MESES, PASTAS } = require('./armazenamento')
+const { direcaoPelaChave, modeloPelaChave, pastaDoClienteNoDisco, caminhoDoResumo, pastaDoMes, comMesNumerado, temMesSemNumero, comDirecaoAntesDoTipo, comAvulsosNoLugar, MESES, PASTAS } = require('./armazenamento')
+const { nomearSemSobrescreverSync } = require('./copiaDePastas')
 
 const VERSAO = '2'
 const VERSAO_LAYOUT = '3'
 const VERSAO_EMPRESA = '4'
 const VERSAO_ANO_MES = '5'
-const VERSAO_XML = '6'
+const VERSAO_PASTA_XML = '6'
+const VERSAO_MES = '7'
+const VERSAO_DIRECAO = '8'
+const VERSAO_EVENTOS = '9'
+const VERSAO_XML = '10'
+// Nome da pasta até a nona mudança; as anteriores ainda o encontram no disco.
+const FORA_ANTIGA = 'fora-da-carteira'
 const PASTA_CLIENTE = /^(\d{14})(_.*)?$/
 const PASTA_MES = /^(\d{4}-\d{2}|sem-data)$/
 const ARQUIVO = /^(\d+)-(nfe|resumo|evento-\d+-\d+)\.xml$/
@@ -35,12 +47,14 @@ const CAMINHO_V3 = new RegExp(`^([^/]+)/(?:(fora-da-carteira)/)?((?:\\d{4}/(?:${
 // Dentro da pasta do cliente, nos formatos da versão 4 (<Tipo>/AAAA/<Mês>|sem-data/...) e da 5 (AAAA/<Mês>|sem-data/<Tipo>/...).
 const QUANDO = `(?:\\d{4}/(?:${MESES.join('|')})|sem-data)`
 const CAMINHO_V4 = new RegExp(`^(?:(fora-da-carteira)/)?(NF-e|NFS-e|CT-e)/(${QUANDO})/((?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+)$`)
-const CAMINHO_V5 = new RegExp(`^(?:fora-da-carteira/)?${QUANDO}/(?:NF-e|NFS-e|CT-e)/(?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+$`)
+// Com a mudança anterior pendente, uma captura já grava com o mês numerado: também não é arquivo fora do padrão.
+const QUANDO_ATUAL = `(?:\\d{4}/(?:\\d{2}-)?(?:${MESES.join('|')})|sem-data)`
+const CAMINHO_V5 = new RegExp(`^(?:fora-da-carteira/)?${QUANDO_ATUAL}/(?:NF-e|NFS-e|CT-e)/(?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+$`)
 // Versão 6: o mesmo com XML/ entre o tipo e a direção.
-const CAMINHO_V6 = new RegExp(`^(?:fora-da-carteira/)?${QUANDO}/(?:NF-e|NFS-e|CT-e)/XML/(?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+$`)
+const CAMINHO_V6 = new RegExp(`^(?:fora-da-carteira/|Sem cliente cadastrado/)?${QUANDO_ATUAL}/(?:(?:NF-e|NFS-e|CT-e)/XML/(?:Entradas|Saidas|Outros)|(?:Entradas|Saidas|Outros)/(?:NF-e|NFS-e|CT-e)/XML|Eventos e Resumos/(?:NF-e|NFS-e|CT-e))/(?:(?:Eventos|Resumos)/)?[^/]+$`)
 // O que a pasta organizada gera ao lado do XML (em nova tentativa da migração): não é arquivo fora do padrão.
-const GERADO_NO_GRUPO = new RegExp(`^(?:fora-da-carteira/)?${QUANDO}/(?:NF-e|NFS-e|CT-e)/(?:PDF/.+|[^/]+\\.(?:xlsx|pdf|zip|tmp))$`, 'i')
-const CAMINHO_V5_PARTES = new RegExp(`^(?:(fora-da-carteira)/)?(${QUANDO})/(NF-e|NFS-e|CT-e)/((?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+)$`)
+const GERADO_NO_GRUPO = new RegExp(`^(?:fora-da-carteira/|Sem cliente cadastrado/)?${QUANDO_ATUAL}/(?:(?:Entradas|Saidas|Outros)/)?(?:NF-e|NFS-e|CT-e)/(?:PDF/.+|[^/]+\\.(?:xlsx|pdf|zip|tmp))$`, 'i')
+const CAMINHO_V5_PARTES = new RegExp(`^(?:(fora-da-carteira)/)?(${QUANDO_ATUAL})/(NF-e|NFS-e|CT-e)/((?:Entradas|Saidas|Outros)/(?:(?:Eventos|Resumos)/)?[^/]+)$`)
 
 const mesmoConteudo = (a, b) => fs.readFileSync(a).equals(fs.readFileSync(b))
 const barras = (rel) => rel.replace(/\\/g, '/')
@@ -49,7 +63,7 @@ const barras = (rel) => rel.replace(/\\/g, '/')
 function caminhoV2({ foraDaCarteira, competencia, modelo, direcao, categoria, nomeArquivo }) {
   const m = /^(\d{4})-(\d{2})$/.exec(competencia || '')
   const partes = []
-  if (foraDaCarteira) partes.push(PASTAS.foraDaCarteira)
+  if (foraDaCarteira) partes.push(FORA_ANTIGA)
   partes.push(...(m ? [m[1], m[2]] : [PASTAS.semData]))
   partes.push(PASTAS.modelo[modelo] || PASTAS.modelo.nfe, PASTAS.direcao[direcao] || PASTAS.direcao.entrada)
   if (categoria === 'evento') partes.push(PASTAS.evento)
@@ -151,7 +165,7 @@ function executar({ db, pastaXmls, logger, ops, resultado }) {
     if (!cnpj || !fs.statSync(path.join(pastaXmls, pastaCliente)).isDirectory()) continue
     const clienteId = sql.cliente.get(cnpj)?.id
     for (const foraDaCarteira of [false, true]) {
-      const base = foraDaCarteira ? path.join(pastaCliente, PASTAS.foraDaCarteira) : pastaCliente
+      const base = foraDaCarteira ? path.join(pastaCliente, FORA_ANTIGA) : pastaCliente
       if (!fs.existsSync(path.join(pastaXmls, base))) continue
       for (const mes of ops.readdirSync(path.join(pastaXmls, base)).filter((m) => PASTA_MES.test(m))) {
         const pastaMes = path.join(base, mes)
@@ -200,7 +214,7 @@ function removerSeVazia(pasta) {
 function migrarLayoutDasTelas({ db, pastaXmls, logger, fsOps = {} }) {
   const resultado = { movidos: 0, ignorados: [], pendentes: [] }
   const lerVersao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'")
-  if ([VERSAO_LAYOUT, VERSAO_EMPRESA, VERSAO_ANO_MES, VERSAO_XML].includes(lerVersao.get()?.valor)) return resultado
+  if ([VERSAO_LAYOUT, VERSAO_EMPRESA, VERSAO_ANO_MES, VERSAO_PASTA_XML, VERSAO_MES, VERSAO_DIRECAO, VERSAO_EVENTOS, VERSAO_XML].includes(lerVersao.get()?.valor)) return resultado
   try {
     executarLayout({ db, pastaXmls, logger, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
   } catch (e) {
@@ -384,7 +398,7 @@ function migrarLayoutPastaXml({ db, pastaXmls, logger, fsOps = {} }) {
 }
 
 function executarPastaXml({ db, pastaXmls, logger, ops, resultado }) {
-  const gravarVersao = () => db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_XML)
+  const gravarVersao = () => db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_PASTA_XML)
   if (!fs.existsSync(pastaXmls)) {
     pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
     return
@@ -419,6 +433,310 @@ function executarPastaXml({ db, pastaXmls, logger, ops, resultado }) {
   if (resultado.movidos) logger.info('XMLs separados em pasta própria', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
 }
 
+/**
+ * Dá o número à pasta do mês: <Cliente>/[fora-da-carteira/]AAAA/<MM-Mês>/...
+ * Roda também com a pasta XML pendente, sem gravar a versão: um XML travado lá só deve afetar o mês dele.
+ * Renomeia o mês inteiro, com PDFs, relatórios e ZIP, em uma operação; o que está em uso vai arquivo a arquivo.
+ * @returns {{ movidos: number, ignorados: string[], pendentes: string[], erro?: string }}
+ */
+function migrarLayoutMesNumerado({ db, pastaXmls, logger, fsOps = {} }) {
+  const resultado = { movidos: 0, ignorados: [], pendentes: [] }
+  const versao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get()?.valor
+  if (versao !== VERSAO_PASTA_XML && versao !== VERSAO_ANO_MES) return resultado
+  try {
+    executarMesNumerado({ db, pastaXmls, logger, podeGravarVersao: versao === VERSAO_PASTA_XML, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
+  } catch (e) {
+    resultado.erro = e.message
+    logger.error('Falha ao numerar as pastas dos meses; tenta de novo na próxima abertura', { erro: e.message })
+  }
+  return resultado
+}
+
+// Move pastas inteiras, com o banco acompanhando. O que estiver em uso vai arquivo a arquivo. `precisa` e `novoCaminho` dizem quais linhas mudam e como.
+function criarMovedorDePastas({ db, pastaXmls, logger, ops, resultado, precisa, novoCaminho }) {
+  // Linhas que ainda não mudaram, para apontar sem varrer a tabela a cada pasta.
+  const chave = (rel) => barras(rel).toLowerCase()
+  const faltam = new Map()
+  for (const tabela of ['notas', 'eventos']) {
+    const atualizar = db.prepare(`UPDATE ${tabela} SET caminho_xml = ? WHERE id = ?`)
+    for (const { id, caminho_xml: caminho } of db.prepare(`SELECT id, caminho_xml FROM ${tabela} WHERE caminho_xml IS NOT NULL`).all()) {
+      if (!precisa(caminho)) continue
+      const k = chave(caminho)
+      faltam.set(k, [...(faltam.get(k) || []), { id, caminho, atualizar }])
+    }
+  }
+  const apontar = db.transaction((chaves) => {
+    for (const k of chaves) {
+      for (const l of faltam.get(k) || []) l.atualizar.run(novoCaminho(l.caminho), l.id)
+      faltam.delete(k)
+    }
+  })
+
+  function juntar(antigo, novo) {
+    const origem = path.join(pastaXmls, antigo)
+    for (const item of fs.readdirSync(origem, { recursive: true, withFileTypes: true })) {
+      if (!item.isFile() || item.name.toLowerCase().endsWith('.tmp')) continue
+      const de = path.join(item.parentPath, item.name)
+      const dentro = path.relative(origem, de)
+      const rel = path.join(antigo, dentro)
+      const para = path.join(pastaXmls, novo, dentro)
+      try {
+        fs.mkdirSync(path.dirname(para), { recursive: true })
+        if (!nomearSemSobrescreverSync(de, para) && !mesmoConteudo(de, para)) {
+          // Relatório, ZIP e PDF são refeitos; XML com outro conteúdo não pode ficar sem dono.
+          if (rel.toLowerCase().endsWith('.xml')) {
+            resultado.pendentes.push(rel)
+            logger.warn('XML com outro conteúdo na pasta nova: os dois foram mantidos', { arquivo: rel })
+          } else resultado.ignorados.push(rel)
+          continue
+        }
+        apontar([chave(rel)])
+        fs.unlinkSync(de)
+        resultado.movidos++
+      } catch (e) {
+        resultado.pendentes.push(rel)
+        logger.warn('Arquivo não saiu da pasta antiga; tenta de novo depois', { arquivo: rel, erro: e.code || e.message })
+      }
+    }
+    removerVaziasDentro(origem)
+  }
+
+  function mover(antigo, novo) {
+    if (!fs.existsSync(path.join(pastaXmls, novo))) {
+      try {
+        fs.mkdirSync(path.dirname(path.join(pastaXmls, novo)), { recursive: true })
+        ops.renameSync(path.join(pastaXmls, antigo), path.join(pastaXmls, novo))
+        const prefixo = `${chave(antigo)}/`
+        apontar([...faltam.keys()].filter((k) => k.startsWith(prefixo)))
+        resultado.movidos++
+        return
+      } catch (e) {
+        logger.warn('Pasta em uso: levando arquivo a arquivo', { pasta: antigo, erro: e.code || e.message })
+      }
+    }
+    juntar(antigo, novo)
+  }
+
+  // App caiu entre mover e gravar o banco, ou linha sem arquivo: vale o caminho novo, a menos que o arquivo siga na pasta antiga.
+  function concluir() {
+    for (const k of [...faltam.keys()]) {
+      const { caminho } = faltam.get(k)[0]
+      if (!fs.existsSync(path.join(pastaXmls, caminho))) apontar([k])
+      else if (!resultado.pendentes.some((rel) => chave(rel) === k)) resultado.pendentes.push(caminho)
+    }
+  }
+
+  return { mover, concluir }
+}
+
+// Link ou junction fica de fora.
+const subpastas = (pastaXmls, ops, rel) => ops.readdirSync(path.join(pastaXmls, rel)).filter((n) => fs.lstatSync(path.join(pastaXmls, rel, n)).isDirectory())
+// A pasta do cliente e, se houver, a das notas sem cliente dentro dela, com o nome antigo ou o atual.
+const basesDoCliente = (pastaXmls, cliente) => [cliente, ...[FORA_ANTIGA, PASTAS.foraDaCarteira].map((nome) => path.join(cliente, nome)).filter((d) => fs.existsSync(path.join(pastaXmls, d)))]
+
+function executarMesNumerado({ db, pastaXmls, logger, podeGravarVersao, ops, resultado }) {
+  const gravarVersao = () => {
+    if (podeGravarVersao) db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_MES)
+  }
+  if (!fs.existsSync(pastaXmls)) {
+    pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
+    return
+  }
+  const movedor = criarMovedorDePastas({ db, pastaXmls, logger, ops, resultado, precisa: temMesSemNumero, novoCaminho: comMesNumerado })
+  for (const cliente of subpastas(pastaXmls, ops, '.')) {
+    for (const base of basesDoCliente(pastaXmls, cliente)) {
+      for (const ano of subpastas(pastaXmls, ops, base).filter((n) => /^\d{4}$/.test(n))) {
+        for (const mes of subpastas(pastaXmls, ops, path.join(base, ano))) {
+          const i = MESES.indexOf(mes)
+          if (i >= 0) movedor.mover(path.join(base, ano, mes), path.join(base, ano, pastaDoMes(i + 1)))
+        }
+      }
+    }
+  }
+  movedor.concluir()
+  if (resultado.ignorados.length) logger.warn('Arquivos diferentes com o mesmo nome ficaram na pasta antiga do mês', { arquivos: resultado.ignorados })
+  if (!resultado.pendentes.length) gravarVersao()
+  if (resultado.movidos) logger.info('Pastas dos meses numeradas', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
+}
+
+/**
+ * Passa a direção para antes do tipo: <MM-Mês>/<Tipo>/(XML|PDF)/<Direção> vira <MM-Mês>/<Direção>/<Tipo>/(XML|PDF).
+ * Aproveita XML e PDF. Relatórios e ZIP misturavam as direções: saem, e a geração refaz por direção.
+ * Roda também com etapa anterior pendente, sem gravar a versão: um XML travado lá só deve afetar o mês dele.
+ * @returns {{ movidos: number, ignorados: string[], pendentes: string[], erro?: string }}
+ */
+function migrarLayoutDirecao({ db, pastaXmls, logger, fsOps = {} }) {
+  const resultado = { movidos: 0, ignorados: [], pendentes: [] }
+  const versao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get()?.valor
+  if (![VERSAO_ANO_MES, VERSAO_PASTA_XML, VERSAO_MES].includes(versao)) return resultado
+  try {
+    executarDirecao({ db, pastaXmls, logger, podeGravarVersao: versao === VERSAO_MES, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
+  } catch (e) {
+    resultado.erro = e.message
+    logger.error('Falha ao separar as pastas em entradas e saídas; tenta de novo na próxima abertura', { erro: e.message })
+  }
+  return resultado
+}
+
+function executarDirecao({ db, pastaXmls, logger, podeGravarVersao, ops, resultado }) {
+  const gravarVersao = () => {
+    if (podeGravarVersao) db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_DIRECAO)
+  }
+  if (!fs.existsSync(pastaXmls)) {
+    pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
+    return
+  }
+  const movedor = criarMovedorDePastas({
+    db,
+    pastaXmls,
+    logger,
+    ops,
+    resultado,
+    precisa: (c) => comDirecaoAntesDoTipo(c) !== c,
+    novoCaminho: comDirecaoAntesDoTipo,
+  })
+  const tipos = Object.values(PASTAS.modelo)
+  const direcoes = Object.values(PASTAS.direcao)
+
+  function arrumarQuando(quando) {
+    for (const tipo of subpastas(pastaXmls, ops, quando).filter((n) => tipos.includes(n))) {
+      const pastaTipo = path.join(quando, tipo)
+      for (const area of subpastas(pastaXmls, ops, pastaTipo).filter((n) => n === PASTAS.xml || n === PASTAS.pdf)) {
+        for (const direcao of subpastas(pastaXmls, ops, path.join(pastaTipo, area)).filter((n) => direcoes.includes(n))) {
+          movedor.mover(path.join(pastaTipo, area, direcao), path.join(quando, direcao, tipo, area))
+        }
+      }
+      for (const nome of ops.readdirSync(path.join(pastaXmls, pastaTipo))) {
+        if (!/^Relatorio .*\.(xlsx|pdf)$/i.test(nome) && !/\.zip$/i.test(nome)) continue
+        try {
+          fs.rmSync(path.join(pastaXmls, pastaTipo, nome))
+        } catch (e) {
+          logger.warn('Relatório ou ZIP antigo não saiu da pasta', { arquivo: path.join(pastaTipo, nome), erro: e.code || e.message })
+        }
+      }
+      removerVaziasDentro(path.join(pastaXmls, pastaTipo))
+    }
+  }
+
+  for (const cliente of subpastas(pastaXmls, ops, '.')) {
+    for (const base of basesDoCliente(pastaXmls, cliente)) {
+      for (const nome of subpastas(pastaXmls, ops, base)) {
+        if (nome === PASTAS.semData) arrumarQuando(path.join(base, nome))
+        else if (/^\d{4}$/.test(nome)) for (const mes of subpastas(pastaXmls, ops, path.join(base, nome))) arrumarQuando(path.join(base, nome, mes))
+      }
+    }
+  }
+  movedor.concluir()
+  if (resultado.ignorados.length) logger.warn('Arquivos diferentes com o mesmo nome ficaram na pasta antiga do tipo', { arquivos: resultado.ignorados })
+  if (!resultado.pendentes.length) gravarVersao()
+  if (resultado.movidos) logger.info('Pastas separadas em entradas e saídas', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
+}
+
+/**
+ * Tira eventos e resumos de entradas e saídas: <Direção>/<Tipo>/XML/(Eventos|Resumos) vai para Eventos e Resumos/<Tipo>.
+ * Roda também com etapa anterior pendente, sem gravar a versão.
+ * @returns {{ movidos: number, ignorados: string[], pendentes: string[], erro?: string }}
+ */
+function migrarLayoutEventos({ db, pastaXmls, logger, fsOps = {} }) {
+  const resultado = { movidos: 0, ignorados: [], pendentes: [] }
+  const versao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get()?.valor
+  if (![VERSAO_ANO_MES, VERSAO_PASTA_XML, VERSAO_MES, VERSAO_DIRECAO].includes(versao)) return resultado
+  try {
+    executarEventos({ db, pastaXmls, logger, podeGravarVersao: versao === VERSAO_DIRECAO, ops: { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }, resultado })
+  } catch (e) {
+    resultado.erro = e.message
+    logger.error('Falha ao separar eventos e resumos; tenta de novo na próxima abertura', { erro: e.message })
+  }
+  return resultado
+}
+
+function executarEventos({ db, pastaXmls, logger, podeGravarVersao, ops, resultado }) {
+  const gravarVersao = () => {
+    if (podeGravarVersao) db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_EVENTOS)
+  }
+  if (!fs.existsSync(pastaXmls)) {
+    pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
+    return
+  }
+  const movedor = criarMovedorDePastas({
+    db,
+    pastaXmls,
+    logger,
+    ops,
+    resultado,
+    precisa: (c) => comAvulsosNoLugar(c) !== c,
+    novoCaminho: comAvulsosNoLugar,
+  })
+  const tipos = Object.values(PASTAS.modelo)
+  const direcoes = Object.values(PASTAS.direcao)
+
+  function arrumarQuando(quando) {
+    for (const direcao of subpastas(pastaXmls, ops, quando).filter((n) => direcoes.includes(n))) {
+      for (const tipo of subpastas(pastaXmls, ops, path.join(quando, direcao)).filter((n) => tipos.includes(n))) {
+        const xml = path.join(quando, direcao, tipo, PASTAS.xml)
+        if (!fs.existsSync(path.join(pastaXmls, xml))) continue
+        for (const nome of subpastas(pastaXmls, ops, xml).filter((n) => n === PASTAS.evento || n === PASTAS.resumo)) {
+          movedor.mover(path.join(xml, nome), path.join(quando, PASTAS.avulsos, tipo))
+        }
+      }
+      removerVaziasDentro(path.join(pastaXmls, quando, direcao))
+    }
+  }
+
+  for (const cliente of subpastas(pastaXmls, ops, '.')) {
+    for (const base of basesDoCliente(pastaXmls, cliente)) {
+      for (const nome of subpastas(pastaXmls, ops, base)) {
+        if (nome === PASTAS.semData) arrumarQuando(path.join(base, nome))
+        else if (/^\d{4}$/.test(nome)) for (const mes of subpastas(pastaXmls, ops, path.join(base, nome))) arrumarQuando(path.join(base, nome, mes))
+      }
+    }
+  }
+  movedor.concluir()
+  if (resultado.ignorados.length) logger.warn('Arquivos diferentes com o mesmo nome ficaram em entradas ou saídas', { arquivos: resultado.ignorados })
+  if (!resultado.pendentes.length) gravarVersao()
+  if (resultado.movidos) logger.info('Eventos e resumos separados', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
+}
+
+/**
+ * A pasta fora-da-carteira passa a se chamar Sem cliente cadastrado. Roda também com etapa anterior pendente, sem gravar a versão.
+ * @returns {{ movidos: number, ignorados: string[], pendentes: string[], erro?: string }}
+ */
+function migrarLayoutSemCliente({ db, pastaXmls, logger, fsOps = {} }) {
+  const resultado = { movidos: 0, ignorados: [], pendentes: [] }
+  const versao = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get()?.valor
+  if (![VERSAO_ANO_MES, VERSAO_PASTA_XML, VERSAO_MES, VERSAO_DIRECAO, VERSAO_EVENTOS].includes(versao)) return resultado
+  const gravarVersao = () => {
+    if (versao === VERSAO_EVENTOS) db.prepare("UPDATE sistema SET valor = ? WHERE chave = 'pastas_layout'").run(VERSAO_XML)
+  }
+  try {
+    if (!fs.existsSync(pastaXmls)) {
+      pastaIndisponivel({ db, pastaXmls, logger, gravarVersao, aviso: 'Pasta de XMLs indisponível; as pastas serão organizadas na próxima abertura' })
+      return resultado
+    }
+    const ops = { renameSync: fs.renameSync, readdirSync: fs.readdirSync, ...fsOps }
+    const antiga = new RegExp(`(^|[\\\\/])${FORA_ANTIGA}(?=[\\\\/])`)
+    const movedor = criarMovedorDePastas({
+      db,
+      pastaXmls,
+      logger,
+      ops,
+      resultado,
+      precisa: (c) => antiga.test(c),
+      novoCaminho: (c) => c.replace(antiga, (_, barra) => `${barra}${PASTAS.foraDaCarteira}`),
+    })
+    for (const cliente of subpastas(pastaXmls, ops, '.')) {
+      if (fs.existsSync(path.join(pastaXmls, cliente, FORA_ANTIGA))) movedor.mover(path.join(cliente, FORA_ANTIGA), path.join(cliente, PASTAS.foraDaCarteira))
+    }
+    movedor.concluir()
+    if (!resultado.pendentes.length) gravarVersao()
+    if (resultado.movidos) logger.info('Pasta das notas sem cliente renomeada', { movidos: resultado.movidos, pendentes: resultado.pendentes.length })
+  } catch (e) {
+    resultado.erro = e.message
+    logger.error('Falha ao renomear a pasta das notas sem cliente; tenta de novo na próxima abertura', { erro: e.message })
+  }
+  return resultado
+}
+
 // Apaga as subpastas que ficaram vazias, de baixo para cima, e a própria pasta se esvaziar.
 function removerVaziasDentro(pasta) {
   try {
@@ -432,12 +750,48 @@ function removerVaziasDentro(pasta) {
 }
 
 /**
+ * Uma vez só: tira os resumos que sobraram de notas já completas e com o XML no disco. Os meses mudados voltam a ser gerados,
+ * para o ZIP acompanhar. Espera as pastas no formato atual; arquivo preso ou pasta fora do ar tenta na próxima abertura.
+ * @returns {{ apagados: number, falhas: number }}
+ */
+function limparResumosDeNotasCompletas({ db, pastaXmls, logger }) {
+  const resultado = { apagados: 0, falhas: 0 }
+  const valor = (chave) => db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get(chave)
+  if (valor('resumos_limpos') || valor('pastas_layout') !== VERSAO_XML || !fs.existsSync(pastaXmls)) return resultado
+  const meses = new Map()
+  for (const n of db.prepare("SELECT cliente_id, competencia, modelo, caminho_xml FROM notas WHERE status = 'completa' AND modelo = 'nfe' AND caminho_xml IS NOT NULL").all()) {
+    const relativo = caminhoDoResumo(n.caminho_xml)
+    if (!relativo) continue
+    const resumo = path.join(pastaXmls, relativo)
+    try {
+      if (!fs.existsSync(resumo) || !fs.statSync(path.join(pastaXmls, n.caminho_xml)).size) continue
+      fs.rmSync(resumo)
+      resultado.apagados++
+      meses.set(`${n.cliente_id}|${n.competencia}|${n.modelo}`, n)
+      removerSeVazia(path.dirname(resumo))
+      removerSeVazia(path.dirname(path.dirname(resumo)))
+    } catch (e) {
+      if (e.code === 'ENOENT') continue // a nota está sem o arquivo: o resumo fica
+      resultado.falhas++
+      logger.warn('Resumo da nota completa não saiu da pasta; tenta de novo na próxima abertura', { arquivo: relativo, erro: e.code || e.message })
+    }
+  }
+  const refazer = db.prepare('DELETE FROM pasta_grupos WHERE cliente_id = ? AND competencia = ? AND modelo = ?')
+  db.transaction(() => {
+    for (const n of meses.values()) refazer.run(n.cliente_id, n.competencia, n.modelo)
+    if (!resultado.falhas) db.prepare("INSERT INTO sistema (chave, valor) VALUES ('resumos_limpos', '1') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run()
+  })()
+  if (resultado.apagados) logger.info('Resumos de notas completas retirados', { ...resultado, meses: meses.size })
+  return resultado
+}
+
+/**
  * Todas as mudanças, em ordem; quem já está na versão de uma delas passa direto. Só uma tentativa: o que faltar fica para a próxima.
  * @returns {{ movidos: number, pendentes: number, ignorados: number, erros: string[] }}
  */
 function migrarLayouts({ db, pastaXmls, logger, fsOps = {} }) {
   const total = { movidos: 0, pendentes: 0, ignorados: 0, erros: [] }
-  for (const migrar of [migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml]) {
+  for (const migrar of [migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml, migrarLayoutMesNumerado, migrarLayoutDirecao, migrarLayoutEventos, migrarLayoutSemCliente]) {
     const r = migrar({ db, pastaXmls, logger, fsOps })
     total.movidos += r.movidos
     total.pendentes += r.pendentes.length
@@ -447,4 +801,4 @@ function migrarLayouts({ db, pastaXmls, logger, fsOps = {} }) {
   return total
 }
 
-module.exports = { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml, migrarLayouts, VERSAO_XML }
+module.exports = { migrarPastas, migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml, migrarLayoutMesNumerado, migrarLayoutDirecao, migrarLayoutEventos, migrarLayoutSemCliente, migrarLayouts, limparResumosDeNotasCompletas, VERSAO_XML }

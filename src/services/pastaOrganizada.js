@@ -1,45 +1,48 @@
 'use strict'
 
-// Pasta organizada: mantém em disco o relatório e o Excel de cada grupo (empresa, mês, tipo).
+// Pasta organizada: mantém em disco o relatório e o Excel de cada grupo (empresa, mês, direção, tipo).
 // Os grupos guardam a assinatura da última geração; só os que mudaram desde então ficam pendentes.
 
 const fs = require('node:fs')
 const path = require('node:path')
 const archiver = require('archiver')
-const { criarArmazenamento, pastaDoClienteNoDisco, pastasDoClienteNoBanco, pastasPendentesDoCliente, pastaDoGrupo, caminhoDoPdf, nomeDoCliente, MESES, PASTAS } = require('./armazenamento')
+const { criarArmazenamento, pastaDoClienteNoDisco, pastasDoClienteNoBanco, pastasPendentesDoCliente, pastaDoGrupo, caminhoDoPdf, foraDoFormatoAtual, nomeDoCliente, MESES, PASTAS } = require('./armazenamento')
 const { migrarLayouts, VERSAO_XML } = require('./migracaoPastas')
 const { pdfsDasNotas } = require('./pdfNota')
 const { montarPlanilhaDoMes } = require('./planilhaMes')
 const { montarRelatorioPdf } = require('./relatorioPdf')
 
-// Notas da carteira com competência. Fora da carteira: o caminho do XML passa por `fora-da-carteira` (com / ou \).
+// Notas da carteira com competência. Sem cliente: o caminho do XML passa pela pasta deles, com o nome atual ou o antigo (com / ou \).
 // Resumos ainda sem XML (caminho nulo) entram.
+const FORA_DOS_GRUPOS = (coluna) => `instr(replace(${coluna}, char(92), '/'), 'fora-da-carteira') = 0 AND instr(replace(${coluna}, char(92), '/'), '${PASTAS.foraDaCarteira}') = 0`
 const DO_GRUPO = `n.competencia IS NOT NULL
   AND (c.papel = 'cliente' OR c.tambem_cliente = 1)
-  AND (n.caminho_xml IS NULL OR instr(replace(n.caminho_xml, char(92), '/'), 'fora-da-carteira') = 0)`
+  AND (n.caminho_xml IS NULL OR (${FORA_DOS_GRUPOS('n.caminho_xml')}))`
 
-const chaveDe = (clienteId, competencia, modelo) => `${clienteId}|${competencia}|${modelo}`
+// A direção é a do tipo da nota; nota sem tipo é entrada, como no relatório.
+const DIRECAO = "COALESCE(n.tipo, 'entrada')"
+const chaveDe = (clienteId, competencia, modelo, direcao) => `${clienteId}|${competencia}|${modelo}|${direcao}`
 
 function criarGrupos({ db, agora = () => new Date() }) {
   const clientes = db.prepare('SELECT id, cnpj, papel, apelido, razao_social FROM clientes')
-  const notas = db.prepare(`SELECT n.cliente_id clienteId, n.competencia, n.modelo, COUNT(*) total, MAX(n.atualizado_em) atualizado, SUM(n.cancelada) canceladas
+  const notas = db.prepare(`SELECT n.cliente_id clienteId, n.competencia, n.modelo, ${DIRECAO} direcao, COUNT(*) total, MAX(n.atualizado_em) atualizado, SUM(n.cancelada) canceladas
     FROM notas n JOIN clientes c ON c.id = n.cliente_id
     WHERE ${DO_GRUPO}
-    GROUP BY n.cliente_id, n.competencia, n.modelo`)
+    GROUP BY n.cliente_id, n.competencia, n.modelo, ${DIRECAO}`)
   // Uma consulta para todos os grupos: eventos achados pela chave (índice de eventos) e somados por grupo.
-  const eventos = db.prepare(`SELECT n.cliente_id clienteId, n.competencia, n.modelo, COUNT(*) total
+  const eventos = db.prepare(`SELECT n.cliente_id clienteId, n.competencia, n.modelo, ${DIRECAO} direcao, COUNT(*) total
     FROM notas n JOIN clientes c ON c.id = n.cliente_id JOIN eventos e ON e.chave = n.chave
     WHERE ${DO_GRUPO}
-    GROUP BY n.cliente_id, n.competencia, n.modelo`)
-  const gravados = db.prepare('SELECT cliente_id clienteId, competencia, modelo, assinatura, eventos FROM pasta_grupos')
-  const gravar = db.prepare(`INSERT INTO pasta_grupos (cliente_id, competencia, modelo, assinatura, eventos, gerado_em)
-    VALUES (@clienteId, @competencia, @modelo, @assinatura, @eventos, @geradoEm)
-    ON CONFLICT (cliente_id, competencia, modelo) DO UPDATE SET assinatura = excluded.assinatura, eventos = excluded.eventos, gerado_em = excluded.gerado_em`)
+    GROUP BY n.cliente_id, n.competencia, n.modelo, ${DIRECAO}`)
+  const gravados = db.prepare('SELECT cliente_id clienteId, competencia, modelo, direcao, assinatura, eventos FROM pasta_grupos')
+  const gravar = db.prepare(`INSERT INTO pasta_grupos (cliente_id, competencia, modelo, direcao, assinatura, eventos, gerado_em)
+    VALUES (@clienteId, @competencia, @modelo, @direcao, @assinatura, @eventos, @geradoEm)
+    ON CONFLICT (cliente_id, competencia, modelo, direcao) DO UPDATE SET assinatura = excluded.assinatura, eventos = excluded.eventos, gerado_em = excluded.gerado_em`)
 
   /**
    * Grupos novos ou mudados desde a última geração, do mês mais recente para o mais antigo.
    * `eventos`: eventos do grupo agora; `eventosAntes`: na última geração (null se nunca gerado).
-   * @returns {Array<{ clienteId: number, competencia: string, modelo: string, assinatura: string, eventos: number, eventosAntes: number | null }>}
+   * @returns {Array<{ clienteId: number, competencia: string, modelo: string, direcao: string, assinatura: string, eventos: number, eventosAntes: number | null }>}
    */
   function pendentes() {
     const todos = clientes.all()
@@ -49,25 +52,25 @@ function criarGrupos({ db, agora = () => new Date() }) {
       if (!nomes.has(id)) nomes.set(id, pastaDoClienteNoDisco(porId.get(id), todos))
       return nomes.get(id)
     }
-    const qtdEventos = new Map(eventos.all().map((l) => [chaveDe(l.clienteId, l.competencia, l.modelo), l.total]))
-    const antes = new Map(gravados.all().map((l) => [chaveDe(l.clienteId, l.competencia, l.modelo), l]))
+    const qtdEventos = new Map(eventos.all().map((l) => [chaveDe(l.clienteId, l.competencia, l.modelo, l.direcao), l.total]))
+    const antes = new Map(gravados.all().map((l) => [chaveDe(l.clienteId, l.competencia, l.modelo, l.direcao), l]))
 
     const lista = []
     for (const l of notas.all()) {
-      const k = chaveDe(l.clienteId, l.competencia, l.modelo)
+      const k = chaveDe(l.clienteId, l.competencia, l.modelo, l.direcao)
       const qtd = qtdEventos.get(k) || 0
       const assinatura = [pasta(l.clienteId), l.total, l.atualizado ?? '', l.canceladas ?? 0, qtd].join('|')
       const anterior = antes.get(k)
       if (anterior && anterior.assinatura === assinatura) continue
-      lista.push({ clienteId: l.clienteId, competencia: l.competencia, modelo: l.modelo, assinatura, eventos: qtd, eventosAntes: anterior ? anterior.eventos : null })
+      lista.push({ clienteId: l.clienteId, competencia: l.competencia, modelo: l.modelo, direcao: l.direcao, assinatura, eventos: qtd, eventosAntes: anterior ? anterior.eventos : null })
     }
-    return lista.sort((a, b) => b.competencia.localeCompare(a.competencia) || a.clienteId - b.clienteId || a.modelo.localeCompare(b.modelo))
+    return lista.sort((a, b) => b.competencia.localeCompare(a.competencia) || a.clienteId - b.clienteId || a.modelo.localeCompare(b.modelo) || a.direcao.localeCompare(b.direcao))
   }
 
   /** Grava a assinatura do grupo como gerada. */
-  function marcarPronto({ clienteId, competencia, modelo, assinatura, eventos }) {
+  function marcarPronto({ clienteId, competencia, modelo, direcao = 'entrada', assinatura, eventos }) {
     if (eventos === undefined) throw new Error('marcarPronto precisa de eventos.')
-    gravar.run({ clienteId, competencia, modelo, assinatura, eventos, geradoEm: agora().toISOString() })
+    gravar.run({ clienteId, competencia, modelo, direcao, assinatura, eventos, geradoEm: agora().toISOString() })
   }
 
   return { pendentes, marcarPronto }
@@ -77,8 +80,9 @@ const cederAVez = () => new Promise((resolve) => setImmediate(resolve))
 const ESPERA_SEM_AVANCO_MS = 3600e3
 // Caminho para comparar: sem diferenciar maiúsculas, como o Windows, e com uma barra só.
 const norm = (p) => p.replace(/\\/g, '/').toLowerCase()
-const EM_EVENTOS_OU_RESUMOS = new RegExp(`[\\\\/](${PASTAS.evento}|${PASTAS.resumo})[\\\\/]`)
-const NOME_DE_RESUMO = /^(\d+)-resumo\.xml$/i
+const EM_EVENTOS_OU_RESUMOS = new RegExp(`[\\\\/]${PASTAS.avulsos}[\\\\/]`)
+// Cancelamentos e cartas de correção alteram a nota: acompanham o ZIP dela. Os outros eventos ficam só na pasta.
+const EVENTOS_NO_ZIP = ['110111', '110110', '101101', '105102']
 const ehTmp = (nome) => nome.toLowerCase().endsWith('.tmp')
 const apagar = (arquivo) => fs.promises.rm(arquivo, { force: true })
 
@@ -99,10 +103,10 @@ function arquivosDe(pasta, { pular = [] } = {}) {
 }
 
 /** Pasta do grupo (relativa à raiz) e nomes dos relatórios e do ZIP: um só lugar para quem gera e quem confere. */
-function nomesDoGrupo({ cliente, todos, competencia, modelo }) {
+function nomesDoGrupo({ cliente, todos, competencia, modelo, direcao = 'entrada' }) {
   const [ano, mes] = competencia.split('-')
-  const sufixo = `${PASTAS.modelo[modelo]} ${MESES[Number(mes) - 1]} ${ano}`
-  const relativa = pastaDoGrupo({ cliente, outrosClientes: todos, competencia, modelo })
+  const sufixo = `${PASTAS.modelo[modelo]} ${PASTAS.direcao[direcao]} ${MESES[Number(mes) - 1]} ${ano}`
+  const relativa = pastaDoGrupo({ cliente, outrosClientes: todos, competencia, modelo, direcao })
   const empresa = relativa.split(path.sep)[0]
   return { relativa, empresa, relatorios: [`Relatorio ${sufixo}.xlsx`, `Relatorio ${sufixo}.pdf`], zip: `${empresa} ${sufixo}.zip` }
 }
@@ -117,11 +121,13 @@ const emMs = (data) => Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(data) ? data : `${
 function criarGerador({ db, config, logger, renomear = fs.promises.rename, gravar, reconciliarPasta }) {
   const armazenamento = criarArmazenamento({ config, db })
   const clientes = db.prepare('SELECT id, cnpj, papel, apelido, razao_social FROM clientes')
-  const notasDoGrupo = db.prepare(`SELECT * FROM notas WHERE cliente_id = ? AND competencia = ? AND modelo = ? AND status = 'completa' AND caminho_xml IS NOT NULL
-    AND instr(replace(caminho_xml, char(92), '/'), 'fora-da-carteira') = 0 ORDER BY data_emissao, chave`)
+  const notasDoGrupo = db.prepare(`SELECT * FROM notas WHERE cliente_id = ? AND competencia = ? AND modelo = ? AND COALESCE(tipo, 'entrada') = ? AND status = 'completa' AND caminho_xml IS NOT NULL
+    AND ${FORA_DOS_GRUPOS('caminho_xml')} ORDER BY data_emissao, chave`)
   const notasDoCliente = db.prepare('SELECT caminho_xml FROM notas WHERE cliente_id = ? AND caminho_xml IS NOT NULL').pluck()
   const eventosDoCliente = db.prepare('SELECT DISTINCT e.caminho_xml FROM eventos e JOIN notas n ON n.chave = e.chave WHERE n.cliente_id = ? AND e.caminho_xml IS NOT NULL').pluck()
-  const chavesDoCliente = db.prepare('SELECT chave FROM notas WHERE cliente_id = ?').pluck()
+  const eventosDoZip = db.prepare(`SELECT DISTINCT e.caminho_xml FROM eventos e JOIN notas n ON n.chave = e.chave
+    WHERE n.cliente_id = ? AND n.competencia = ? AND n.modelo = ? AND COALESCE(n.tipo, 'entrada') = ? AND n.status = 'completa'
+      AND e.caminho_xml IS NOT NULL AND e.tp_evento IN (${EVENTOS_NO_ZIP.map((t) => `'${t}'`).join(', ')})`).pluck()
   const tiposEvento = db.prepare('SELECT tp_evento FROM eventos WHERE chave = ?')
   const pdfs = pdfsDasNotas((c) => tiposEvento.all(c).map((e) => e.tp_evento))
 
@@ -211,7 +217,8 @@ function criarGerador({ db, config, logger, renomear = fs.promises.rename, grava
     const todos = clientes.all()
     const cliente = todos.find((c) => c.id === grupo.clienteId)
     if (!cliente) throw new Error(`Cliente ${grupo.clienteId} não encontrado.`)
-    const { relativa, empresa, relatorios: [nomeXlsx, nomePdf], zip: nomeZip } = nomesDoGrupo({ cliente, todos, competencia: grupo.competencia, modelo: grupo.modelo })
+    const direcao = grupo.direcao || 'entrada'
+    const { relativa, empresa, relatorios: [nomeXlsx, nomePdf], zip: nomeZip } = nomesDoGrupo({ cliente, todos, competencia: grupo.competencia, modelo: grupo.modelo, direcao })
     exigirPastaDaEmpresa(cliente, empresa)
     const pasta = path.join(raiz, relativa)
     const pastaPdf = path.join(pasta, PASTAS.pdf)
@@ -221,9 +228,9 @@ function criarGerador({ db, config, logger, renomear = fs.promises.rename, grava
     // Restos de uma geração interrompida. O XML nunca é tocado.
     for (const a of arquivosDe(pasta, { pular: [PASTAS.xml] })) if (ehTmp(a)) await apagar(a)
 
-    const notas = notasDoGrupo.all(grupo.clienteId, grupo.competencia, grupo.modelo)
+    const notas = notasDoGrupo.all(grupo.clienteId, grupo.competencia, grupo.modelo, direcao)
     // Sem isto, o grupo ficaria pronto sem os PDFs.
-    const antiga = notas.find((n) => !caminhoDoPdf(n.caminho_xml) && !EM_EVENTOS_OU_RESUMOS.test(n.caminho_xml))
+    const antiga = notas.find((n) => foraDoFormatoAtual(n.caminho_xml) || (!caminhoDoPdf(n.caminho_xml) && !EM_EVENTOS_OU_RESUMOS.test(n.caminho_xml)))
     if (antiga) throw new Error(`A nota ${antiga.chave} ainda está no formato antigo de pastas (${antiga.caminho_xml}). O mês fica pendente até a organização terminar.`)
 
     // 1. PDFs
@@ -280,7 +287,7 @@ function criarGerador({ db, config, logger, renomear = fs.promises.rename, grava
     if (notas.length) {
       const relatorios = [
         [nomeXlsx, () => montarPlanilhaDoMes({ notas, lerXml, modelo: grupo.modelo })],
-        [nomePdf, () => montarRelatorioPdf({ cliente: { cnpj: cliente.cnpj, nome: nomeDoCliente(cliente) }, competencia: grupo.competencia, notas, lerXml, modelo: grupo.modelo })],
+        [nomePdf, () => montarRelatorioPdf({ cliente: { cnpj: cliente.cnpj, nome: nomeDoCliente(cliente) }, competencia: grupo.competencia, notas, lerXml, modelo: grupo.modelo, direcao })],
       ]
       for (const [nome, montar] of relatorios) {
         // Qualquer falha rejeita o grupo: os arquivos antigos ficam como estão e o grupo segue pendente.
@@ -294,9 +301,8 @@ function criarGerador({ db, config, logger, renomear = fs.promises.rename, grava
     if (deveParar()) return { parou: true, avisos }
 
     // 4. ZIP: só o que é do cliente, com caminhos relativos à pasta do grupo. A pasta pode ter arquivos de uma empresa excluída de mesmo nome.
-    const conhecidos = new Set([...caminhosDasNotas, ...eventosDoCliente.all(grupo.clienteId)].map(norm))
-    const chaves = new Set(chavesDoCliente.all(grupo.clienteId))
-    const xmlDoCliente = (a) => conhecidos.has(relativoAoGrupo(a)) || chaves.has(NOME_DE_RESUMO.exec(path.basename(a))?.[1])
+    const conhecidos = new Set(caminhosDasNotas.map(norm))
+    const xmlDoCliente = (a) => conhecidos.has(relativoAoGrupo(a))
     const candidatos = [...arquivosDe(path.join(pasta, PASTAS.xml)), ...arquivosDe(pastaPdf)].filter((a) => !ehTmp(a))
     const desconhecidos = []
     const doCliente = candidatos.filter((a) => {
@@ -305,9 +311,13 @@ function criarGerador({ db, config, logger, renomear = fs.promises.rename, grava
       return ok
     })
     if (desconhecidos.length) logger?.warn?.('Arquivos fora do ZIP: não são de nenhuma nota do cliente', { pasta: relativa, arquivos: desconhecidos })
-    const noZip = [...doCliente, ...esperados.map((nome) => path.join(pasta, nome))]
-      .sort()
-      .map((a) => ({ caminho: a, nome: path.relative(pasta, a).split(path.sep).join('/') }))
+    const eventosNoZip = notas.length
+      ? eventosDoZip.all(grupo.clienteId, grupo.competencia, grupo.modelo, direcao).map((c) => armazenamento.absoluto(c)).filter((a) => fs.existsSync(a))
+      : []
+    const noZip = [
+      ...[...doCliente, ...esperados.map((nome) => path.join(pasta, nome))].sort().map((a) => ({ caminho: a, nome: path.relative(pasta, a).split(path.sep).join('/') })),
+      ...eventosNoZip.sort().map((a) => ({ caminho: a, nome: `${PASTAS.evento}/${path.basename(a)}` })),
+    ]
     if (noZip.length) {
       await gravarZip(path.join(pasta, nomeZip), noZip, avisos)
       esperados.push(nomeZip)
@@ -339,13 +349,13 @@ function criarOrganizador({ db, config, logger, pastas, gravar, renomear, reconc
   const gerador = criarGerador({ db, config, logger, reconciliarPasta, ...(gravar && { gravar }), ...(renomear && { renomear }) })
   const versaoDoLayout = db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").pluck()
   const clientes = db.prepare('SELECT id, cnpj, papel, apelido, razao_social FROM clientes')
-  const gravados = db.prepare('SELECT cliente_id clienteId, competencia, modelo FROM pasta_grupos')
-  const apagarGrupo = db.prepare('DELETE FROM pasta_grupos WHERE cliente_id = ? AND competencia = ? AND modelo = ?')
+  const gravados = db.prepare('SELECT cliente_id clienteId, competencia, modelo, direcao FROM pasta_grupos')
+  const apagarGrupo = db.prepare('DELETE FROM pasta_grupos WHERE cliente_id = ? AND competencia = ? AND modelo = ? AND direcao = ?')
   const apagarDoCliente = db.prepare('DELETE FROM pasta_grupos WHERE cliente_id = ?')
-  const contagens = db.prepare(`SELECT n.cliente_id clienteId, n.competencia, n.modelo, SUM(n.status = 'completa') completas, SUM(n.caminho_xml IS NOT NULL) comXml
+  const contagens = db.prepare(`SELECT n.cliente_id clienteId, n.competencia, n.modelo, ${DIRECAO} direcao, SUM(n.status = 'completa') completas
     FROM notas n JOIN clientes c ON c.id = n.cliente_id
     WHERE ${DO_GRUPO}
-    GROUP BY n.cliente_id, n.competencia, n.modelo`)
+    GROUP BY n.cliente_id, n.competencia, n.modelo, ${DIRECAO}`)
 
   let emCurso = null
   let pedido = false
@@ -364,7 +374,7 @@ function criarOrganizador({ db, config, logger, pastas, gravar, renomear, reconc
   async function conferir() {
     if (!(await existe(config.pastaXmls))) return
     const todos = clientes.all()
-    const contados = new Map(contagens.all().map((l) => [chaveDe(l.clienteId, l.competencia, l.modelo), l]))
+    const contados = new Map(contagens.all().map((l) => [chaveDe(l.clienteId, l.competencia, l.modelo, l.direcao), l]))
     const lista = gravados.all()
     estado = { situacao: 'conferindo', feitos: 0, total: lista.length, atual: null, falhas: 0, ultimoErro: null }
     try {
@@ -380,9 +390,9 @@ function criarOrganizador({ db, config, logger, pastas, gravar, renomear, reconc
       await cederAVez()
       estado.feitos++
       const cliente = todos.find((c) => c.id === g.clienteId)
-      const c = contados.get(chaveDe(g.clienteId, g.competencia, g.modelo))
+      const c = contados.get(chaveDe(g.clienteId, g.competencia, g.modelo, g.direcao))
       if (!cliente || !c) continue
-      const { relativa, relatorios, zip } = nomesDoGrupo({ cliente, todos, competencia: g.competencia, modelo: g.modelo })
+      const { relativa, relatorios, zip } = nomesDoGrupo({ cliente, todos, competencia: g.competencia, modelo: g.modelo, direcao: g.direcao })
       let nomes
       try {
         nomes = new Set(await fs.promises.readdir(path.join(config.pastaXmls, relativa)))
@@ -392,11 +402,11 @@ function criarOrganizador({ db, config, logger, pastas, gravar, renomear, reconc
       }
       const esperados = []
       if (c.completas) esperados.push(...relatorios)
-      if (c.completas || c.comXml) esperados.push(zip)
+      if (c.completas) esperados.push(zip)
       if (esperados.some((nome) => !nomes.has(nome))) {
         // Raiz fora do ar também faz faltar tudo: sem ela, nada volta a ficar pendente.
         if (!(await existe(config.pastaXmls))) return
-        apagarGrupo.run(g.clienteId, g.competencia, g.modelo)
+        apagarGrupo.run(g.clienteId, g.competencia, g.modelo, g.direcao)
       }
     }
   }
@@ -455,10 +465,10 @@ function criarOrganizador({ db, config, logger, pastas, gravar, renomear, reconc
         grupos.marcarPronto(grupo)
         avisouIndisponivel = false
       } catch (e) {
-        falhos.add(chaveDe(grupo.clienteId, grupo.competencia, grupo.modelo))
+        falhos.add(chaveDe(grupo.clienteId, grupo.competencia, grupo.modelo, grupo.direcao))
         estado.falhas++
         estado.ultimoErro = e.message
-        logger.warn('Grupo da pasta organizada não gerado', { clienteId: grupo.clienteId, competencia: grupo.competencia, modelo: grupo.modelo, erro: e.message })
+        logger.warn('Grupo da pasta organizada não gerado', { clienteId: grupo.clienteId, competencia: grupo.competencia, modelo: grupo.modelo, direcao: grupo.direcao, erro: e.message })
         if (!(await existe(config.pastaXmls))) return ficouIndisponivel()
       }
       estado.feitos++
@@ -466,7 +476,7 @@ function criarOrganizador({ db, config, logger, pastas, gravar, renomear, reconc
     estado.situacao = 'parada'
     estado.atual = null
     // Nota nova durante a geração: o grupo ficou com outra assinatura.
-    const mudou = !deveParar() && grupos.pendentes().some((g) => !falhos.has(chaveDe(g.clienteId, g.competencia, g.modelo)))
+    const mudou = !deveParar() && grupos.pendentes().some((g) => !falhos.has(chaveDe(g.clienteId, g.competencia, g.modelo, g.direcao)))
     return { mudou }
   }
 

@@ -120,8 +120,8 @@ test('mais recente primeiro', (t) => {
 test('fica de fora: sem competência, fora da carteira e escritório que não é cliente', (t) => {
   const a = preparar(t)
   a.nota({ competencia: null })
-  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/Outubro/NF-e/XML/Entradas/a.xml' })
-  a.nota({ caminho: 'Cliente 1\\fora-da-carteira\\2026\\Outubro\\NF-e\\XML\\Entradas\\b.xml', competencia: '2026-09' })
+  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/Entradas/NF-e/XML/a.xml' })
+  a.nota({ caminho: 'Cliente 1\\fora-da-carteira\\2026\\10-Outubro\\Entradas\\NF-e\\XML\\b.xml', competencia: '2026-09' })
   a.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(a.ids[1])
   a.nota({ cliente: a.ids[1] })
   assert.deepEqual(a.grupos.pendentes(), [])
@@ -136,10 +136,10 @@ test('fica de fora: sem competência, fora da carteira e escritório que não é
 test('nota fora da carteira não entra na contagem do grupo', (t) => {
   const a = preparar(t)
   a.nota()
-  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/Outubro/NF-e/XML/Entradas/a.xml' })
+  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/Entradas/NF-e/XML/a.xml' })
   a.marcarTodos()
   assert.deepEqual(a.grupos.pendentes(), [])
-  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/Outubro/NF-e/XML/Entradas/c.xml' })
+  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/Entradas/NF-e/XML/c.xml' })
   assert.deepEqual(a.grupos.pendentes(), [])
 })
 
@@ -176,9 +176,9 @@ const { cteProc } = require('./apoio/cte')
 const fortaleza = fs.readFileSync(path.join(__dirname, 'apoio', 'nfse', 'fortaleza.xml'), 'utf8')
 const ANTIGA = '2026-01-01 00:00:00'
 const FUTURA = '2999-01-01 00:00:00'
-const ZIP_NFE = 'Cliente 1 NF-e Novembro 2026.zip'
-const XLSX_NFE = 'Relatorio NF-e Novembro 2026.xlsx'
-const PDF_NFE = 'Relatorio NF-e Novembro 2026.pdf'
+const ZIP_NFE = 'Cliente 1 NF-e Entradas Novembro 2026.zip'
+const XLSX_NFE = 'Relatorio NF-e Entradas Novembro 2026.xlsx'
+const PDF_NFE = 'Relatorio NF-e Entradas Novembro 2026.pdf'
 
 function prepararDisco(t, opcoes = {}) {
   const amb = montarAmbiente({ clientes: CNPJS })
@@ -204,39 +204,36 @@ function prepararDisco(t, opcoes = {}) {
   const config = { pastaXmls: raiz }
   const gerador = criarGerador({ db: amb.db, config, logger: amb.deps.logger, ...opcoes })
   const grupos = criarGrupos({ db: amb.db })
-  const grupoDe = ({ competencia = '2026-11', modelo = 'nfe', clienteId = amb.ids[0] } = {}) =>
-    grupos.pendentes().find((g) => g.competencia === competencia && g.modelo === modelo && g.clienteId === clienteId)
+  const grupoDe = ({ competencia = '2026-11', modelo = 'nfe', direcao = 'entrada', clienteId = amb.ids[0] } = {}) =>
+    grupos.pendentes().find((g) => g.competencia === competencia && g.modelo === modelo && g.direcao === direcao && g.clienteId === clienteId)
   const gerar = (qual = {}, execucao = {}) => gerador.gerarGrupo(grupoDe(qual), execucao)
   const tmps = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }).filter((f) => f.endsWith('.tmp')) : [])
-  const tipo = (modelo = 'NF-e', mes = 'Novembro') => path.join('Cliente 1', '2026', mes, modelo)
+  const tipo = (modelo = 'NF-e', mes = '11-Novembro', direcao = 'Entradas') => path.join('Cliente 1', '2026', mes, direcao, modelo)
   return { ...amb, nota, abs, existe, gerar, gerador, grupoDe, config, tmps, tipo, raiz }
 }
 
+const AVULSOS = path.join('Cliente 1', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e')
 const zipDe = (a, ...p) => lerZip(fs.readFileSync(a.abs(...p)))
 const ehPdf = (arquivo) => fs.readFileSync(arquivo).subarray(0, 5).toString() === '%PDF-'
 
-test('gera PDF, dois relatórios e ZIP com os nomes combinados', async (t) => {
+test('entradas e saídas têm pastas, relatórios e ZIP próprios', async (t) => {
   const a = prepararDisco(t)
   const entrada = a.nota()
   const saida = a.nota({ direcao: 'saida' })
-  const r = await a.gerar()
-  assert.deepEqual(r, { parou: false, avisos: [] })
+  assert.deepEqual(await a.gerar(), { parou: false, avisos: [] })
   const base = a.tipo()
-  assert.ok(ehPdf(a.abs(base, 'PDF', 'Entradas', `${entrada.chave}-nfe.pdf`)))
-  assert.ok(ehPdf(a.abs(base, 'PDF', 'Saidas', `${saida.chave}-nfe.pdf`)))
+  assert.ok(ehPdf(a.abs(base, 'PDF', `${entrada.chave}-nfe.pdf`)))
   assert.ok(a.existe(base, XLSX_NFE))
   assert.ok(ehPdf(a.abs(base, PDF_NFE)))
-  assert.deepEqual(
-    [...zipDe(a, base, ZIP_NFE).keys()].sort(),
-    [
-      `PDF/Entradas/${entrada.chave}-nfe.pdf`,
-      `PDF/Saidas/${saida.chave}-nfe.pdf`,
-      PDF_NFE,
-      XLSX_NFE,
-      `XML/Entradas/${entrada.chave}-nfe.xml`,
-      `XML/Saidas/${saida.chave}-nfe.xml`,
-    ].sort(),
-  )
+  assert.deepEqual([...zipDe(a, base, ZIP_NFE).keys()].sort(), [`PDF/${entrada.chave}-nfe.pdf`, PDF_NFE, XLSX_NFE, `XML/${entrada.chave}-nfe.xml`].sort())
+  assert.ok(!a.existe(a.tipo('NF-e', '11-Novembro', 'Saidas'), 'Relatorio NF-e Saidas Novembro 2026.pdf'), 'cada direção é um grupo')
+
+  assert.deepEqual(await a.gerar({ direcao: 'saida' }), { parou: false, avisos: [] })
+  const pastaSaida = a.tipo('NF-e', '11-Novembro', 'Saidas')
+  const [xlsx, pdf, zip] = ['Relatorio NF-e Saidas Novembro 2026.xlsx', 'Relatorio NF-e Saidas Novembro 2026.pdf', 'Cliente 1 NF-e Saidas Novembro 2026.zip']
+  assert.ok(ehPdf(a.abs(pastaSaida, 'PDF', `${saida.chave}-nfe.pdf`)))
+  assert.deepEqual([...zipDe(a, pastaSaida, zip).keys()].sort(), [`PDF/${saida.chave}-nfe.pdf`, pdf, xlsx, `XML/${saida.chave}-nfe.xml`].sort())
+  assert.ok(a.existe(base, ZIP_NFE), 'a pasta de entradas continua')
 })
 
 test('o ZIP não contém a si mesmo nem .tmp, mesmo na segunda geração', async (t) => {
@@ -244,10 +241,10 @@ test('o ZIP não contém a si mesmo nem .tmp, mesmo na segunda geração', async
   const n = a.nota()
   const base = a.tipo()
   await a.gerar()
-  fs.writeFileSync(a.abs(base, 'PDF', 'Entradas', 'resto.pdf.1.tmp'), 'x')
+  fs.writeFileSync(a.abs(base, 'PDF', 'resto.pdf.1.tmp'), 'x')
   await a.gerar()
   const nomes = [...zipDe(a, base, ZIP_NFE).keys()]
-  assert.ok(nomes.includes(`XML/Entradas/${n.chave}-nfe.xml`))
+  assert.ok(nomes.includes(`XML/${n.chave}-nfe.xml`))
   assert.ok(!nomes.some((x) => x.endsWith('.zip') || x.endsWith('.tmp')), nomes.join())
 })
 
@@ -255,7 +252,7 @@ test('segunda geração só refaz o PDF que falta ou que está mais antigo que a
   const a = prepararDisco(t)
   const [n1, n2, n3] = [a.nota(), a.nota(), a.nota()]
   await a.gerar()
-  const pdf = (n) => a.abs(a.tipo(), 'PDF', 'Entradas', `${n.chave}-nfe.pdf`)
+  const pdf = (n) => a.abs(a.tipo(), 'PDF', `${n.chave}-nfe.pdf`)
   fs.writeFileSync(pdf(n1), 'marca1')
   fs.writeFileSync(pdf(n2), 'marca2')
   fs.rmSync(pdf(n3))
@@ -272,7 +269,7 @@ test('nota com evento refaz o PDF quando os eventos do grupo mudaram', async (t)
   const sem = a.nota()
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq) VALUES (?, '110111', '1')").run(com.chave)
   await a.gerar()
-  const pdf = (n) => a.abs(a.tipo(), 'PDF', 'Entradas', `${n.chave}-nfe.pdf`)
+  const pdf = (n) => a.abs(a.tipo(), 'PDF', `${n.chave}-nfe.pdf`)
   fs.writeFileSync(pdf(com), 'marca')
   fs.writeFileSync(pdf(sem), 'marca')
   await a.gerar({}, { eventosMudaram: false })
@@ -290,7 +287,7 @@ test('PDF sem nota correspondente é apagado; o de nota de outro mês com XML na
   // O grupo de outubro gera o PDF da nota dele ao lado do XML, na pasta de novembro.
   await a.gerar({ competencia: '2026-10' })
   await a.gerar()
-  const pdfs = path.join(a.tipo(), 'PDF', 'Entradas')
+  const pdfs = path.join(a.tipo(), 'PDF')
   fs.writeFileSync(a.abs(pdfs, 'orfao-nfe.pdf'), 'x')
   fs.writeFileSync(a.abs(pdfs, 'anotacao.txt'), 'x')
   await a.gerar()
@@ -308,41 +305,42 @@ test('relatório e ZIP com outro nome são trocados ao renomear a empresa', asyn
   fs.renameSync(a.abs('Cliente 1'), a.abs('Nova Empresa'))
   a.db.prepare("UPDATE clientes SET apelido = 'Nova Empresa' WHERE id = ?").run(a.ids[0])
   a.db.prepare('UPDATE notas SET caminho_xml = replace(caminho_xml, ?, ?)').run('Cliente 1', 'Nova Empresa')
-  const nova = path.join('Nova Empresa', '2026', 'Novembro', 'NF-e')
-  fs.writeFileSync(a.abs(nova, 'Relatorio NF-e Setembro 2025.xlsx'), 'x')
+  const nova = path.join('Nova Empresa', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  fs.writeFileSync(a.abs(nova, 'Relatorio NF-e Entradas Setembro 2025.xlsx'), 'x')
   fs.writeFileSync(a.abs(nova, 'leia-me.txt'), 'x')
   await a.gerar()
   assert.deepEqual(
     fs.readdirSync(a.abs(nova)).filter((f) => !['PDF', 'XML'].includes(f)).sort(),
-    ['Nova Empresa NF-e Novembro 2026.zip', PDF_NFE, XLSX_NFE, 'leia-me.txt'].sort(),
+    ['Nova Empresa NF-e Entradas Novembro 2026.zip', PDF_NFE, XLSX_NFE, 'leia-me.txt'].sort(),
   )
 })
 
-test('resumo não gera PDF; mês só com resumos tem XML e ZIP, sem relatório', async (t) => {
+test('resumo não gera PDF nem ZIP; mês só com resumos não tem relatório', async (t) => {
   const a = prepararDisco(t)
   const base = a.tipo()
   const chave = '9'.repeat(44)
-  const resumo = path.join(base, 'XML', 'Entradas', 'Resumos', `${chave}-resumo.xml`)
+  const resumo = path.join(AVULSOS, `${chave}-resumo.xml`)
   fs.mkdirSync(path.dirname(a.abs(resumo)), { recursive: true })
   fs.writeFileSync(a.abs(resumo), '<resNFe/>')
   a.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'resumo', '2026-11', ?)").run(a.ids[0], chave, resumo)
+  fs.mkdirSync(a.abs(base), { recursive: true })
   fs.writeFileSync(a.abs(base, XLSX_NFE), 'antigo')
   await a.gerar()
   assert.ok(!a.existe(base, 'PDF'))
   assert.ok(!a.existe(base, XLSX_NFE))
   assert.ok(!a.existe(base, PDF_NFE))
-  assert.deepEqual([...zipDe(a, base, ZIP_NFE).keys()], [`XML/Entradas/Resumos/${chave}-resumo.xml`])
+  assert.ok(!a.existe(base, ZIP_NFE))
 })
 
 test('CT-e tem PDF/Outros', async (t) => {
   const a = prepararDisco(t)
   const n = a.nota({ modelo: 'cte', direcao: 'outro' })
-  const r = await a.gerar({ modelo: 'cte' })
+  const r = await a.gerar({ modelo: 'cte', direcao: 'outro' })
   assert.deepEqual(r.avisos, [])
-  const base = a.tipo('CT-e')
-  assert.ok(ehPdf(a.abs(base, 'PDF', 'Outros', `${n.chave}-cte.pdf`)))
-  assert.ok(a.existe(base, 'Relatorio CT-e Novembro 2026.xlsx'))
-  assert.ok(a.existe(base, 'Cliente 1 CT-e Novembro 2026.zip'))
+  const base = a.tipo('CT-e', '11-Novembro', 'Outros')
+  assert.ok(ehPdf(a.abs(base, 'PDF', `${n.chave}-cte.pdf`)))
+  assert.ok(a.existe(base, 'Relatorio CT-e Outros Novembro 2026.xlsx'))
+  assert.ok(a.existe(base, 'Cliente 1 CT-e Outros Novembro 2026.zip'))
 })
 
 test('XML ruim: PDF falha, o grupo termina e o ZIP leva avisos.txt', async (t) => {
@@ -354,7 +352,7 @@ test('XML ruim: PDF falha, o grupo termina e o ZIP leva avisos.txt', async (t) =
   assert.equal(r.avisos.length, 1)
   assert.match(r.avisos[0], new RegExp(ruim.chave))
   const base = a.tipo()
-  assert.ok(!a.existe(base, 'PDF', 'Entradas', `${ruim.chave}-nfe.pdf`))
+  assert.ok(!a.existe(base, 'PDF', `${ruim.chave}-nfe.pdf`))
   assert.ok(a.existe(base, PDF_NFE))
   assert.match(zipDe(a, base, ZIP_NFE).get('avisos.txt').toString(), new RegExp(ruim.chave))
   assert.ok(!a.existe(base, 'avisos.txt'))
@@ -376,7 +374,7 @@ test('caminho_xml em outro mês: o PDF fica ao lado do XML e o ZIP leva o que es
   // Competência de novembro, XML guardado na pasta de outubro.
   const n = a.nota({ pastaMes: '2026-10' })
   await a.gerar()
-  assert.ok(a.existe(a.tipo('NF-e', 'Outubro'), 'PDF', 'Entradas', `${n.chave}-nfe.pdf`))
+  assert.ok(a.existe(a.tipo('NF-e', '10-Outubro'), 'PDF', `${n.chave}-nfe.pdf`))
   assert.ok(!a.existe(a.tipo(), 'PDF'))
   assert.ok(a.existe(a.tipo(), XLSX_NFE))
   assert.deepEqual([...zipDe(a, a.tipo(), ZIP_NFE).keys()].sort(), [PDF_NFE, XLSX_NFE].sort())
@@ -424,7 +422,7 @@ test('deveParar: para entre arquivos e devolve parou, sem relatórios nem ZIP', 
   const base = a.tipo()
   assert.ok(!a.existe(base, ZIP_NFE))
   assert.ok(!a.existe(base, XLSX_NFE))
-  assert.equal(fs.readdirSync(a.abs(base, 'PDF', 'Entradas')).length, 2)
+  assert.equal(fs.readdirSync(a.abs(base, 'PDF')).length, 2)
 })
 
 test('pasta base indisponível rejeita com ENOENT e não a recria', async (t) => {
@@ -440,10 +438,10 @@ test('não deixa .tmp depois de terminar e apaga os restos, menos no XML', async
   const a = prepararDisco(t)
   const n = a.nota()
   const base = a.tipo()
-  fs.mkdirSync(a.abs(base, 'PDF', 'Entradas'), { recursive: true })
-  fs.writeFileSync(a.abs(base, 'PDF', 'Entradas', 'x-nfe.pdf.99.tmp'), 'x')
+  fs.mkdirSync(a.abs(base, 'PDF'), { recursive: true })
+  fs.writeFileSync(a.abs(base, 'PDF', 'x-nfe.pdf.99.tmp'), 'x')
   fs.writeFileSync(a.abs(base, `${XLSX_NFE}.99.tmp`), 'x')
-  const emXml = path.join(base, 'XML', 'Entradas', 'y-nfe.xml.99.tmp')
+  const emXml = path.join(base, 'XML', 'y-nfe.xml.99.tmp')
   fs.writeFileSync(a.abs(emXml), 'x')
   await a.gerar()
   assert.deepEqual(a.tmps(a.abs(base, 'PDF')), [])
@@ -458,12 +456,12 @@ test('falha ao montar o relatório (E/S ao ler o XML): rejeita e relatórios e Z
   const n = a.nota({ modelo: 'nfse' })
   await a.gerar({ modelo: 'nfse' })
   const base = a.tipo('NFS-e')
-  const antes = ['Relatorio NFS-e Novembro 2026.xlsx', 'Relatorio NFS-e Novembro 2026.pdf', 'Cliente 1 NFS-e Novembro 2026.zip'].map((f) => fs.readFileSync(a.abs(base, f)))
+  const antes = ['Relatorio NFS-e Entradas Novembro 2026.xlsx', 'Relatorio NFS-e Entradas Novembro 2026.pdf', 'Cliente 1 NFS-e Entradas Novembro 2026.zip'].map((f) => fs.readFileSync(a.abs(base, f)))
   // XML virou uma pasta: leitura falha com EISDIR (não é arquivo ausente). O PDF já existe, então só o relatório lê o XML (NF-e não lê).
   fs.rmSync(a.abs(n.relativo))
   fs.mkdirSync(a.abs(n.relativo))
   await assert.rejects(a.gerar({ modelo: 'nfse' }), { code: 'EISDIR' })
-  assert.deepEqual(['Relatorio NFS-e Novembro 2026.xlsx', 'Relatorio NFS-e Novembro 2026.pdf', 'Cliente 1 NFS-e Novembro 2026.zip'].map((f) => fs.readFileSync(a.abs(base, f))), antes)
+  assert.deepEqual(['Relatorio NFS-e Entradas Novembro 2026.xlsx', 'Relatorio NFS-e Entradas Novembro 2026.pdf', 'Cliente 1 NFS-e Entradas Novembro 2026.zip'].map((f) => fs.readFileSync(a.abs(base, f))), antes)
   assert.deepEqual(a.tmps(a.raiz), [])
 })
 
@@ -513,7 +511,7 @@ test('deveParar verdadeiro antes dos relatórios: sem relatórios nem ZIP', asyn
   let chamadas = 0
   const r = await a.gerar({}, { deveParar: () => ++chamadas > 1 })
   assert.equal(r.parou, true)
-  assert.ok(ehPdf(a.abs(a.tipo(), 'PDF', 'Entradas', fs.readdirSync(a.abs(a.tipo(), 'PDF', 'Entradas'))[0])))
+  assert.ok(ehPdf(a.abs(a.tipo(), 'PDF', fs.readdirSync(a.abs(a.tipo(), 'PDF'))[0])))
   assert.ok(!a.existe(a.tipo(), XLSX_NFE))
   assert.ok(!a.existe(a.tipo(), ZIP_NFE))
 })
@@ -524,14 +522,14 @@ test('NFS-e: PDF em Entradas, relatórios e ZIP', async (t) => {
   const r = await a.gerar({ modelo: 'nfse' })
   assert.deepEqual(r, { parou: false, avisos: [] })
   const base = a.tipo('NFS-e')
-  assert.ok(ehPdf(a.abs(base, 'PDF', 'Entradas', `${n.chave}-nfse.pdf`)))
-  assert.ok(a.existe(base, 'Relatorio NFS-e Novembro 2026.xlsx'))
-  assert.ok(ehPdf(a.abs(base, 'Relatorio NFS-e Novembro 2026.pdf')))
-  assert.deepEqual([...zipDe(a, base, 'Cliente 1 NFS-e Novembro 2026.zip').keys()].sort(), [
-    `PDF/Entradas/${n.chave}-nfse.pdf`,
-    'Relatorio NFS-e Novembro 2026.pdf',
-    'Relatorio NFS-e Novembro 2026.xlsx',
-    `XML/Entradas/${n.chave}-nfse.xml`,
+  assert.ok(ehPdf(a.abs(base, 'PDF', `${n.chave}-nfse.pdf`)))
+  assert.ok(a.existe(base, 'Relatorio NFS-e Entradas Novembro 2026.xlsx'))
+  assert.ok(ehPdf(a.abs(base, 'Relatorio NFS-e Entradas Novembro 2026.pdf')))
+  assert.deepEqual([...zipDe(a, base, 'Cliente 1 NFS-e Entradas Novembro 2026.zip').keys()].sort(), [
+    `PDF/${n.chave}-nfse.pdf`,
+    'Relatorio NFS-e Entradas Novembro 2026.pdf',
+    'Relatorio NFS-e Entradas Novembro 2026.xlsx',
+    `XML/${n.chave}-nfse.xml`,
   ])
 })
 
@@ -557,7 +555,7 @@ test('passada gera os pendentes e marca prontos', async (t) => {
   await a.org.aguardar()
   assert.equal(a.prontos(), 2)
   assert.ok(a.existe(a.tipo(), XLSX_NFE))
-  assert.ok(a.existe(a.tipo('NF-e', 'Outubro'), 'Relatorio NF-e Outubro 2026.xlsx'))
+  assert.ok(a.existe(a.tipo('NF-e', '10-Outubro'), 'Relatorio NF-e Entradas Outubro 2026.xlsx'))
   assert.deepEqual(a.org.estado(), { situacao: 'parada', feitos: 2, total: 2, atual: null, falhas: 0, ultimoErro: null })
 })
 
@@ -679,7 +677,7 @@ test('nota nova durante a geração: grupo refeito na passada seguinte', async (
 
 test('abertura: relatório ou ZIP apagado volta a ficar pendente', async (t) => {
   const a = prepararOrganizador(t)
-  const zipOut = 'Cliente 1 NF-e Outubro 2026.zip'
+  const zipOut = 'Cliente 1 NF-e Entradas Outubro 2026.zip'
   a.nota()
   a.nota({ competencia: '2026-10' })
   a.nota({ status: 'resumo', competencia: '2026-09' })
@@ -691,11 +689,11 @@ test('abertura: relatório ou ZIP apagado volta a ficar pendente', async (t) => 
   await a.org.aguardar()
   assert.equal(fs.readFileSync(a.abs(a.tipo(), XLSX_NFE), 'utf8'), 'marca', 'nada faltando: nada refeito')
   fs.rmSync(a.abs(a.tipo(), XLSX_NFE))
-  fs.rmSync(a.abs(a.tipo('NF-e', 'Outubro'), zipOut))
+  fs.rmSync(a.abs(a.tipo('NF-e', '10-Outubro'), zipOut))
   a.org.agendar({ conferirArquivos: true })
   await a.org.aguardar()
   assert.ok(a.existe(a.tipo(), XLSX_NFE))
-  assert.ok(a.existe(a.tipo('NF-e', 'Outubro'), zipOut))
+  assert.ok(a.existe(a.tipo('NF-e', '10-Outubro'), zipOut))
 })
 
 test('pausarDurante espera a geração parar, executa e retoma com outra passada', async (t) => {
@@ -851,20 +849,20 @@ test('I1: o rename falha: rejeita com erro claro, sem ZIP vazio; depois de solta
   const a = comClientes(t)
   const n = a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
-  const nova = path.join('Novo Nome', '2026', 'Novembro', 'NF-e')
+  const nova = path.join('Novo Nome', '2026', '11-Novembro', 'Entradas', 'NF-e')
   const renomear = t.mock.method(fs, 'renameSync', () => {
     throw Object.assign(new Error('aberto'), { code: 'EBUSY' })
   })
   const g = a.grupoDe()
   await assert.rejects(a.gerador.gerarGrupo(g, {}), /"Cliente 1" e deveria ser "Novo Nome"/)
   assert.ok(renomear.mock.callCount() > 0, 'tentou mover de novo')
-  assert.ok(!a.existe(nova, 'Novo Nome NF-e Novembro 2026.zip'))
+  assert.ok(!a.existe(nova, 'Novo Nome NF-e Entradas Novembro 2026.zip'))
   assert.equal(caminhoDe(a, n.chave), n.relativo, 'o banco volta')
 
   renomear.mock.restore()
   await a.gerador.gerarGrupo(g, {})
   assert.ok(!a.existe('Cliente 1'))
-  assert.deepEqual(noZip(a, nova, 'Novo Nome NF-e Novembro 2026.zip'), [`PDF/Entradas/${n.chave}-nfe.pdf`, PDF_NFE, XLSX_NFE, `XML/Entradas/${n.chave}-nfe.xml`].sort())
+  assert.deepEqual(noZip(a, nova, 'Novo Nome NF-e Entradas Novembro 2026.zip'), [`PDF/${n.chave}-nfe.pdf`, PDF_NFE, XLSX_NFE, `XML/${n.chave}-nfe.xml`].sort())
   assert.ok(caminhoDe(a, n.chave).startsWith('Novo Nome'))
 })
 
@@ -889,9 +887,9 @@ test('I1: homônimo surgindo: a pasta ganha o CNPJ e o ZIP sai com os arquivos',
   apelido(a, a.ids[1], 'Cliente 1')
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   const empresa = `Cliente 1 ${CNPJS[0]}`
-  const nova = path.join(empresa, '2026', 'Novembro', 'NF-e')
+  const nova = path.join(empresa, '2026', '11-Novembro', 'Entradas', 'NF-e')
   assert.ok(!a.existe('Cliente 1'))
-  assert.ok(noZip(a, nova, `${empresa} NF-e Novembro 2026.zip`).includes(`XML/Entradas/${n.chave}-nfe.xml`))
+  assert.ok(noZip(a, nova, `${empresa} NF-e Entradas Novembro 2026.zip`).includes(`XML/${n.chave}-nfe.xml`))
 })
 
 test('I1: homônimo sumindo: a pasta volta ao nome sem CNPJ', async (t) => {
@@ -906,7 +904,7 @@ test('I1: homônimo sumindo: a pasta volta ao nome sem CNPJ', async (t) => {
   apelido(a, a.ids[1], 'Outro Nome')
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.ok(!a.existe(empresa))
-  assert.ok(noZip(a, a.tipo(), ZIP_NFE).includes(`XML/Entradas/${n.chave}-nfe.xml`))
+  assert.ok(noZip(a, a.tipo(), ZIP_NFE).includes(`XML/${n.chave}-nfe.xml`))
 })
 
 test('I1: escritório renomeado que também é cliente: a pasta acompanha', async (t) => {
@@ -917,8 +915,8 @@ test('I1: escritório renomeado que também é cliente: a pasta acompanha', asyn
   a.servico.editarEscritorio({ razao: 'Escritorio Novo', uf: 'CE' })
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.ok(!a.existe('Escritorio Velho'))
-  const base = path.join('Escritorio Novo', '2026', 'Novembro', 'NF-e')
-  assert.ok(noZip(a, base, 'Escritorio Novo NF-e Novembro 2026.zip').includes(`XML/Entradas/${n.chave}-nfe.xml`))
+  const base = path.join('Escritorio Novo', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  assert.ok(noZip(a, base, 'Escritorio Novo NF-e Entradas Novembro 2026.zip').includes(`XML/${n.chave}-nfe.xml`))
 })
 
 test('I1: destino já existente: junta sem mexer no que já estava lá', async (t) => {
@@ -957,7 +955,7 @@ test('I1: evento guardado na pasta de outra empresa não é divergência da nota
   const a = comClientes(t)
   a.nota({ cliente: a.ids[1] })
   const n = a.nota()
-  const rel = path.join('Cliente 2', '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', 'Eventos', `${n.chave}-evento-110111-1.xml`)
+  const rel = path.join('Cliente 2', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${n.chave}-evento-110111-1.xml`)
   fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
   fs.writeFileSync(a.abs(rel), '<evento/>')
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(n.chave, rel)
@@ -973,12 +971,12 @@ test('I2: diferença de maiúsculas ou de barras no banco não apaga os PDFs', {
     const n = a.nota()
     a.db.prepare('UPDATE notas SET caminho_xml = ?').run(formato(n.relativo))
     await a.gerar()
-    const pdf = a.abs(a.tipo(), 'PDF', 'Entradas', `${n.chave}-nfe.pdf`)
+    const pdf = a.abs(a.tipo(), 'PDF', `${n.chave}-nfe.pdf`)
     assert.ok(fs.existsSync(pdf), 'não é órfão')
     fs.writeFileSync(pdf, 'marca')
     await a.gerar()
     assert.equal(fs.readFileSync(pdf, 'utf8'), 'marca', 'nem é regerado')
-    assert.ok(noZip(a, a.tipo(), ZIP_NFE).includes(`PDF/Entradas/${n.chave}-nfe.pdf`))
+    assert.ok(noZip(a, a.tipo(), ZIP_NFE).includes(`PDF/${n.chave}-nfe.pdf`))
   }
 })
 
@@ -987,9 +985,9 @@ test('I3: excluir "Cliente 1" e cadastrar outro com o mesmo nome: o ZIP novo nã
   const velha = a.nota()
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   const base = a.tipo()
-  const pdfVelho = path.join(base, 'PDF', 'Entradas', `${velha.chave}-nfe.pdf`)
-  const xmlVelho = path.join(base, 'XML', 'Entradas', `${velha.chave}-nfe.xml`)
-  const resumoVelho = path.join(base, 'XML', 'Entradas', 'Resumos', `${velha.chave}-resumo.xml`)
+  const pdfVelho = path.join(base, 'PDF', `${velha.chave}-nfe.pdf`)
+  const xmlVelho = path.join(base, 'XML', `${velha.chave}-nfe.xml`)
+  const resumoVelho = path.join(AVULSOS, `${velha.chave}-resumo.xml`)
   fs.mkdirSync(path.dirname(a.abs(resumoVelho)), { recursive: true })
   fs.writeFileSync(a.abs(resumoVelho), '<res/>')
   assert.ok(a.existe(pdfVelho))
@@ -997,7 +995,7 @@ test('I3: excluir "Cliente 1" e cadastrar outro com o mesmo nome: o ZIP novo nã
   const { cliente } = a.servico.cadastrar({ cnpj: '27865757000102', razao: 'Cliente 1 Ltda', uf: 'CE', apelido: 'Cliente 1' })
   const nova = a.nota({ cliente: cliente.id })
   await a.gerador.gerarGrupo(a.grupoDe({ clienteId: cliente.id }), {})
-  assert.deepEqual(noZip(a, base, ZIP_NFE), [`PDF/Entradas/${nova.chave}-nfe.pdf`, PDF_NFE, XLSX_NFE, `XML/Entradas/${nova.chave}-nfe.xml`].sort())
+  assert.deepEqual(noZip(a, base, ZIP_NFE), [`PDF/${nova.chave}-nfe.pdf`, PDF_NFE, XLSX_NFE, `XML/${nova.chave}-nfe.xml`].sort())
   for (const f of [xmlVelho, pdfVelho, resumoVelho]) assert.ok(a.existe(f), f)
 })
 
@@ -1005,30 +1003,52 @@ test('I3: arquivo desconhecido fica fora do ZIP e vai para o log', async (t) => 
   const logs = []
   const a = prepararDisco(t, { logger: { info() {}, error() {}, warn: (m, d) => logs.push([m, d]) } })
   a.nota()
-  fs.mkdirSync(a.abs(a.tipo(), 'XML', 'Entradas'), { recursive: true })
-  fs.writeFileSync(a.abs(a.tipo(), 'XML', 'Entradas', 'de-alguem.xml'), 'x')
+  fs.mkdirSync(a.abs(a.tipo(), 'XML'), { recursive: true })
+  fs.writeFileSync(a.abs(a.tipo(), 'XML', 'de-alguem.xml'), 'x')
   await a.gerar()
   assert.ok(!noZip(a, a.tipo(), ZIP_NFE).some((f) => f.includes('de-alguem')))
-  assert.ok(a.existe(a.tipo(), 'XML', 'Entradas', 'de-alguem.xml'))
+  assert.ok(a.existe(a.tipo(), 'XML', 'de-alguem.xml'))
   const log = logs.find(([m]) => /fora do ZIP/.test(m))
   assert.ok(log[1].arquivos.some((f) => f.includes('de-alguem')))
 })
 
-test('I3: o ZIP leva eventos da nota do cliente e o resumo cujo nome é chave dele', async (t) => {
+test('ZIP leva cancelamento e carta de correção da nota; os outros eventos e os resumos ficam só na pasta', async (t) => {
   const a = prepararDisco(t)
   const n = a.nota()
   const base = a.tipo()
-  const evento = path.join(base, 'XML', 'Entradas', 'Eventos', `${n.chave}-evento-110111-1.xml`)
-  fs.mkdirSync(path.dirname(a.abs(evento)), { recursive: true })
-  fs.writeFileSync(a.abs(evento), '<evento/>')
-  a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(n.chave, evento)
-  const resumo = path.join(base, 'XML', 'Entradas', 'Resumos', `${n.chave}-resumo.xml`)
-  fs.mkdirSync(path.dirname(a.abs(resumo)), { recursive: true })
+  const evento = (tipo) => {
+    const rel = path.join(AVULSOS, `${n.chave}-evento-${tipo}-1.xml`)
+    fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
+    fs.writeFileSync(a.abs(rel), '<evento/>')
+    a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, ?, '1', ?)").run(n.chave, tipo, rel)
+  }
+  for (const tipo of ['110111', '110110', '210210', '610600']) evento(tipo)
+  const resumo = path.join(AVULSOS, `${n.chave}-resumo.xml`)
   fs.writeFileSync(a.abs(resumo), '<res/>')
   await a.gerar()
-  const nomes = noZip(a, base, ZIP_NFE)
-  assert.ok(nomes.includes(`XML/Entradas/Eventos/${n.chave}-evento-110111-1.xml`))
-  assert.ok(nomes.includes(`XML/Entradas/Resumos/${n.chave}-resumo.xml`))
+  assert.deepEqual(noZip(a, base, ZIP_NFE), [
+    `Eventos/${n.chave}-evento-110110-1.xml`,
+    `Eventos/${n.chave}-evento-110111-1.xml`,
+    `PDF/${n.chave}-nfe.pdf`,
+    PDF_NFE,
+    XLSX_NFE,
+    `XML/${n.chave}-nfe.xml`,
+  ].sort())
+  assert.ok(a.existe(resumo))
+})
+
+test('ZIP de entradas não leva o cancelamento da nota de saída', async (t) => {
+  const a = prepararDisco(t)
+  a.nota()
+  const saida = a.nota({ direcao: 'saida' })
+  const rel = path.join(AVULSOS, `${saida.chave}-evento-110111-1.xml`)
+  fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
+  fs.writeFileSync(a.abs(rel), '<evento/>')
+  a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(saida.chave, rel)
+  await a.gerar()
+  assert.ok(!noZip(a, a.tipo(), ZIP_NFE).some((f) => f.startsWith('Eventos/')))
+  await a.gerar({ direcao: 'saida' })
+  assert.ok(noZip(a, a.tipo('NF-e', '11-Novembro', 'Saidas'), 'Cliente 1 NF-e Saidas Novembro 2026.zip').includes(`Eventos/${saida.chave}-evento-110111-1.xml`))
 })
 
 test('I3: PDF com XML ao lado nunca é órfão; sem XML e sem nota, é apagado', async (t) => {
@@ -1036,12 +1056,12 @@ test('I3: PDF com XML ao lado nunca é órfão; sem XML e sem nota, é apagado',
   a.nota()
   await a.gerar()
   const base = a.tipo()
-  fs.writeFileSync(a.abs(base, 'XML', 'Entradas', '999-nfe.xml'), '<x/>')
-  fs.writeFileSync(a.abs(base, 'PDF', 'Entradas', '999-nfe.pdf'), 'pdf')
-  fs.writeFileSync(a.abs(base, 'PDF', 'Entradas', '888-nfe.pdf'), 'pdf')
+  fs.writeFileSync(a.abs(base, 'XML', '999-nfe.xml'), '<x/>')
+  fs.writeFileSync(a.abs(base, 'PDF', '999-nfe.pdf'), 'pdf')
+  fs.writeFileSync(a.abs(base, 'PDF', '888-nfe.pdf'), 'pdf')
   await a.gerar()
-  assert.ok(a.existe(base, 'PDF', 'Entradas', '999-nfe.pdf'))
-  assert.ok(!a.existe(base, 'PDF', 'Entradas', '888-nfe.pdf'))
+  assert.ok(a.existe(base, 'PDF', '999-nfe.pdf'))
+  assert.ok(!a.existe(base, 'PDF', '888-nfe.pdf'))
   assert.ok(!noZip(a, base, ZIP_NFE).some((f) => f.includes('999')))
 })
 
@@ -1064,10 +1084,10 @@ test('I4: nota completa fora do formato novo rejeita o grupo, sem ZIP nem assina
   assert.ok(!a.existe(a.tipo(), ZIP_NFE))
 })
 
-test('I4: nota completa com XML em Resumos (ainda sem PDF) não rejeita', async (t) => {
+test('I4: nota completa com XML em Eventos e Resumos (ainda sem PDF) não rejeita', async (t) => {
   const a = prepararDisco(t)
   const n = a.nota()
-  const rel = path.join(a.tipo(), 'XML', 'Entradas', 'Resumos', `${n.chave}-resumo.xml`)
+  const rel = path.join(AVULSOS, `${n.chave}-resumo.xml`)
   fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
   fs.writeFileSync(a.abs(rel), '<res/>')
   a.db.prepare('UPDATE notas SET caminho_xml = ?').run(rel)
@@ -1093,11 +1113,11 @@ test('I4: pasta volta depois de abrir: a passada migra e o grupo gera os PDFs', 
   fs.renameSync(fora, a.raiz)
   a.org.agendar()
   await a.org.aguardar()
-  assert.equal(layout(a), '6')
+  assert.equal(layout(a), VERSAO_XML)
   assert.equal(a.prontos(), 1)
-  assert.ok(a.existe(a.tipo(), 'XML', 'Entradas', `${chave}-nfe.xml`))
-  assert.ok(ehPdf(a.abs(a.tipo(), 'PDF', 'Entradas', `${chave}-nfe.pdf`)))
-  assert.ok(a.logs.some(([n, m, d]) => n === 'info' && /Migração retomada/.test(m) && d.movidos === 1))
+  assert.ok(a.existe(a.tipo(), 'XML', `${chave}-nfe.xml`))
+  assert.ok(ehPdf(a.abs(a.tipo(), 'PDF', `${chave}-nfe.pdf`)))
+  assert.ok(a.logs.some(([n, m, d]) => n === 'info' && /Migração retomada/.test(m) && d.movidos >= 1))
 })
 
 test('I4: XML travado só afeta o grupo dele; depois de soltar, gera tudo', async (t) => {
@@ -1119,7 +1139,7 @@ test('I4: XML travado só afeta o grupo dele; depois de soltar, gera tudo', asyn
   await a.org.aguardar()
   assert.equal(layout(a), '5', 'segue pendente')
   assert.equal(a.prontos(), 1, 'outubro terminou')
-  assert.ok(a.existe(a.tipo('NF-e', 'Outubro'), 'Relatorio NF-e Outubro 2026.xlsx'))
+  assert.ok(a.existe(a.tipo('NF-e', '10-Outubro'), 'Relatorio NF-e Entradas Outubro 2026.xlsx'))
   assert.equal(a.org.estado().falhas, 1)
   assert.match(a.org.estado().ultimoErro, /formato antigo/)
   assert.ok(!a.existe(a.tipo(), ZIP_NFE))
@@ -1127,9 +1147,9 @@ test('I4: XML travado só afeta o grupo dele; depois de soltar, gera tudo', asyn
   travado = false
   a.org.agendar()
   await a.org.aguardar()
-  assert.equal(layout(a), '6')
+  assert.equal(layout(a), VERSAO_XML)
   assert.equal(a.prontos(), 2)
-  assert.ok(ehPdf(a.abs(a.tipo(), 'PDF', 'Entradas', `${presa}-nfe.pdf`)))
+  assert.ok(ehPdf(a.abs(a.tipo(), 'PDF', `${presa}-nfe.pdf`)))
 })
 
 test('M1: a raiz some no meio da conferência: para sem apagar a linha do grupo', async (t) => {
@@ -1216,14 +1236,14 @@ test('falta da Tarefa 6: conferir usa o filtro DO_GRUPO: grupo só com notas for
   const assinaturaAntes = a.db.prepare("SELECT gerado_em FROM pasta_grupos WHERE competencia = '2026-11'").pluck().get()
   a.db.prepare('UPDATE notas SET caminho_xml = ? WHERE chave = ?').run(path.join('Cliente 1', 'fora-da-carteira', 'x.xml'), n.chave)
   fs.rmSync(a.abs(a.tipo(), XLSX_NFE))
-  fs.rmSync(a.abs(a.tipo('NF-e', 'Outubro'), 'Relatorio NF-e Outubro 2026.xlsx'))
-  fs.rmSync(a.abs(a.tipo('NF-e', 'Outubro'), 'Cliente 1 NF-e Outubro 2026.zip'))
+  fs.rmSync(a.abs(a.tipo('NF-e', '10-Outubro'), 'Relatorio NF-e Entradas Outubro 2026.xlsx'))
+  fs.rmSync(a.abs(a.tipo('NF-e', '10-Outubro'), 'Cliente 1 NF-e Entradas Outubro 2026.zip'))
   a.org.agendar({ conferirArquivos: true })
   await a.org.aguardar()
-  assert.ok(noZip(a, a.tipo('NF-e', 'Outubro'), 'Cliente 1 NF-e Outubro 2026.zip').includes(`XML/Entradas/${comum.chave}-nfe.xml`), 'o ZIP refeito traz a nota do grupo comum')
+  assert.ok(noZip(a, a.tipo('NF-e', '10-Outubro'), 'Cliente 1 NF-e Entradas Outubro 2026.zip').includes(`XML/${comum.chave}-nfe.xml`), 'o ZIP refeito traz a nota do grupo comum')
   assert.equal(a.db.prepare("SELECT gerado_em FROM pasta_grupos WHERE competencia = '2026-11'").pluck().get(), assinaturaAntes, 'a linha do grupo fora da carteira fica')
   assert.ok(!a.existe(a.tipo(), XLSX_NFE), 'o grupo não é refeito')
-  assert.ok(a.existe(a.tipo('NF-e', 'Outubro'), 'Relatorio NF-e Outubro 2026.xlsx'), 'o grupo comum é refeito')
+  assert.ok(a.existe(a.tipo('NF-e', '10-Outubro'), 'Relatorio NF-e Entradas Outubro 2026.xlsx'), 'o grupo comum é refeito')
 })
 
 test('marcarPronto exige eventos', (t) => {
@@ -1237,7 +1257,7 @@ test('marcarPronto exige eventos', (t) => {
 
 // ---------- I-2: a pasta da empresa nos dois lados ou sumida ----------
 
-const NF_E_NOVA = path.join('Novo Nome', '2026', 'Novembro', 'NF-e')
+const NF_E_NOVA = path.join('Novo Nome', '2026', '11-Novembro', 'Entradas', 'NF-e')
 const relNovo = (rel) => rel.replace('Cliente 1', 'Novo Nome')
 /** Mesmo arquivo do lado novo, com o conteúdo dado. */
 const noLadoNovo = (a, rel, conteudo) => {
@@ -1274,7 +1294,7 @@ test('I-2: rename falhou e a captura criou a pasta nova: junta, aponta notas e e
   apelido(a, a.ids[0], 'Novo Nome')
   const nova = a.nota()
   assert.ok(nova.relativo.startsWith('Novo Nome'))
-  const relEvento = path.join('Cliente 1', '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', 'Eventos', `${velha.chave}-evento-110111-1.xml`)
+  const relEvento = path.join('Cliente 1', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${velha.chave}-evento-110111-1.xml`)
   fs.mkdirSync(path.dirname(a.abs(relEvento)), { recursive: true })
   fs.writeFileSync(a.abs(relEvento), '<evento/>')
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(velha.chave, relEvento)
@@ -1286,9 +1306,9 @@ test('I-2: rename falhou e a captura criou a pasta nova: junta, aponta notas e e
   assert.equal(caminhoDe(a, velha.chave), relNovo(velha.relativo))
   assert.deepEqual(fs.readFileSync(a.abs(relNovo(velha.relativo))), conteudo)
   assert.equal(a.db.prepare('SELECT caminho_xml FROM eventos').pluck().get(), relNovo(relEvento))
-  const nomes = noZip(a, NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip')
-  for (const n of [velha, nova]) assert.ok(nomes.includes(`XML/Entradas/${n.chave}-nfe.xml`))
-  assert.ok(nomes.includes(`XML/Entradas/Eventos/${velha.chave}-evento-110111-1.xml`))
+  const nomes = noZip(a, NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip')
+  for (const n of [velha, nova]) assert.ok(nomes.includes(`XML/${n.chave}-nfe.xml`))
+  assert.ok(nomes.includes(`Eventos/${velha.chave}-evento-110111-1.xml`))
 })
 
 test('I-2: caminho no banco com barra invertida também é juntado, mantendo a barra', async (t) => {
@@ -1324,7 +1344,7 @@ test('I-2: o mesmo arquivo pelas duas pastas (junction): nada é apagado, o grup
   assert.ok(a.existe(n.relativo), 'fica: apagar levaria o único exemplar')
   assert.equal(caminhoDe(a, n.chave), relNovo(n.relativo))
   assert.equal(pendente(a), undefined)
-  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip').includes(`XML/Entradas/${n.chave}-nfe.xml`))
+  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip').includes(`XML/${n.chave}-nfe.xml`))
 })
 
 test('I-2: dois nomes do mesmo arquivo em pastas de verdade diferentes: os dois ficam e o grupo sai', async (t) => {
@@ -1379,7 +1399,7 @@ test('I-2: conteúdo diferente mantém os dois e rejeita com o nome do arquivo; 
   assert.equal(caminhoDe(a, presa.chave), presa.relativo)
   assert.equal(caminhoDe(a, solta.chave), relNovo(solta.relativo))
   assert.ok(!a.existe(solta.relativo))
-  assert.ok(!a.existe(NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip'))
+  assert.ok(!a.existe(NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip'))
 })
 
 test('I-2: arquivo preso não sai, o banco dele não muda e a mensagem não manda mover à mão; depois de soltar, junta', async (t) => {
@@ -1408,7 +1428,7 @@ test('I-2: origem removida à mão com os arquivos já no destino: reaponta e o 
   fs.rmdirSync(a.abs('Cliente 1'))
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.equal(caminhoDe(a, n.chave), relNovo(n.relativo))
-  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip').includes(`XML/Entradas/${n.chave}-nfe.xml`))
+  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip').includes(`XML/${n.chave}-nfe.xml`))
 })
 
 test('I-2: origem removida: só reaponta quem tem arquivo; quem não tem em nenhum lado fica e rejeita com o nome', async (t) => {
@@ -1435,7 +1455,7 @@ test('I-2: pasta com nota de outro cliente não é tocada, mesmo com os dois lad
   fs.renameSync(a.abs(outra.relativo), a.abs(naPrimeira))
   a.db.prepare('UPDATE notas SET caminho_xml = ? WHERE chave = ?').run(naPrimeira, outra.chave)
   apelido(a, a.ids[0], 'Novo Nome')
-  noLadoNovo(a, minha.relativo.replace('Novembro', 'Outubro'), '<x/>')
+  noLadoNovo(a, minha.relativo.replace('11-Novembro', '10-Outubro'), '<x/>')
   await assert.rejects(a.gerador.gerarGrupo(a.grupoDe(), {}), (e) => {
     assert.match(e.message, /"Cliente 1" e deveria ser "Novo Nome".*notas de outra empresa/s)
     assert.doesNotMatch(e.message, /Feche/)
@@ -1514,16 +1534,17 @@ test('I-3: captura em andamento não migra; ao terminar, migra', async (t) => {
   capturando = null
   await a.passada()
   assert.equal(a.tentativas(), 1)
-  assert.equal(layout(a), '6')
+  assert.equal(layout(a), VERSAO_XML)
 })
 
 test('I-3: dois resultados iguais não repetem dentro de 1 hora e repetem depois; o log só muda com o resultado', async (t) => {
   const a = comMigracaoPresa(t)
+  await a.passada() // numera a pasta do mês: houve avanço
   await a.passada()
   await a.passada()
   const duas = a.tentativas()
   assert.ok(duas >= 2, String(duas))
-  assert.equal(a.logs().length, 1, 'mesmo resultado: um log só')
+  assert.equal(a.logs().length, 2, 'mesmo resultado: não repete o log')
   await a.passada()
   a.passar(UMA_HORA - 1)
   await a.passada()
@@ -1532,13 +1553,13 @@ test('I-3: dois resultados iguais não repetem dentro de 1 hora e repetem depois
   a.passar(1)
   await a.passada()
   assert.ok(a.tentativas() > duas, 'depois de 1 hora tenta')
-  assert.equal(a.logs().length, 1)
+  assert.equal(a.logs().length, 2)
 
   a.soltar()
   a.passar(UMA_HORA)
   await a.passada()
-  assert.equal(layout(a), '6')
-  assert.equal(a.logs().length, 2, 'resultado novo: novo log')
+  assert.equal(layout(a), VERSAO_XML)
+  assert.equal(a.logs().length, 3, 'resultado novo: novo log')
 })
 
 test('rodada 3: a espera de 1 hora zera depois de trocar a pasta', async (t) => {
@@ -1563,17 +1584,17 @@ test('I-3: progresso na tentativa não faz esperar', async (t) => {
   await a.passada()
   notaV5(a, { chave: outra })
   await a.passada()
-  assert.ok(a.existe(a.tipo(), 'XML', 'Entradas', `${outra}-nfe.xml`), 'moveu um: não é falta de avanço')
+  assert.ok(a.existe(a.tipo(), 'XML', `${outra}-nfe.xml`), 'moveu um: não é falta de avanço')
   const outraNova = '4'.repeat(44)
   notaV5(a, { chave: outraNova })
   await a.passada()
-  assert.ok(a.existe(a.tipo(), 'XML', 'Entradas', `${outraNova}-nfe.xml`))
+  assert.ok(a.existe(a.tipo(), 'XML', `${outraNova}-nfe.xml`))
 })
 
 // ---------- rodada 3: o que fica na pasta antiga prende o grupo ----------
 
 const eventoNa = (a, chave, pasta = 'Cliente 1') => {
-  const rel = path.join(pasta, '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', 'Eventos', `${chave}-evento-110111-1.xml`)
+  const rel = path.join(pasta, '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${chave}-evento-110111-1.xml`)
   fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
   fs.writeFileSync(a.abs(rel), '<evento/>')
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(chave, rel)
@@ -1606,13 +1627,13 @@ test('rodada 3: evento travado de vez rejeita mesmo com as notas movidas, també
 
   await assert.rejects(a.gerador.gerarGrupo(a.grupoDe(), {}), noArquivo(nomeEvento))
   await assert.rejects(reaberto(a).gerarGrupo(a.grupoDe(), {}), noArquivo(nomeEvento))
-  assert.ok(!a.existe(NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip'))
+  assert.ok(!a.existe(NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip'))
 
   trava.soltar()
   await reaberto(a).gerarGrupo(a.grupoDe(), {})
   assert.equal(pendente(a), undefined)
   assert.ok(!a.existe('Cliente 1'))
-  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip').includes(`XML/Entradas/Eventos/${nomeEvento}`))
+  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip').includes(`Eventos/${nomeEvento}`))
 })
 
 test('rodada 4: evento travado ao apagar com link físico: sobra inofensiva, o grupo sai com ele no ZIP e o log sai uma vez por volta', async (t) => {
@@ -1632,7 +1653,7 @@ test('rodada 4: evento travado ao apagar com link físico: sobra inofensiva, o g
   assert.equal(pendente(a), undefined)
   assert.ok(a.existe(relEvento), 'a origem fica')
   assert.equal(a.db.prepare('SELECT caminho_xml FROM eventos').pluck().get(), relNovo(relEvento))
-  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip').includes(`XML/Entradas/Eventos/${path.basename(relEvento)}`))
+  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Entradas Novembro 2026.zip').includes(`Eventos/${path.basename(relEvento)}`))
   assert.equal(logs.filter(([m]) => /nas duas pastas/.test(m)).length, 1)
 })
 
@@ -1655,11 +1676,11 @@ test('rodada 4: sem link físico e origem travada ao apagar: manda fechar e, ao 
   assert.equal(pendente(a), undefined)
 })
 
-test('rodada 3: resumo sem linha no banco travado também prende o grupo e entra no ZIP depois', async (t) => {
+test('rodada 3: resumo sem linha no banco travado também prende o grupo; depois de soltar, sai da pasta antiga', async (t) => {
   const a = comClientes(t)
   const velha = a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
-  const relResumo = path.join('Cliente 1', '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', 'Resumos', `${velha.chave}-resumo.xml`)
+  const relResumo = path.join('Cliente 1', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${velha.chave}-resumo.xml`)
   fs.mkdirSync(path.dirname(a.abs(relResumo)), { recursive: true })
   fs.writeFileSync(a.abs(relResumo), '<res/>')
   a.nota()
@@ -1670,7 +1691,7 @@ test('rodada 3: resumo sem linha no banco travado também prende o grupo e entra
   trava.soltar()
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.equal(pendente(a), undefined)
-  assert.ok(noZip(a, NF_E_NOVA, 'Novo Nome NF-e Novembro 2026.zip').includes(`XML/Entradas/Resumos/${velha.chave}-resumo.xml`))
+  assert.ok(a.existe('Novo Nome', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${velha.chave}-resumo.xml`))
 })
 
 test('rodada 3: evento na pasta do escritório, sem nenhuma junção, não prende o grupo', async (t) => {
@@ -1688,8 +1709,8 @@ test('rodada 3: relatório, ZIP e PDF na pasta antiga não são pendência nem c
   const n = a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
   a.nota()
-  const antiga = path.join('Cliente 1', '2026', 'Novembro', 'NF-e')
-  const nomes = ['Relatorio NF-e Novembro 2026.xlsx', 'Cliente 1 NF-e Novembro 2026.zip', path.join('PDF', 'Entradas', `${n.chave}-nfe.pdf`)]
+  const antiga = path.join('Cliente 1', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  const nomes = ['Relatorio NF-e Entradas Novembro 2026.xlsx', 'Cliente 1 NF-e Entradas Novembro 2026.zip', path.join('PDF', 'Entradas', `${n.chave}-nfe.pdf`)]
   for (const nome of nomes) {
     fs.mkdirSync(path.dirname(a.abs(antiga, nome)), { recursive: true })
     fs.writeFileSync(a.abs(antiga, nome), 'da pasta antiga')
@@ -1697,7 +1718,7 @@ test('rodada 3: relatório, ZIP e PDF na pasta antiga não são pendência nem c
     fs.writeFileSync(a.abs(NF_E_NOVA, nome), 'da pasta nova')
   }
   // Só este é igual dos dois lados: sai da origem depois da comparação.
-  const igual = 'Relatorio NF-e Novembro 2026.pdf'
+  const igual = 'Relatorio NF-e Entradas Novembro 2026.pdf'
   fs.writeFileSync(a.abs(antiga, igual), 'igual')
   fs.writeFileSync(a.abs(NF_E_NOVA, igual), 'igual')
   await a.gerador.gerarGrupo(a.grupoDe(), {})
@@ -1769,7 +1790,7 @@ test('rodada 3: duas pastas antigas com sobra: uma não apaga a pendência da ou
   a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
   a.db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?)').run(`pasta_pendente:${a.ids[0]}`, 'Mais Antiga')
-  const relSobra = path.join('Mais Antiga', '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', 'presa.xml')
+  const relSobra = path.join('Mais Antiga', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'presa.xml')
   fs.mkdirSync(path.dirname(a.abs(relSobra)), { recursive: true })
   fs.writeFileSync(a.abs(relSobra), '<x/>')
   fs.mkdirSync(a.abs('Novo Nome'))
@@ -1779,7 +1800,7 @@ test('rodada 3: duas pastas antigas com sobra: uma não apaga a pendência da ou
   trava.soltar()
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.equal(pendente(a), undefined)
-  assert.ok(a.existe('Novo Nome', '2026', 'Novembro', 'NF-e', 'XML', 'Entradas', 'presa.xml'))
+  assert.ok(a.existe('Novo Nome', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'presa.xml'))
 })
 
 // ---------- rodada 3: juntar sem sobrescrever ----------

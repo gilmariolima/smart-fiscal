@@ -56,8 +56,8 @@ function mesmoConteudo(a, b) {
   return fs.statSync(a).size === fs.statSync(b).size && fs.readFileSync(a).equals(fs.readFileSync(b))
 }
 
-// XML em qualquer pasta XML\ da empresa: é o que prende o grupo. Relatório, ZIP e PDF são refeitos.
-const ehXmlGuardado = (rel) => /(^|\/)xml\/.+\.xml$/i.test(barraNormal(rel))
+// XML em pasta XML\ ou Eventos e Resumos\ da empresa: é o que prende o grupo. Relatório, ZIP e PDF são refeitos.
+const ehXmlGuardado = (rel) => /(^|\/)(xml|eventos e resumos)\/.+\.xml$/i.test(barraNormal(rel))
 
 /** Tudo dentro da pasta; pasta que não existe não tem nada. Outro erro de leitura lança. */
 function arvoreDe(pasta) {
@@ -90,6 +90,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
       cert_validade = @cert_validade, ultimo_erro = NULL WHERE cnpj = @cnpj`),
     ativo: db.prepare('UPDATE clientes SET ativo = ? WHERE cnpj = ?'),
     tambemCliente: db.prepare("UPDATE clientes SET tambem_cliente = ? WHERE cnpj = ? AND papel = 'escritorio'"),
+    virarEscritorio: db.prepare("UPDATE clientes SET papel = 'escritorio', tambem_cliente = 1, ativo = 1, apelido = 'escritorio', razao_social = @razao_social, uf = @uf WHERE id = @id"),
     autoNfe: db.prepare('UPDATE clientes SET auto_nfe = ? WHERE cnpj = ?'),
     autoNfse: db.prepare('UPDATE clientes SET auto_nfse = ? WHERE cnpj = ?'),
     autoCte: db.prepare('UPDATE clientes SET auto_cte = ? WHERE cnpj = ?'),
@@ -226,10 +227,23 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     const c = validarDados({ cnpj, razao, uf })
     const atual = sql.escritorio.get()
     if (atual) throw new Error(`Já existe um escritório cadastrado (${atual.cnpj}).`)
-    if (sql.porCnpj.get(c)) throw new Error(`CNPJ ${c} já cadastrado.`)
+    const existente = sql.porCnpj.get(c)
+    if (existente) return tornarClienteEscritorio(existente, { razao, uf, pfx, senha })
     const r = inserirCliente({ cnpj: c, razao, uf, apelido: 'escritorio', papel: 'escritorio', pfx, senha })
     logger.info('Escritório cadastrado', { cnpj: c, validade: r.certificado.validade })
     return r
+  }
+
+  // O CNPJ já é cliente: a mesma linha vira o escritório e segue como cliente. Uma fila de NSU por CNPJ, com as notas e os NSU dele.
+  // O certificado é conferido primeiro: se for recusado, nada muda.
+  function tornarClienteEscritorio(existente, { razao, uf, pfx, senha }) {
+    const r = trocarCertificado({ cnpj: existente.cnpj, pfx, senha })
+    sql.virarEscritorio.run({ id: existente.id, razao_social: String(razao).trim(), uf: String(uf).trim().toUpperCase() })
+    const cliente = sql.porCnpj.get(existente.cnpj)
+    // A pasta do escritório leva a razão social.
+    const avisos = [...r.avisos, ...reconciliarPasta(cliente)]
+    logger.info('Cliente passou a ser o escritório', { cnpj: existente.cnpj })
+    return { ...r, cliente, avisos }
   }
 
   /** Muda a razão social e a UF do escritório. O CNPJ não muda: é o do certificado. */

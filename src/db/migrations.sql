@@ -98,10 +98,11 @@ CREATE TABLE IF NOT EXISTS pasta_grupos (
   cliente_id INTEGER NOT NULL,
   competencia TEXT NOT NULL,          -- AAAA-MM
   modelo TEXT NOT NULL,               -- nfe | nfse | cte
+  direcao TEXT NOT NULL DEFAULT 'entrada', -- entrada | saida | outro
   assinatura TEXT NOT NULL,
   eventos INTEGER NOT NULL DEFAULT 0, -- eventos do grupo na última geração
   gerado_em TEXT NOT NULL,            -- ISO
-  PRIMARY KEY (cliente_id, competencia, modelo)
+  PRIMARY KEY (cliente_id, competencia, modelo, direcao)
 );
 
 -- Dados do próprio sistema (ex.: ambiente = homologacao | producao | simulada).

@@ -198,6 +198,7 @@ function criarServicoCiclo(deps) {
   const somenteDownload = ({ cnpj } = {}) => comTrava({ cnpj }, async (c) => ({ download: await download.baixarPendentes(c.id) }))
 
   return {
+    corrigirNotasDoEscritorio: captura.corrigirNotasDoEscritorio,
     executarCiclo,
     somenteDownload,
     manifestar: (args) => manifestacao.manifestar(args),

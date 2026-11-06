@@ -3,13 +3,34 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-// Grava os XMLs em <PASTA_XMLS>/<Empresa>/[fora-da-carteira/]<AAAA>/<Mês>/<NF-e|NFS-e|CT-e>/XML/<Entradas|Saidas|Outros>/[Eventos|Resumos/]:
-// a mesma ordem das telas e da exportação (empresa, ano, mês, tipo); o PDF fica ao lado, em PDF/ no lugar de XML/.
+// Grava os XMLs em <PASTA_XMLS>/<Empresa>/[Sem cliente cadastrado/]<AAAA>/<MM-Mês>/<Entradas|Saidas|Outros>/<NF-e|NFS-e|CT-e>/XML/; eventos e resumos não são notas e ficam em <MM-Mês>/Eventos e Resumos/<Tipo>/.
+// O PDF fica ao lado, em PDF/ no lugar de XML/, com os relatórios e o ZIP na pasta do tipo.
 // O banco guarda o caminho relativo à PASTA_XMLS, para a pasta poder mudar de lugar.
 // Só este módulo monta caminho de XML.
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 const MAX_NOME_PASTA = 40
+
+// O número na frente deixa as pastas na ordem do calendário no Explorador.
+const pastaDoMes = (mes) => `${String(mes).padStart(2, '0')}-${MESES[mes - 1]}`
+const MES_SEM_NUMERO = new RegExp(`([\\\\/]\\d{4}[\\\\/])(${MESES.join('|')})(?=[\\\\/])`)
+
+/** Caminho com a pasta do mês no formato atual; a barra do caminho é mantida. */
+const comMesNumerado = (caminho) => String(caminho).replace(MES_SEM_NUMERO, (_, antes, mes) => antes + pastaDoMes(MESES.indexOf(mes) + 1))
+const temMesSemNumero = (caminho) => MES_SEM_NUMERO.test(String(caminho))
+
+// Formato anterior: <Tipo>/(XML|PDF)/<Direção>/. A barra do caminho é mantida.
+const DIRECAO_DEPOIS = /([\\/])(NF-e|NFS-e|CT-e)([\\/])(XML|PDF)([\\/])(Entradas|Saidas|Outros)(?=[\\/])/
+const FORMATO_ATUAL = /[\\/](?:(?:Entradas|Saidas|Outros)[\\/](?:NF-e|NFS-e|CT-e)[\\/]XML|Eventos e Resumos[\\/](?:NF-e|NFS-e|CT-e))[\\/]/
+// Formato anterior: <Direção>/<Tipo>/XML/(Eventos|Resumos)/.
+const AVULSO_NO_XML = /([\\/])(?:Entradas|Saidas|Outros)([\\/])(NF-e|NFS-e|CT-e)([\\/])XML[\\/](?:Eventos|Resumos)(?=[\\/])/
+
+/** Caminho com a direção antes do tipo. */
+const comDirecaoAntesDoTipo = (caminho) => String(caminho).replace(DIRECAO_DEPOIS, (_, b1, tipo, b2, area, b3, direcao) => `${b1}${direcao}${b2}${tipo}${b3}${area}`)
+/** Caminho com evento ou resumo em Eventos e Resumos/<Tipo>/. */
+const comAvulsosNoLugar = (caminho) => String(caminho).replace(AVULSO_NO_XML, (_, b1, b2, tipo) => `${b1}Eventos e Resumos${b2}${tipo}`)
+/** XML que ainda não está no formato atual. */
+const foraDoFormatoAtual = (caminho) => temMesSemNumero(caminho) || AVULSO_NO_XML.test(String(caminho)) || !FORMATO_ATUAL.test(String(caminho))
 
 // Tira o que o Windows não aceita em nome de pasta; mantém acentos e espaços.
 // Curto e cortado em palavra inteira: o Windows não extrai caminho com mais de 260 caracteres.
@@ -64,10 +85,12 @@ const PASTAS = {
   direcao: { entrada: 'Entradas', saida: 'Saidas', outro: 'Outros' },
   evento: 'Eventos',
   resumo: 'Resumos',
+  // Eventos e resumos não são notas: ficam juntos, fora de entradas e saídas.
+  avulsos: 'Eventos e Resumos',
   xml: 'XML',
   pdf: 'PDF',
   // Subpasta do escritório para notas sem cliente cadastrado (nem emitente nem destinatário).
-  foraDaCarteira: 'fora-da-carteira',
+  foraDaCarteira: 'Sem cliente cadastrado',
   semData: 'sem-data',
 }
 
@@ -81,14 +104,18 @@ function direcaoPelaChave(chave, cnpjCliente) {
   return emitente === cnpjCliente ? 'saida' : 'entrada'
 }
 
-/** Pasta do grupo (empresa, ano, mês e tipo): <Empresa>/[fora-da-carteira/]<AAAA>/<Mês>/<Tipo>; sem competência, sem-data. */
-function pastaDoGrupo({ cliente, outrosClientes, competencia, modelo = 'nfe', foraDaCarteira = false }) {
+// <Empresa>/[Sem cliente cadastrado/]<AAAA>/<MM-Mês>; sem competência, sem-data.
+function partesDoMes({ cliente, outrosClientes, competencia, foraDaCarteira }) {
   const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(competencia || '')
   const partes = [pastaDoClienteNoDisco(cliente, outrosClientes)]
   if (foraDaCarteira) partes.push(PASTAS.foraDaCarteira)
-  partes.push(...(m ? [m[1], MESES[Number(m[2]) - 1]] : [PASTAS.semData]))
-  partes.push(PASTAS.modelo[modelo] || PASTAS.modelo.nfe)
-  return path.join(...partes)
+  partes.push(...(m ? [m[1], pastaDoMes(Number(m[2]))] : [PASTAS.semData]))
+  return partes
+}
+
+/** Pasta do grupo (empresa, ano, mês, direção e tipo). */
+function pastaDoGrupo({ cliente, outrosClientes, competencia, modelo = 'nfe', direcao = 'entrada', foraDaCarteira = false }) {
+  return path.join(...partesDoMes({ cliente, outrosClientes, competencia, foraDaCarteira }), PASTAS.direcao[direcao] || PASTAS.direcao.entrada, PASTAS.modelo[modelo] || PASTAS.modelo.nfe)
 }
 
 /** Caminho do PDF que acompanha o XML da nota (PDF no lugar de XML). Resumo e evento não têm PDF. */
@@ -101,16 +128,24 @@ function caminhoDoPdf(caminhoXml) {
   return path.join(...partes)
 }
 
+/** Caminho do resumo da nota completa, a partir do XML dela; só NF-e tem resumo. */
+function caminhoDoResumo(caminhoXml) {
+  const partes = String(caminhoXml).split(/[\\/]/)
+  const m = /^(\d+)-nfe\.xml$/i.exec(partes[partes.length - 1])
+  const i = partes.length - 2
+  if (!m || partes[i] !== PASTAS.xml || i < 2) return null
+  return path.join(...partes.slice(0, i - 2), PASTAS.avulsos, partes[i - 1], `${m[1]}-resumo.xml`)
+}
+
 /**
  * Caminho relativo do XML. categoria: 'nota' | 'evento' | 'resumo'; competencia: 'AAAA-MM' ou vazia.
  * `outrosClientes`: para dois clientes com o mesmo nome não caírem na mesma pasta.
  */
 function caminhoDa({ cliente, outrosClientes, modelo = 'nfe', direcao = 'entrada', competencia, categoria = 'nota', nomeArquivo, foraDaCarteira = false }) {
-  const partes = [pastaDoGrupo({ cliente, outrosClientes, competencia, modelo, foraDaCarteira })]
-  partes.push(PASTAS.xml, PASTAS.direcao[direcao] || PASTAS.direcao.entrada)
-  if (categoria === 'evento') partes.push(PASTAS.evento)
-  if (categoria === 'resumo') partes.push(PASTAS.resumo)
-  return path.join(...partes, nomeArquivo)
+  if (categoria === 'evento' || categoria === 'resumo') {
+    return path.join(...partesDoMes({ cliente, outrosClientes, competencia, foraDaCarteira }), PASTAS.avulsos, PASTAS.modelo[modelo] || PASTAS.modelo.nfe, nomeArquivo)
+  }
+  return path.join(pastaDoGrupo({ cliente, outrosClientes, competencia, modelo, direcao, foraDaCarteira }), PASTAS.xml, nomeArquivo)
 }
 
 /** Pasta da nota dentro dos ZIPs (exportação e seleção): NF-e/Entradas, NFS-e/Saidas/Canceladas... */
@@ -180,7 +215,20 @@ function criarArmazenamento({ config, pastaXmls, db }) {
     return path.join(pasta(), relativo)
   }
 
-  return { salvar, absoluto }
+  /** Tira o resumo depois que a nota completa foi gravada. Falhar não é crítico: o arquivo só sobra. */
+  function tirarResumo(caminhoDaNota) {
+    const relativo = caminhoDoResumo(caminhoDaNota)
+    if (!relativo) return
+    const arquivo = path.join(pasta(), relativo)
+    fs.rmSync(arquivo, { force: true })
+    try {
+      // Só saem se ficaram vazias: a do tipo e Eventos e Resumos.
+      fs.rmdirSync(path.dirname(arquivo))
+      fs.rmdirSync(path.dirname(path.dirname(arquivo)))
+    } catch {}
+  }
+
+  return { salvar, absoluto, tirarResumo }
 }
 
-module.exports = { criarArmazenamento, pastaDoCliente, pastaDoClienteNoDisco, pastasDoClienteNoBanco, chavePastaPendente, pastasPendentesDoCliente, nomeDePasta, nomeDoCliente, MESES, nomes, slug, PASTAS, caminhoDa, pastaDoGrupo, caminhoDoPdf, direcaoPelaChave, modeloPelaChave, pastaNoZip, nomeNoZip }
+module.exports = { criarArmazenamento, pastaDoCliente, pastaDoClienteNoDisco, pastasDoClienteNoBanco, chavePastaPendente, pastasPendentesDoCliente, nomeDePasta, nomeDoCliente, MESES, pastaDoMes, comMesNumerado, temMesSemNumero, comDirecaoAntesDoTipo, comAvulsosNoLugar, foraDoFormatoAtual, nomes, slug, PASTAS, caminhoDa, pastaDoGrupo, caminhoDoPdf, caminhoDoResumo, direcaoPelaChave, modeloPelaChave, pastaNoZip, nomeNoZip }

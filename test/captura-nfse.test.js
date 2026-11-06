@@ -48,12 +48,12 @@ test('grava entradas e saídas nas pastas certas e marca a espera de 1 h', async
   assert.equal(n1.emitente_cnpj, PRESTADOR_MOCK)
   assert.equal(n1.destinatario_cnpj, CNPJ_MOCK_OK)
 
-  const base = 'Cliente 1/2026/Outubro/NFS-e/XML'
+  const base = 'Cliente 1/2026/10-Outubro'
   assert.deepEqual(arquivos(pastaXmls), [
-    `${base}/Entradas/${n1.chave}-nfse.xml`,
-    `${base}/Entradas/${n2.chave}-nfse.xml`,
-    `${base}/Entradas/Eventos/${n1.chave}-evento-101101-001.xml`,
-    `${base}/Saidas/${n3.chave}-nfse.xml`,
+    `${base}/Entradas/NFS-e/XML/${n1.chave}-nfse.xml`,
+    `${base}/Entradas/NFS-e/XML/${n2.chave}-nfse.xml`,
+    `${base}/Eventos e Resumos/NFS-e/${n1.chave}-evento-101101-001.xml`,
+    `${base}/Saidas/NFS-e/XML/${n3.chave}-nfse.xml`,
   ].sort())
 
   const c = cliente(db, id)

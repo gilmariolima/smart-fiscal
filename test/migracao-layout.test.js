@@ -6,7 +6,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { abrirBanco } = require('../src/db')
-const { migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml, VERSAO_XML } = require('../src/services/migracaoPastas')
+const { migrarLayoutDasTelas, migrarLayoutEmpresaPrimeiro, migrarLayoutAnoMes, migrarLayoutPastaXml } = require('../src/services/migracaoPastas')
 
 const silencioso = { info() {}, warn() {}, error() {} }
 const LUNA = '11222333000181'
@@ -417,7 +417,6 @@ test('pasta XML: move para XML, atualiza o banco e grava a versão 6', (t) => {
   assert.equal(db.prepare('SELECT caminho_xml c FROM notas').get().c, comXml.nfe)
   assert.equal(db.prepare('SELECT caminho_xml c FROM eventos').get().c, comXml.evento)
   assert.equal(versao(db), '6')
-  assert.equal(VERSAO_XML, '6')
   assert.deepEqual(r.ignorados, [antigos.estranho])
   assert.ok(fs.existsSync(path.join(pastaXmls, antigos.estranho)), 'fora do padrão fica onde está')
   assert.ok(!fs.existsSync(path.join(pastaXmls, 'Luna Materiais', '2026', 'Outubro', 'NF-e', 'Entradas')), 'pasta antiga vazia some')
@@ -541,6 +540,6 @@ test('M11: em nova tentativa, PDF e arquivos gerados não entram em ignorados; u
   }
   const r = migrarLayoutPastaXml({ db, pastaXmls, logger: { info() {}, warn() {}, error() {} } })
   assert.deepEqual(r.ignorados.filter((f) => f.startsWith('Foo')), [estranho])
-  assert.equal(versao(db), VERSAO_XML)
+  assert.equal(versao(db), '6')
   for (const rel of gerados) assert.ok(fs.existsSync(path.join(pastaXmls, rel)), rel)
 })

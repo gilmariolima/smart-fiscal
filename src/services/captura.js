@@ -1,9 +1,13 @@
 'use strict'
 
+const fs = require('node:fs')
+const path = require('node:path')
 const { tipoDocumento } = require('../sefaz/client')
-const { criarArmazenamento, nomes, direcaoPelaChave, modeloPelaChave } = require('./armazenamento')
+const { criarArmazenamento, caminhoDoPdf, pastaDoClienteNoDisco, pastasDoClienteNoBanco, pastasPendentesDoCliente, PASTAS, nomes, direcaoPelaChave, modeloPelaChave } = require('./armazenamento')
 const { dadosResNFe, dadosNfeProc, dadosEvento, competenciaDe } = require('./extracao')
 const { DA_CARTEIRA } = require('./clientes')
+const { VERSAO_XML } = require('./migracaoPastas')
+const { xmlParaJson } = require('../sefaz/xml')
 
 const UMA_HORA = 3600e3
 const MAX_LOTES_POR_CICLO = 500 // trava de segurança: 500 lotes x 50 docs
@@ -76,7 +80,8 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const d = dadosResNFe(doc.json)
     if (!d.chave) return 'ignorado'
     const existente = sql.nota.get(cliente.id, d.chave)
-    armazenamento.salvar({ cliente, competencia: existente?.competencia || d.competencia, categoria: 'resumo', nomeArquivo: nomes.resumo(d.chave), xml: doc.xml })
+    // Com a nota completa, o resumo não serve mais: não volta para a pasta.
+    if (existente?.status !== 'completa') armazenamento.salvar({ cliente, competencia: existente?.competencia || d.competencia, categoria: 'resumo', nomeArquivo: nomes.resumo(d.chave), xml: doc.xml })
     const cancelada = d.situacao_sefaz === '3' || !!sql.temCancelamento.get(d.chave) ? 1 : 0
     if (existente) {
       // Nunca rebaixa o status: só atualiza a situação informada pela SEFAZ.
@@ -106,6 +111,11 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const dados = { ...d, competencia, cliente_id: cliente.id, caminho_xml: caminho, cancelada, atualizado_em: iso() }
     if (existente) sql.completarNota.run(dados)
     else sql.inserirNota.run({ ...dados, tipo, nsu: doc.nsu, situacao_sefaz: null, status: 'completa' })
+    try {
+      armazenamento.tirarResumo(caminho)
+    } catch (e) {
+      logger.warn('Resumo da nota completa não saiu da pasta', { chave: d.chave, erro: e.code || e.message })
+    }
     marcarCaptura(cliente, d.chave)
     if (tipo === 'saida' && contagem) contagem.saida++
   }
@@ -332,7 +342,161 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     return resultados
   }
 
-  return { capturarCliente, capturarTodos, processarDocumento }
+  // A pasta do escritório pode estar com o nome antigo, se ainda não foi renomeada.
+  function pastasForaDaCarteira(escritorio) {
+    const todos = db.prepare('SELECT cnpj, papel, apelido, razao_social FROM clientes').all()
+    const nomesDaPasta = new Set([pastaDoClienteNoDisco(escritorio, todos), ...pastasDoClienteNoBanco(db, escritorio.id), ...pastasPendentesDoCliente(db, escritorio.id)])
+    return [...nomesDaPasta].map((nome) => armazenamento.absoluto(path.join(nome, PASTAS.foraDaCarteira))).filter((d) => fs.existsSync(d))
+  }
+
+  // Tira o arquivo e as pastas que ficaram vazias, até a das notas sem cliente. A nota já está com o dono: arquivo preso só sobra aqui.
+  function tirarDaPastaSemCliente(arquivo, raiz) {
+    try {
+      fs.rmSync(arquivo, { force: true })
+      for (let d = path.dirname(arquivo); d !== path.dirname(raiz); d = path.dirname(d)) fs.rmdirSync(d)
+    } catch (e) {
+      if (e.code !== 'ENOTEMPTY' && e.code !== 'EEXIST') logger.warn('Arquivo das notas sem cliente não saiu da pasta', { arquivo: path.basename(arquivo), erro: e.code || e.message })
+    }
+  }
+
+  // Quem é emitente ou destinatário e está cadastrado.
+  function clientesDaNota(d) {
+    return [d.emitente_cnpj, d.destinatario_cnpj].map((c) => c && sql.clienteDaCarteira.get(c)).filter(Boolean)
+  }
+
+  // O XML guardado é do dono: linha no banco e arquivo no disco.
+  function estaComODono(chave, donos) {
+    return donos.some((c) => {
+      const n = sql.nota.get(c.id, chave)
+      if (!n?.caminho_xml) return false
+      try {
+        return fs.statSync(armazenamento.absoluto(n.caminho_xml)).size > 0
+      } catch {
+        return false
+      }
+    })
+  }
+
+  function resgatarDeForaDaCarteira(escritorio, resultado) {
+    for (const raiz of pastasForaDaCarteira(escritorio)) {
+      for (const item of fs.readdirSync(raiz, { recursive: true, withFileTypes: true })) {
+        if (!item.isFile() || !/-nfe\.xml$/i.test(item.name)) continue
+        const arquivo = path.join(item.parentPath, item.name)
+        try {
+          const xml = fs.readFileSync(arquivo, 'utf8')
+          const json = xmlParaJson(xml)
+          const d = dadosNfeProc(json)
+          if (!d.chave) continue
+          const donos = clientesDaNota(d)
+          if (!donos.length) {
+            resultado.semDono++
+            continue
+          }
+          if (estaComODono(d.chave, donos)) {
+            tirarDaPastaSemCliente(arquivo, raiz)
+            resultado.copias++
+            continue
+          }
+          // Está no banco em outra empresa: a correção das notas já cuidou do que era do escritório; aqui não se decide.
+          if (db.prepare('SELECT 1 FROM notas WHERE chave = ? AND caminho_xml IS NOT NULL LIMIT 1').get(d.chave)) continue
+          encaminharCompleta(escritorio, { xml, json, nsu: null }, { saida: 0 })
+          if (!estaComODono(d.chave, donos)) throw new Error('nota não gravada')
+          tirarDaPastaSemCliente(arquivo, raiz)
+          resultado.resgatadas++
+        } catch (e) {
+          resultado.falhas++
+          logger.warn('Nota sem cliente não levada; tenta de novo na próxima abertura', { arquivo: item.name, erro: e.code || e.message })
+        }
+      }
+    }
+  }
+
+  // Sobra de quando o escritório estava cadastrado como cliente: a nota recebida pelo autXML foi gravada como entrada dele.
+  function retirarGeradosDoMes(pasta) {
+    const absoluta = armazenamento.absoluto(pasta)
+    let nomesNaPasta = []
+    try {
+      nomesNaPasta = fs.readdirSync(absoluta)
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e
+    }
+    for (const nome of nomesNaPasta) {
+      if (/^Relatorio .*\.(xlsx|pdf)$/i.test(nome) || /\.zip$/i.test(nome)) fs.rmSync(path.join(absoluta, nome), { force: true })
+    }
+    // Só saem as que ficaram vazias, de dentro para fora.
+    for (const d of [path.join(absoluta, 'PDF'), path.join(absoluta, 'XML'), absoluta, path.dirname(absoluta)]) {
+      try {
+        fs.rmdirSync(d)
+      } catch {}
+    }
+  }
+
+  /**
+   * Uma vez, depois que existe o escritório: a NF-e dele em que ele não é emitente nem destinatário vai para quem é, como na captura.
+   * Banco e arquivo novos primeiro; só depois sai do escritório. O que falhar tenta de novo na próxima abertura.
+   * Depois, as notas da pasta Sem cliente cadastrado que já têm cliente vão para ele, e a cópia de quem já está com o dono sai. A pasta vazia some.
+   * @returns {{ movidas: number, resgatadas: number, copias: number, semDono: number, falhas: number }}
+   */
+  function corrigirNotasDoEscritorio() {
+    const resultado = { movidas: 0, resgatadas: 0, copias: 0, semDono: 0, falhas: 0 }
+    const escritorio = db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio'").get()
+    const valor = (chave) => db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get(chave)
+    if (!escritorio || valor('notas_escritorio_corrigidas') || valor('pastas_layout') !== VERSAO_XML || !fs.existsSync(config.pastaXmls)) return resultado
+
+    const apagarNota = db.prepare('DELETE FROM notas WHERE id = ?')
+    const meses = new Map()
+    for (const n of db.prepare("SELECT * FROM notas WHERE cliente_id = ? AND modelo = 'nfe' AND status = 'completa' AND caminho_xml IS NOT NULL").all(escritorio.id)) {
+      try {
+        const xml = fs.readFileSync(armazenamento.absoluto(n.caminho_xml), 'utf8')
+        const json = xmlParaJson(xml)
+        const d = dadosNfeProc(json)
+        if (!d.chave || d.emitente_cnpj === escritorio.cnpj || d.destinatario_cnpj === escritorio.cnpj) continue
+        const temDono = [d.emitente_cnpj, d.destinatario_cnpj].some((c) => c && sql.clienteDaCarteira.get(c))
+        if (!temDono) {
+          resultado.semDono++
+          continue
+        }
+        encaminharCompleta(escritorio, { xml, json, nsu: n.nsu }, { saida: 0 })
+        apagarNota.run(n.id)
+        resultado.movidas++
+        meses.set(`${n.competencia}|${n.tipo}`, { competencia: n.competencia, tipo: n.tipo, pasta: path.dirname(path.dirname(n.caminho_xml)) })
+        // A nota já está com o dono: arquivo preso só sobra aqui.
+        try {
+          fs.rmSync(armazenamento.absoluto(n.caminho_xml), { force: true })
+          const pdf = caminhoDoPdf(n.caminho_xml)
+          if (pdf) fs.rmSync(armazenamento.absoluto(pdf), { force: true })
+        } catch (e) {
+          logger.warn('Arquivo da nota corrigida não saiu da pasta do escritório', { chave: n.chave, erro: e.code || e.message })
+        }
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          logger.warn('Nota do escritório sem o XML no disco: fica como está', { chave: n.chave })
+          continue
+        }
+        resultado.falhas++
+        logger.warn('Nota do escritório não corrigida; tenta de novo na próxima abertura', { chave: n.chave, erro: e.code || e.message })
+      }
+    }
+
+    const restantes = db.prepare("SELECT COUNT(*) n FROM notas WHERE cliente_id = ? AND modelo = 'nfe' AND competencia = ? AND COALESCE(tipo, 'entrada') = ? AND status = 'completa'").pluck()
+    const apagarGrupo = db.prepare("DELETE FROM pasta_grupos WHERE cliente_id = ? AND competencia = ? AND modelo = 'nfe' AND direcao = ?")
+    for (const m of meses.values()) {
+      const direcao = m.tipo || 'entrada'
+      if (restantes.get(escritorio.id, m.competencia, direcao)) continue
+      apagarGrupo.run(escritorio.id, m.competencia, direcao)
+      try {
+        retirarGeradosDoMes(m.pasta)
+      } catch (e) {
+        logger.warn('Relatório ou ZIP antigo não saiu da pasta do escritório', { pasta: m.pasta, erro: e.code || e.message })
+      }
+    }
+    resgatarDeForaDaCarteira(escritorio, resultado)
+    if (!resultado.falhas) db.prepare("INSERT INTO sistema (chave, valor) VALUES ('notas_escritorio_corrigidas', '1') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run()
+    if (resultado.movidas || resultado.resgatadas || resultado.copias || resultado.semDono || resultado.falhas) logger.info('Notas do escritório corrigidas', resultado)
+    return resultado
+  }
+
+  return { capturarCliente, capturarTodos, processarDocumento, corrigirNotasDoEscritorio }
 }
 
 module.exports = { criarServicoCaptura, nsu15 }

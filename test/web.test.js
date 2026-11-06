@@ -1201,7 +1201,7 @@ test('editar cliente: muda razão, apelido e UF e leva a pasta e os caminhos das
   const { pedir, ctx } = await montar(t)
   const { db, config } = ctx
   const cliente = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
-  const relativo = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'Entradas', 'a.xml')
+  const relativo = path.join('Exemplo', '2026', '10-Outubro', 'Entradas', 'NF-e', 'Entradas', 'a.xml')
   fs.mkdirSync(path.join(config.pastaXmls, path.dirname(relativo)), { recursive: true })
   fs.writeFileSync(path.join(config.pastaXmls, relativo), '<x/>')
   const chave = '2'.repeat(44)
@@ -1214,7 +1214,7 @@ test('editar cliente: muda razão, apelido e UF e leva a pasta e os caminhos das
   assert.deepEqual([depois.razao_social, depois.uf, depois.apelido], ['Razão Nova Ltda', 'PI', 'Nome Novo'])
   assert.equal(depois.ult_nsu, cliente.ult_nsu)
 
-  const novo = path.join('Nome Novo', '2026', 'Outubro', 'NF-e', 'Entradas', 'a.xml')
+  const novo = path.join('Nome Novo', '2026', '10-Outubro', 'Entradas', 'NF-e', 'Entradas', 'a.xml')
   assert.equal(db.prepare('SELECT caminho_xml c FROM notas WHERE chave = ?').get(chave).c, novo)
   assert.equal(db.prepare('SELECT caminho_xml c FROM eventos WHERE chave = ?').get(chave).c, novo)
   assert.ok(fs.existsSync(path.join(config.pastaXmls, novo)))
@@ -1502,7 +1502,7 @@ const novaBase = (t) => {
 const MARCA = '.smart-fiscal'
 
 // Nota completa com o XML gravado, como a captura deixa.
-function notaComXml(ctx, chave, rel = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', `${chave}-nfe.xml`)) {
+function notaComXml(ctx, chave, rel = path.join('Exemplo', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', `${chave}-nfe.xml`)) {
   const cliente = ctx.db.prepare('SELECT * FROM clientes LIMIT 1').get()
   gravarXml(ctx, rel, `<${chave}/>`)
   const id = ctx.db.prepare("INSERT INTO notas (cliente_id, chave, status, competencia, caminho_xml) VALUES (?, ?, 'completa', '2026-10', ?)").run(cliente.id, chave, rel).lastInsertRowid
@@ -1773,7 +1773,7 @@ test('pasta principal: na pasta antiga sem marca só sai o que foi copiado', asy
 
 test('pasta principal: resumo em Resumos é levado de uma origem sem marca', async (t) => {
   const { ctx } = await montar(t)
-  const rel = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'Resumos', '12345678901234567890-resumo.xml')
+  const rel = path.join('Exemplo', '2026', '10-Outubro', 'Eventos e Resumos', 'NF-e', '12345678901234567890-resumo.xml')
   gravarXml(ctx, rel, '<r/>')
   const antiga = ctx.config.pastaXmls
   const base = novaBase(t)
@@ -1922,6 +1922,44 @@ test('cliente sem certificado: cadastra, aparece na lista, fica fora da captura 
   assert.ok(fs.existsSync(path.join(ctx.config.pastaCerts, `${cnpj}.pfx`)))
 })
 
+test('cliente que é o escritório: a tela Escritório transforma; com captura rodando, recusa', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const cnpj = '27865757000102'
+  const cert = gerarPfx({ cnpj })
+  ctx.clientes.cadastrar({ cnpj, razao: 'Escritório Ltda', uf: 'CE', apelido: 'Meu escritório', pfx: cert.pfx, senha: cert.senha })
+  const corpo = { cnpj, razao: 'Escritório Ltda', uf: 'CE', pfx: cert.pfx.toString('base64'), senha: cert.senha }
+
+  const emCaptura = t.mock.method(ctx.ciclo, 'cicloEmAndamento', () => true)
+  const recusado = await pedir('/api/escritorio', { method: 'POST', body: corpo })
+  assert.equal(recusado.status, 409)
+  assert.equal(ctx.clientes.obterEscritorio(), null)
+  emCaptura.mock.restore()
+
+  const r = await pedir('/api/escritorio', { method: 'POST', body: corpo })
+  assert.equal(r.status, 201, JSON.stringify(r.corpo))
+  const linha = ctx.db.prepare('SELECT papel, tambem_cliente FROM clientes WHERE cnpj = ?').get(cnpj)
+  assert.deepEqual({ ...linha }, { papel: 'escritorio', tambem_cliente: 1 })
+})
+
+test('tela Escritório: ao virar escritório, a nota de terceiro vai para o emitente como saída', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const cnpj = '27865757000102'
+  const cert = gerarPfx({ cnpj })
+  const { cliente: esc } = ctx.clientes.cadastrar({ cnpj, razao: 'Escritório Ltda', uf: 'CE', apelido: 'Meu escritório', pfx: cert.pfx, senha: cert.senha })
+  const emitente = CNPJ_MOCK_OK
+  const chave = `232610${emitente}55001000000001100000001`.padEnd(44, '0')
+  const rel = path.join('Meu escritório', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', `${chave}-nfe.xml`)
+  gravarXml(ctx, rel, `<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe"><NFe><infNFe Id="NFe${chave}"><ide><nNF>1</nNF><serie>1</serie><dhEmi>2026-10-05T10:00:00-03:00</dhEmi></ide><emit><CNPJ>${emitente}</CNPJ><xNome>E</xNome></emit><dest><CPF>12345678909</CPF><xNome>D</xNome></dest><total><ICMSTot><vNF>1.00</vNF></ICMSTot></total></infNFe></NFe><protNFe><infProt><chNFe>${chave}</chNFe></infProt></protNFe></nfeProc>`)
+  ctx.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'entrada', 'completa', '2026-10', ?)").run(esc.id, chave, rel)
+  ctx.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pastas_layout', '10') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run()
+
+  const r = await pedir('/api/escritorio', { method: 'POST', body: { cnpj, razao: 'Escritório Ltda', uf: 'CE', pfx: cert.pfx.toString('base64'), senha: cert.senha } })
+  assert.equal(r.status, 201, JSON.stringify(r.corpo))
+
+  const nota = ctx.db.prepare('SELECT n.tipo, c.cnpj FROM notas n JOIN clientes c ON c.id = n.cliente_id WHERE n.chave = ?').all(chave)
+  assert.deepEqual(nota.map((n) => ({ ...n })), [{ tipo: 'saida', cnpj: emitente }])
+})
+
 test('escritório cadastrado como cliente sem enviar certificado mantém o que já tem', async (t) => {
   const { ctx, pedir } = await montar(t)
   const cnpj = '27865757000102'
@@ -1953,7 +1991,7 @@ test('editar nome pausa a geração, move a pasta e os nomes são refeitos; excl
   const real = ctx.organizador.pausarDurante
   ctx.organizador.pausarDurante = (fn) => (pausas.push(1), real(fn))
   const cliente = db.prepare('SELECT * FROM clientes WHERE cnpj = ?').get(CNPJ_MOCK_OK)
-  const relativo = path.join('Exemplo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a.xml')
+  const relativo = path.join('Exemplo', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', 'a.xml')
   fs.mkdirSync(path.join(config.pastaXmls, path.dirname(relativo)), { recursive: true })
   fs.writeFileSync(path.join(config.pastaXmls, relativo), '<x/>')
   db.prepare("INSERT INTO notas (cliente_id, chave, modelo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'completa', '2026-10', ?)").run(cliente.id, '3'.repeat(44), relativo)
@@ -1961,24 +1999,24 @@ test('editar nome pausa a geração, move a pasta e os nomes são refeitos; excl
   db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pasta_principal', ?)").run(config.pastaXmls)
   ctx.organizador.agendar()
   await ctx.organizador.aguardar()
-  const grupo = (nome) => path.join(config.pastaXmls, nome, '2026', 'Outubro', 'NF-e')
-  assert.ok(fs.existsSync(path.join(grupo('Exemplo'), 'Exemplo NF-e Outubro 2026.zip')))
+  const grupo = (nome) => path.join(config.pastaXmls, nome, '2026', '10-Outubro', 'Entradas', 'NF-e')
+  assert.ok(fs.existsSync(path.join(grupo('Exemplo'), 'Exemplo NF-e Entradas Outubro 2026.zip')))
 
   const r = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/editar`, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, razao: 'Comercial Exemplo Ltda', uf: 'CE', apelido: 'Nome Novo' } })
   assert.equal(r.status, 200)
   assert.equal(pausas.length, 1)
-  assert.ok(fs.existsSync(path.join(config.pastaXmls, 'Nome Novo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a.xml')))
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, 'Nome Novo', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', 'a.xml')))
   await ctx.organizador.aguardar()
   const nomes = fs.readdirSync(grupo('Nome Novo'))
-  assert.ok(nomes.includes('Nome Novo NF-e Outubro 2026.zip'), nomes.join())
-  assert.ok(nomes.includes('Relatorio NF-e Outubro 2026.xlsx'))
-  assert.ok(!nomes.includes('Exemplo NF-e Outubro 2026.zip'))
+  assert.ok(nomes.includes('Nome Novo NF-e Entradas Outubro 2026.zip'), nomes.join())
+  assert.ok(nomes.includes('Relatorio NF-e Entradas Outubro 2026.xlsx'))
+  assert.ok(!nomes.includes('Exemplo NF-e Entradas Outubro 2026.zip'))
 
   const ex = await pedir(`/api/clientes/${CNPJ_MOCK_OK}/excluir`, { method: 'POST', body: {} })
   assert.equal(ex.status, 200)
   assert.equal(pausas.length, 2)
   assert.equal(db.prepare('SELECT COUNT(*) FROM pasta_grupos WHERE cliente_id = ?').pluck().get(cliente.id), 0)
-  assert.ok(fs.existsSync(path.join(config.pastaXmls, 'Nome Novo', '2026', 'Outubro', 'NF-e', 'XML', 'Entradas', 'a.xml')))
+  assert.ok(fs.existsSync(path.join(config.pastaXmls, 'Nome Novo', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', 'a.xml')))
 })
 
 test('captura que começa durante a espera da pausa: editar, excluir e trocar de pasta respondem 409', async (t) => {
@@ -2016,11 +2054,11 @@ test('trocar para outra pasta, com origem sem marca: a pasta nova ganha relatór
   const b = novaBase(t)
   assert.equal((await post('/api/pastas/principal', { pasta: b })).status, 200)
   await ctx.organizador.aguardar()
-  const dir = path.join(b, 'Exemplo', '2026', 'Outubro', 'NF-e')
+  const dir = path.join(b, 'Exemplo', '2026', '10-Outubro', 'Entradas', 'NF-e')
   const nomes = fs.readdirSync(dir)
-  assert.ok(nomes.includes('Relatorio NF-e Outubro 2026.xlsx'), nomes.join())
-  assert.ok(nomes.includes('Relatorio NF-e Outubro 2026.pdf'))
-  assert.ok(nomes.includes('Exemplo NF-e Outubro 2026.zip'))
+  assert.ok(nomes.includes('Relatorio NF-e Entradas Outubro 2026.xlsx'), nomes.join())
+  assert.ok(nomes.includes('Relatorio NF-e Entradas Outubro 2026.pdf'))
+  assert.ok(nomes.includes('Exemplo NF-e Entradas Outubro 2026.zip'))
   assert.ok(fs.existsSync(path.join(b, rel)))
 })
 

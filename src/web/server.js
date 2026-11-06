@@ -859,11 +859,19 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     } : null)
   })
 
-  app.post('/api/escritorio', (req, res) => {
+  app.post('/api/escritorio', async (req, res) => {
     exigirLocal(req)
+    const ocupada = 'Há uma captura em andamento. Aguarde terminar para cadastrar o escritório.'
+    if (capturaOcupada()) throw new ErroHttp(409, ocupada)
     const b = req.body || {}
     const pfx = lerPfx(b)
-    const r = comoErroHttp(() => ctx.clientes.cadastrarEscritorio({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), pfx, senha: b.senha }))
+    // Cliente que vira escritório pode mudar de pasta: a geração pausa, e a captura pode ter começado na espera.
+    const r = await ctx.organizador.pausarDurante(() => {
+      if (capturaOcupada()) throw new ErroHttp(409, ocupada)
+      const feito = comoErroHttp(() => ctx.clientes.cadastrarEscritorio({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), pfx, senha: b.senha }))
+      ctx.ciclo.corrigirNotasDoEscritorio()
+      return feito
+    })
     res.status(201).json(recibo(r))
   })
 

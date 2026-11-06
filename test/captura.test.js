@@ -9,6 +9,7 @@ const { abrirBanco } = require('../src/db')
 const { criarServicoCaptura } = require('../src/services/captura')
 const { criarSefazMock, CNPJ_MOCK_OK, CNPJ_MOCK_656, CNPJ_MOCK_ESCRITORIO, CNPJ_FORA_CARTEIRA } = require('../src/sefaz/mock-client')
 const { xmlParaJson } = require('../src/sefaz/xml')
+const { VERSAO_XML } = require('../src/services/migracaoPastas')
 
 const silencioso = { info() {}, warn() {}, error() {} }
 const AGORA = new Date('2026-10-09T12:00:00Z')
@@ -36,6 +37,11 @@ function arquivos(pasta) {
 }
 
 const cliente = (db, id) => db.prepare('SELECT * FROM clientes WHERE id = ?').get(id)
+// procNFe mínimo da nota do resumo.
+function procDe(_mock, chave) {
+  const xml = `<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe${chave}" versao="4.00"><ide><nNF>1</nNF><serie>1</serie><dhEmi>2026-10-05T10:00:00-03:00</dhEmi></ide><emit><CNPJ>${chave.slice(6, 20)}</CNPJ><xNome>Emitente</xNome></emit><dest><CNPJ>${CNPJ_MOCK_OK}</CNPJ><xNome>Destino</xNome></dest><total><ICMSTot><vNF>10.00</vNF></ICMSTot></total></infNFe></NFe><protNFe versao="4.00"><infProt><chNFe>${chave}</chNFe></infProt></protNFe></nfeProc>`
+  return { xml, json: xmlParaJson(xml), schema: 'procNFe_v4.00.xsd', nsu: '000000000000099' }
+}
 const notas = (db) => db.prepare('SELECT * FROM notas ORDER BY emitente_nome').all()
 
 test('laço de NSU: processa os lotes, grava ultNSU e espera 1 h com a fila zerada', async (t) => {
@@ -73,11 +79,12 @@ test('laço de NSU: processa os lotes, grava ultNSU e espera 1 h com a fila zera
   assert.equal(ev[0].tp_evento, '110111')
   assert.equal(ev[0].chave, beta.chave)
 
-  const pasta = 'Cliente 1/2026/Outubro/NF-e/XML/Entradas'
+  const pasta = 'Cliente 1/2026/10-Outubro/Entradas/NF-e/XML'
+  const avulsos = 'Cliente 1/2026/10-Outubro/Eventos e Resumos/NF-e'
   assert.deepEqual(arquivos(pastaXmls), [
-    `${pasta}/Resumos/${alfa.chave}-resumo.xml`,
-    `${pasta}/Eventos/${beta.chave}-evento-110111-1.xml`,
-    `${pasta}/Resumos/${beta.chave}-resumo.xml`,
+    `${avulsos}/${alfa.chave}-resumo.xml`,
+    `${avulsos}/${beta.chave}-evento-110111-1.xml`,
+    `${avulsos}/${beta.chave}-resumo.xml`,
     `${pasta}/${gama.chave}-nfe.xml`,
   ].sort())
   const xml = fs.readFileSync(path.join(pastaXmls, gama.caminho_xml), 'utf8')
@@ -335,13 +342,13 @@ test('escritório: saída, entrada que completa resumo, fora da carteira e resNF
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas').get().n, antes + 2)
 
   assert.equal(nota(f1).length, 0)
-  const pastaFora = new RegExp(`^Cliente 2 Ltda/fora-da-carteira/\\d{4}/[^/]+/NF-e/XML/Entradas/${f1}-nfe\\.xml$`)
+  const pastaFora = new RegExp(`^Cliente 2 Ltda/Sem cliente cadastrado/\\d{4}/[^/]+/Entradas/NF-e/XML/${f1}-nfe\\.xml$`)
   assert.ok(arquivos(pastaXmls).some((f) => pastaFora.test(f)), 'XML fora da carteira na pasta do escritório')
 
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notas WHERE cliente_id = ?').get(ids[1]).n, 0)
   const evento = db.prepare('SELECT * FROM eventos WHERE chave = ?').get(s2)
   assert.ok(evento.caminho_xml.startsWith('Cliente 1'), 'evento na pasta do dono da nota')
-  assert.match(evento.caminho_xml.replace(/\\/g, '/'), /\/Saidas\/Eventos\//, 'evento da saída em Saidas/Eventos')
+  assert.ok(evento.caminho_xml.replace(/\\/g, '/').includes('/Eventos e Resumos/NF-e/'), 'evento fora de entradas e saídas')
 })
 
 test('nota de A para B pelo escritório vira saída em A e entrada em B', async (t) => {
@@ -421,4 +428,233 @@ test('nota de saída que chega pelo escritório fica na empresa sem certificado,
   assert.equal(n.cliente_id, ids[0])
   assert.equal(n.tipo, 'saida')
   assert.equal(n.status, 'completa')
+})
+
+test('nota completa tira o resumo dela; os outros ficam, e resumo repetido depois não volta', async (t) => {
+  const { db, servico, mock, ids, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  const sefaz = mock.cliente(CNPJ_MOCK_OK)
+  const c = cliente(db, ids[0])
+  const [resumoA, resumoB] = (await sefaz.consultaUltNSU('0')).data.docZip
+  servico.processarDocumento(c, resumoA)
+  servico.processarDocumento(c, resumoB)
+  const chave = resumoA.json.resNFe.chNFe
+  const outra = resumoB.json.resNFe.chNFe
+  const resumos = () => arquivos(pastaXmls).filter((f) => f.endsWith('-resumo.xml'))
+  assert.equal(resumos().length, 2)
+
+  servico.processarDocumento(c, { ...procDe(mock, chave), nsu: '000000000000099' })
+
+  assert.equal(db.prepare('SELECT status FROM notas WHERE chave = ?').get(chave).status, 'completa')
+  assert.equal(resumos().length, 1)
+  assert.ok(resumos()[0].includes(outra), 'o da nota que não chegou fica')
+  assert.ok(arquivos(pastaXmls).some((f) => f.endsWith(`${chave}-nfe.xml`)))
+
+  servico.processarDocumento(c, resumoA)
+  assert.equal(resumos().length, 1, 'resumo repetido da nota completa não é regravado')
+  assert.equal(db.prepare('SELECT status FROM notas WHERE chave = ?').get(chave).status, 'completa')
+})
+
+test('resumo preso não impede a nota completa de ser gravada', async (t) => {
+  const { db, servico, mock, ids, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  const c = cliente(db, ids[0])
+  const [resumoA] = (await mock.cliente(CNPJ_MOCK_OK).consultaUltNSU('0')).data.docZip
+  servico.processarDocumento(c, resumoA)
+  const chave = resumoA.json.resNFe.chNFe
+  const rm = fs.rmSync
+  t.mock.method(fs, 'rmSync', (alvo, ...resto) => {
+    if (String(alvo).endsWith('-resumo.xml')) throw Object.assign(new Error('aberto'), { code: 'EBUSY' })
+    return rm(alvo, ...resto)
+  })
+  assert.equal(servico.processarDocumento(c, procDe(mock, chave)), 'completa')
+  t.mock.restoreAll()
+  assert.equal(db.prepare('SELECT status FROM notas WHERE chave = ?').get(chave).status, 'completa')
+  assert.ok(arquivos(pastaXmls).some((f) => f.endsWith(`${chave}-resumo.xml`)), 'fica; a limpeza não é crítica')
+})
+
+// ---------- notas de terceiros gravadas como entrada do escritório ----------
+
+const EMITENTE = '34567890000130'
+const CHAVE_EMITENTE = (n) => `2326${'11'}${EMITENTE}55001${String(n).padStart(9, '0')}1${'0'.repeat(7)}${n % 10}`.slice(0, 44).padEnd(44, '0')
+const PASTA_ESC = path.join('Cliente 2 Ltda', '2026', '10-Outubro', 'Entradas', 'NF-e')
+
+function comNotaDeTerceiro(t, { dest = { CPF: '12345678909' }, emit = EMITENTE, n = 1, emitenteCadastrado = true } = {}) {
+  const m = montarComEscritorio()
+  t.after(m.limpar)
+  m.db.prepare("UPDATE clientes SET razao_social = 'Cliente 2 Ltda', tambem_cliente = 1 WHERE id = ?").run(m.ids[1])
+  if (emitenteCadastrado) m.db.prepare("INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, 'Emitente Ltda', 'Emitente', 'CE', 'x.pfx', 'a:b:c')").run(emit)
+  m.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pastas_layout', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run(VERSAO_XML)
+  const chave = CHAVE_EMITENTE(n)
+  const destXml = dest.CPF ? `<CPF>${dest.CPF}</CPF>` : `<CNPJ>${dest.CNPJ}</CNPJ>`
+  const xml = `<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe${chave}" versao="4.00"><ide><nNF>${n}</nNF><serie>1</serie><dhEmi>2026-10-05T10:00:00-03:00</dhEmi></ide><emit><CNPJ>${emit}</CNPJ><xNome>Emitente</xNome></emit><dest>${destXml}<xNome>Destino</xNome></dest><total><ICMSTot><vNF>10.00</vNF></ICMSTot></total><autXML><CNPJ>${CNPJ_MOCK_ESCRITORIO}</CNPJ></autXML></infNFe></NFe><protNFe versao="4.00"><infProt><chNFe>${chave}</chNFe></infProt></protNFe></nfeProc>`
+  const rel = path.join(PASTA_ESC, 'XML', `${chave}-nfe.xml`)
+  const abs = (...r) => path.join(m.pastaXmls, ...r)
+  fs.mkdirSync(path.dirname(abs(rel)), { recursive: true })
+  fs.writeFileSync(abs(rel), xml)
+  fs.mkdirSync(abs(PASTA_ESC, 'PDF'), { recursive: true })
+  fs.writeFileSync(abs(PASTA_ESC, 'PDF', `${chave}-nfe.pdf`), 'pdf')
+  m.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml, nsu) VALUES (?, ?, 'nfe', 'entrada', 'completa', '2026-10', ?, '000000000000050')").run(m.ids[1], chave, rel)
+  m.db.prepare("INSERT INTO pasta_grupos (cliente_id, competencia, modelo, direcao, assinatura, gerado_em) VALUES (?, '2026-10', 'nfe', 'entrada', 'x', 'y')").run(m.ids[1])
+  fs.writeFileSync(abs(PASTA_ESC, 'Relatorio NF-e Entradas Outubro 2026.pdf'), 'r')
+  fs.writeFileSync(abs(PASTA_ESC, 'Cliente 2 Ltda NF-e Entradas Outubro 2026.zip'), 'z')
+  const linhas = (id) => m.db.prepare('SELECT * FROM notas WHERE cliente_id = ?').all(id)
+  const idEmitente = emitenteCadastrado ? m.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').pluck().get(emit) : null
+  return { ...m, chave, rel, abs, xml, linhas, idEmitente, corrigir: () => m.servico.corrigirNotasDoEscritorio() }
+}
+
+test('correção: nota de terceiro sai do escritório e vira saída do emitente, com o XML inteiro', (t) => {
+  const a = comNotaDeTerceiro(t)
+  const r = a.corrigir()
+  assert.deepEqual(r, { movidas: 1, resgatadas: 0, copias: 0, semDono: 0, falhas: 0 })
+  assert.equal(a.linhas(a.ids[1]).length, 0)
+  const [nota] = a.linhas(a.idEmitente)
+  assert.equal(nota.tipo, 'saida')
+  assert.equal(nota.status, 'completa')
+  assert.equal(nota.caminho_xml, path.join('Emitente', '2026', '10-Outubro', 'Saidas', 'NF-e', 'XML', `${a.chave}-nfe.xml`))
+  assert.ok(fs.readFileSync(a.abs(nota.caminho_xml), 'utf8').includes('<autXML>'))
+  assert.ok(!fs.existsSync(a.abs(a.rel)), 'o XML sai do escritório')
+  assert.ok(!fs.existsSync(a.abs(PASTA_ESC)), 'mês sem notas: relatório, ZIP e PDF saem do escritório')
+  assert.equal(a.db.prepare('SELECT COUNT(*) n FROM pasta_grupos WHERE cliente_id = ?').get(a.ids[1]).n, 0)
+})
+
+test('correção: destinatário cadastrado também recebe a nota, como entrada', (t) => {
+  const a = comNotaDeTerceiro(t, { dest: { CNPJ: CNPJ_MOCK_OK } })
+  assert.equal(a.corrigir().movidas, 1)
+  assert.equal(a.linhas(a.idEmitente)[0].tipo, 'saida')
+  assert.equal(a.linhas(a.ids[0]).find((n) => n.chave === a.chave).tipo, 'entrada')
+  assert.equal(a.linhas(a.ids[1]).length, 0)
+})
+
+test('correção: nota em que o escritório é destinatário fica; o mês continua com relatório', (t) => {
+  const a = comNotaDeTerceiro(t, { dest: { CNPJ: CNPJ_MOCK_ESCRITORIO } })
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 0, copias: 0, semDono: 0, falhas: 0 })
+  assert.equal(a.linhas(a.ids[1]).length, 1)
+  assert.ok(fs.existsSync(a.abs(a.rel)))
+  assert.ok(fs.existsSync(a.abs(PASTA_ESC, 'Relatorio NF-e Entradas Outubro 2026.pdf')))
+})
+
+test('correção: sem emitente nem destinatário cadastrados, fica onde está', (t) => {
+  const a = comNotaDeTerceiro(t, { emitenteCadastrado: false })
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 0, copias: 0, semDono: 1, falhas: 0 })
+  assert.equal(a.linhas(a.ids[1]).length, 1)
+  assert.ok(fs.existsSync(a.abs(a.rel)))
+})
+
+test('correção: sem escritório não faz nada, e depois de concluída não repete', (t) => {
+  const a = comNotaDeTerceiro(t)
+  a.db.prepare("UPDATE clientes SET papel = 'cliente' WHERE id = ?").run(a.ids[1])
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 0, copias: 0, semDono: 0, falhas: 0 })
+  assert.equal(a.linhas(a.ids[1]).length, 1)
+
+  a.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(a.ids[1])
+  assert.equal(a.corrigir().movidas, 1)
+  a.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml) VALUES (?, 'z', 'nfe', 'entrada', 'completa', '2026-10', ?)").run(a.ids[1], a.rel)
+  assert.equal(a.corrigir().movidas, 0)
+})
+
+test('correção: gravar o XML novo falhou: a nota fica no escritório e tenta de novo depois', (t) => {
+  const a = comNotaDeTerceiro(t)
+  const rename = fs.renameSync
+  t.mock.method(fs, 'renameSync', (de, ...resto) => {
+    if (String(de).endsWith('.tmp')) throw Object.assign(new Error('aberto'), { code: 'EBUSY' })
+    return rename(de, ...resto)
+  })
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 0, copias: 0, semDono: 0, falhas: 1 })
+  t.mock.restoreAll()
+  assert.equal(a.linhas(a.ids[1]).length, 1)
+  assert.ok(fs.existsSync(a.abs(a.rel)))
+  assert.equal(a.corrigir().movidas, 1)
+  assert.equal(a.linhas(a.ids[1]).length, 0)
+})
+
+test('correção: origem presa ao apagar: a nota já mudou de dono e o arquivo só sobra', (t) => {
+  const a = comNotaDeTerceiro(t)
+  const rm = fs.rmSync
+  t.mock.method(fs, 'rmSync', (alvo, ...resto) => {
+    if (String(alvo) === a.abs(a.rel)) throw Object.assign(new Error('aberto'), { code: 'EBUSY' })
+    return rm(alvo, ...resto)
+  })
+  assert.equal(a.corrigir().movidas, 1)
+  t.mock.restoreAll()
+  assert.equal(a.linhas(a.ids[1]).length, 0)
+  assert.ok(fs.existsSync(a.abs(a.rel)))
+})
+
+// ---------- notas guardadas em fora-da-carteira ----------
+
+function comNotaFora(t, opcoes) {
+  const a = comNotaDeTerceiro(t, opcoes)
+  a.db.prepare('DELETE FROM notas').run()
+  a.db.prepare('DELETE FROM pasta_grupos').run()
+  const rel = path.join('Cliente 2 Ltda', 'Sem cliente cadastrado', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', `${a.chave}-nfe.xml`)
+  fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
+  fs.writeFileSync(a.abs(rel), a.xml)
+  fs.rmSync(a.abs(PASTA_ESC), { recursive: true, force: true })
+  return { ...a, relFora: rel }
+}
+
+test('correção: nota que só existe em fora-da-carteira vai para o emitente como saída e sai de lá', (t) => {
+  const a = comNotaFora(t)
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 1, copias: 0, semDono: 0, falhas: 0 })
+  const [nota] = a.linhas(a.idEmitente)
+  assert.equal(nota.tipo, 'saida')
+  assert.equal(nota.chave, a.chave)
+  assert.ok(fs.readFileSync(a.abs(nota.caminho_xml), 'utf8').includes('<autXML>'))
+  assert.ok(!fs.existsSync(a.abs(a.relFora)))
+  assert.ok(!fs.existsSync(a.abs('Cliente 2 Ltda', 'Sem cliente cadastrado')), 'pasta vazia some')
+})
+
+test('correção: cópia de nota que já está com o dono sai da pasta, e a pasta vazia some', (t) => {
+  const a = comNotaFora(t)
+  const rel = path.join('Emitente', 'nota.xml')
+  fs.mkdirSync(a.abs('Emitente'), { recursive: true })
+  fs.writeFileSync(a.abs(rel), a.xml)
+  a.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'saida', 'completa', '2026-10', ?)").run(a.idEmitente, a.chave, rel)
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 0, copias: 1, semDono: 0, falhas: 0 })
+  assert.ok(!fs.existsSync(a.abs('Cliente 2 Ltda', 'Sem cliente cadastrado')))
+  assert.ok(fs.existsSync(a.abs(rel)), 'a nota do dono fica')
+})
+
+test('correção: cópia fica se o arquivo do dono não está no disco, ou se a nota está com outra empresa', (t) => {
+  const a = comNotaFora(t)
+  a.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'saida', 'completa', '2026-10', 'sumiu.xml')").run(a.idEmitente, a.chave)
+  assert.equal(a.corrigir().copias, 0)
+  assert.ok(fs.existsSync(a.abs(a.relFora)))
+
+  const b = comNotaFora(t)
+  fs.mkdirSync(b.abs('Outra'), { recursive: true })
+  fs.writeFileSync(b.abs('Outra', 'nota.xml'), b.xml)
+  b.db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, status, competencia, caminho_xml) VALUES (?, ?, 'nfe', 'entrada', 'completa', '2026-10', ?)").run(b.ids[0], b.chave, path.join('Outra', 'nota.xml'))
+  assert.equal(b.corrigir().copias, 0)
+  assert.ok(fs.existsSync(b.abs(b.relFora)))
+})
+
+test('nota sem cliente cadastrado cria a pasta com o nome novo só quando chega', async (t) => {
+  const { servico, mock, ids, pastaXmls, limpar, db } = montarComEscritorio()
+  t.after(limpar)
+  assert.ok(!arquivos(pastaXmls).some((f) => f.includes('Sem cliente cadastrado')))
+  await servico.capturarCliente(ids[1])
+  assert.ok(arquivos(pastaXmls).some((f) => f.includes('/Sem cliente cadastrado/')))
+  assert.ok(!arquivos(pastaXmls).some((f) => f.includes('fora-da-carteira')))
+  assert.ok(db && mock)
+})
+
+test('correção: nota de fora-da-carteira sem cliente cadastrado fica lá', (t) => {
+  const a = comNotaFora(t, { emitenteCadastrado: false })
+  assert.deepEqual(a.corrigir(), { movidas: 0, resgatadas: 0, copias: 0, semDono: 1, falhas: 0 })
+  assert.ok(fs.existsSync(a.abs(a.relFora)))
+})
+
+test('correção: nota de fora-da-carteira que não grava fica lá e tenta de novo', (t) => {
+  const a = comNotaFora(t)
+  const rename = fs.renameSync
+  t.mock.method(fs, 'renameSync', (de, ...resto) => {
+    if (String(de).endsWith('.tmp')) throw Object.assign(new Error('aberto'), { code: 'EBUSY' })
+    return rename(de, ...resto)
+  })
+  assert.equal(a.corrigir().falhas, 1)
+  t.mock.restoreAll()
+  assert.ok(fs.existsSync(a.abs(a.relFora)))
+  assert.equal(a.corrigir().resgatadas, 1)
 })

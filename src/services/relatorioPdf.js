@@ -65,7 +65,7 @@ function documento(d) {
  * @param {'nfe'|'nfse'|'cte'} [p.modelo] só esse modelo; sem ele, uma parte por modelo que tiver notas (NF-e se não houver nenhuma)
  * @returns {Promise<Buffer>}
  */
-function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo }) {
+function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo, direcao }) {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: MARGEM, bufferPages: true, info: { Title: `Relatório ${cliente.nome} ${competencia || 'selecionadas'}` } })
   const partes = []
   doc.on('data', (c) => partes.push(c))
@@ -149,9 +149,10 @@ function montarRelatorioPdf({ cliente, competencia, notas, lerXml, modelo }) {
     cabecalho(MODELOS[m].rotulo)
     const daquele = notas.filter((n) => doModelo(n, m))
     // No CT-e, notas "outro" (cliente só remetente, destinatário, expedidor ou recebedor) ganham a seção Outros, como na planilha.
-    secao(m, 'Entradas', daquele.filter((n) => (m === 'cte' ? n.tipo === 'entrada' : n.tipo !== 'saida')))
-    secao(m, 'Saídas', daquele.filter((n) => n.tipo === 'saida'))
-    if (m === 'cte') secao(m, 'Outros', daquele.filter((n) => n.tipo === 'outro'))
+    // Com `direcao`, o relatório é só daquela pasta: as outras seções não aparecem.
+    if (!direcao || direcao === 'entrada') secao(m, 'Entradas', daquele.filter((n) => (m === 'cte' ? n.tipo === 'entrada' : n.tipo !== 'saida')))
+    if (!direcao || direcao === 'saida') secao(m, 'Saídas', daquele.filter((n) => n.tipo === 'saida'))
+    if (m === 'cte' && (!direcao || direcao === 'outro')) secao(m, 'Outros', daquele.filter((n) => n.tipo === 'outro'))
   })
 
   // Rodapé com a página em todas as folhas.
