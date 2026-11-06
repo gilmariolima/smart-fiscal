@@ -966,7 +966,8 @@ test('I1: evento guardado na pasta de outra empresa não é divergência da nota
   assert.ok(a.existe(a.tipo(), ZIP_NFE))
 })
 
-test('I2: diferença de maiúsculas ou de barras no banco não apaga os PDFs', async (t) => {
+// Maiúsculas iguais só no disco do Windows, onde o app roda.
+test('I2: diferença de maiúsculas ou de barras no banco não apaga os PDFs', { skip: process.platform !== 'win32' && 'disco sem diferença de maiúsculas só no Windows' }, async (t) => {
   for (const formato of [(c) => c.replace('Cliente 1', 'CLIENTE 1'), (c) => c.replace('Cliente 1', 'CLIENTE 1').replace(/\\/g, '/')]) {
     const a = prepararDisco(t)
     const n = a.nota()

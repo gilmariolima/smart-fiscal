@@ -24,7 +24,8 @@ function preparar(t, { marca = true, opcoes = {} } = {}) {
   const config = { pastaXmls: atual, pastaExports: path.join(base, 'exportacoes'), raiz: path.join(base, 'dados'), pastaEstoque: path.join(base, 'estoque') }
   const links = []
   t.after(() => {
-    for (const l of links) fs.rmdirSync(l)
+    // Junction no Windows sai com rmdir; no Linux vira link simbólico, que sai com unlink.
+    for (const l of links) (process.platform === 'win32' ? fs.rmdirSync : fs.unlinkSync)(l)
     db.close()
     fs.rmSync(base, { recursive: true, force: true })
   })
