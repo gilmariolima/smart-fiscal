@@ -96,7 +96,7 @@ test('armazenamento grava com declaração XML, é idempotente e devolve caminho
   const arm = criarArmazenamento({ pastaXmls: pasta })
   const cliente = { cnpj: '11222333000181', apelido: 'Teste' }
   const rel = arm.salvar({ cliente, competencia: '2026-10', nomeArquivo: 'a.xml', xml: '<a/>' })
-  assert.equal(rel, path.join('Teste', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', 'a.xml'))
+  assert.equal(rel, path.join('Teste', '2026', '10-Outubro', 'NF-e', 'Entradas', 'XML', 'a.xml'))
   assert.equal(fs.readFileSync(arm.absoluto(rel), 'utf8'), '<?xml version="1.0" encoding="UTF-8"?><a/>')
 
   const mtime = fs.statSync(arm.absoluto(rel)).mtimeMs
@@ -104,6 +104,6 @@ test('armazenamento grava com declaração XML, é idempotente e devolve caminho
   assert.equal(fs.statSync(arm.absoluto(rel)).mtimeMs, mtime, 'mesmo conteúdo não reescreve')
 
   arm.salvar({ cliente, competencia: null, nomeArquivo: 'b.xml', xml: '<?xml version="1.0"?><b/>' })
-  assert.equal(fs.readFileSync(path.join(pasta, 'Teste', 'sem-data', 'Entradas', 'NF-e', 'XML', 'b.xml'), 'utf8'), '<?xml version="1.0"?><b/>')
-  assert.deepEqual(fs.readdirSync(path.join(pasta, 'Teste', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML')), ['a.xml'], 'sem temporários sobrando')
+  assert.equal(fs.readFileSync(path.join(pasta, 'Teste', 'sem-data', 'NF-e', 'Entradas', 'XML', 'b.xml'), 'utf8'), '<?xml version="1.0"?><b/>')
+  assert.deepEqual(fs.readdirSync(path.join(pasta, 'Teste', '2026', '10-Outubro', 'NF-e', 'Entradas', 'XML')), ['a.xml'], 'sem temporários sobrando')
 })

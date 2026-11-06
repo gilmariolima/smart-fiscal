@@ -123,9 +123,9 @@ test('criarContexto move os XMLs antigos ao abrir', (t) => {
   const ctx = criarContexto({ config: carregarConfig(env), logger: silencioso, db: abrirBanco(':memory:') })
   assert.ok(!fs.existsSync(antigo))
   // As mudanças rodam em sequência ao abrir, do formato antigo até a ordem atual.
-  assert.ok(fs.existsSync(path.join(pastaXmls, 'INOX', '2026', '10-Outubro', 'Saidas', 'NF-e', 'XML', `${SAIDA}-nfe.xml`)))
+  assert.ok(fs.existsSync(path.join(pastaXmls, 'INOX', '2026', '10-Outubro', 'NF-e', 'Saidas', 'XML', `${SAIDA}-nfe.xml`)))
   assert.equal(versao(ctx.db), '2')
-  assert.equal(ctx.db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get().valor, '10')
+  assert.equal(ctx.db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").get().valor, '11')
 })
 
 test('I1: o banco já aponta para o caminho novo quando o arquivo é movido', (t) => {

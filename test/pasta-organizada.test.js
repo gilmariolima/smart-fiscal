@@ -120,7 +120,7 @@ test('mais recente primeiro', (t) => {
 test('fica de fora: sem competência, fora da carteira e escritório que não é cliente', (t) => {
   const a = preparar(t)
   a.nota({ competencia: null })
-  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/Entradas/NF-e/XML/a.xml' })
+  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/NF-e/Entradas/XML/a.xml' })
   a.nota({ caminho: 'Cliente 1\\fora-da-carteira\\2026\\10-Outubro\\Entradas\\NF-e\\XML\\b.xml', competencia: '2026-09' })
   a.db.prepare("UPDATE clientes SET papel = 'escritorio' WHERE id = ?").run(a.ids[1])
   a.nota({ cliente: a.ids[1] })
@@ -136,10 +136,10 @@ test('fica de fora: sem competência, fora da carteira e escritório que não é
 test('nota fora da carteira não entra na contagem do grupo', (t) => {
   const a = preparar(t)
   a.nota()
-  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/Entradas/NF-e/XML/a.xml' })
+  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/NF-e/Entradas/XML/a.xml' })
   a.marcarTodos()
   assert.deepEqual(a.grupos.pendentes(), [])
-  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/Entradas/NF-e/XML/c.xml' })
+  a.nota({ caminho: 'Cliente 1/fora-da-carteira/2026/10-Outubro/NF-e/Entradas/XML/c.xml' })
   assert.deepEqual(a.grupos.pendentes(), [])
 })
 
@@ -208,11 +208,11 @@ function prepararDisco(t, opcoes = {}) {
     grupos.pendentes().find((g) => g.competencia === competencia && g.modelo === modelo && g.direcao === direcao && g.clienteId === clienteId)
   const gerar = (qual = {}, execucao = {}) => gerador.gerarGrupo(grupoDe(qual), execucao)
   const tmps = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }).filter((f) => f.endsWith('.tmp')) : [])
-  const tipo = (modelo = 'NF-e', mes = '11-Novembro', direcao = 'Entradas') => path.join('Cliente 1', '2026', mes, direcao, modelo)
+  const tipo = (modelo = 'NF-e', mes = '11-Novembro', direcao = 'Entradas') => path.join('Cliente 1', '2026', mes, modelo, direcao)
   return { ...amb, nota, abs, existe, gerar, gerador, grupoDe, config, tmps, tipo, raiz }
 }
 
-const AVULSOS = path.join('Cliente 1', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e')
+const AVULSOS = path.join('Cliente 1', '2026', '11-Novembro', 'NF-e', 'Eventos e Resumos')
 const zipDe = (a, ...p) => lerZip(fs.readFileSync(a.abs(...p)))
 const ehPdf = (arquivo) => fs.readFileSync(arquivo).subarray(0, 5).toString() === '%PDF-'
 
@@ -305,7 +305,7 @@ test('relatório e ZIP com outro nome são trocados ao renomear a empresa', asyn
   fs.renameSync(a.abs('Cliente 1'), a.abs('Nova Empresa'))
   a.db.prepare("UPDATE clientes SET apelido = 'Nova Empresa' WHERE id = ?").run(a.ids[0])
   a.db.prepare('UPDATE notas SET caminho_xml = replace(caminho_xml, ?, ?)').run('Cliente 1', 'Nova Empresa')
-  const nova = path.join('Nova Empresa', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  const nova = path.join('Nova Empresa', '2026', '11-Novembro', 'NF-e', 'Entradas')
   fs.writeFileSync(a.abs(nova, 'Relatorio NF-e Entradas Setembro 2025.xlsx'), 'x')
   fs.writeFileSync(a.abs(nova, 'leia-me.txt'), 'x')
   await a.gerar()
@@ -849,7 +849,7 @@ test('I1: o rename falha: rejeita com erro claro, sem ZIP vazio; depois de solta
   const a = comClientes(t)
   const n = a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
-  const nova = path.join('Novo Nome', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  const nova = path.join('Novo Nome', '2026', '11-Novembro', 'NF-e', 'Entradas')
   const renomear = t.mock.method(fs, 'renameSync', () => {
     throw Object.assign(new Error('aberto'), { code: 'EBUSY' })
   })
@@ -887,7 +887,7 @@ test('I1: homônimo surgindo: a pasta ganha o CNPJ e o ZIP sai com os arquivos',
   apelido(a, a.ids[1], 'Cliente 1')
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   const empresa = `Cliente 1 ${CNPJS[0]}`
-  const nova = path.join(empresa, '2026', '11-Novembro', 'Entradas', 'NF-e')
+  const nova = path.join(empresa, '2026', '11-Novembro', 'NF-e', 'Entradas')
   assert.ok(!a.existe('Cliente 1'))
   assert.ok(noZip(a, nova, `${empresa} NF-e Entradas Novembro 2026.zip`).includes(`XML/${n.chave}-nfe.xml`))
 })
@@ -915,7 +915,7 @@ test('I1: escritório renomeado que também é cliente: a pasta acompanha', asyn
   a.servico.editarEscritorio({ razao: 'Escritorio Novo', uf: 'CE' })
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.ok(!a.existe('Escritorio Velho'))
-  const base = path.join('Escritorio Novo', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  const base = path.join('Escritorio Novo', '2026', '11-Novembro', 'NF-e', 'Entradas')
   assert.ok(noZip(a, base, 'Escritorio Novo NF-e Entradas Novembro 2026.zip').includes(`XML/${n.chave}-nfe.xml`))
 })
 
@@ -955,7 +955,7 @@ test('I1: evento guardado na pasta de outra empresa não é divergência da nota
   const a = comClientes(t)
   a.nota({ cliente: a.ids[1] })
   const n = a.nota()
-  const rel = path.join('Cliente 2', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${n.chave}-evento-110111-1.xml`)
+  const rel = path.join('Cliente 2', '2026', '11-Novembro', 'NF-e', 'Eventos e Resumos', `${n.chave}-evento-110111-1.xml`)
   fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
   fs.writeFileSync(a.abs(rel), '<evento/>')
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(n.chave, rel)
@@ -1257,7 +1257,7 @@ test('marcarPronto exige eventos', (t) => {
 
 // ---------- I-2: a pasta da empresa nos dois lados ou sumida ----------
 
-const NF_E_NOVA = path.join('Novo Nome', '2026', '11-Novembro', 'Entradas', 'NF-e')
+const NF_E_NOVA = path.join('Novo Nome', '2026', '11-Novembro', 'NF-e', 'Entradas')
 const relNovo = (rel) => rel.replace('Cliente 1', 'Novo Nome')
 /** Mesmo arquivo do lado novo, com o conteúdo dado. */
 const noLadoNovo = (a, rel, conteudo) => {
@@ -1294,7 +1294,7 @@ test('I-2: rename falhou e a captura criou a pasta nova: junta, aponta notas e e
   apelido(a, a.ids[0], 'Novo Nome')
   const nova = a.nota()
   assert.ok(nova.relativo.startsWith('Novo Nome'))
-  const relEvento = path.join('Cliente 1', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${velha.chave}-evento-110111-1.xml`)
+  const relEvento = path.join('Cliente 1', '2026', '11-Novembro', 'NF-e', 'Eventos e Resumos', `${velha.chave}-evento-110111-1.xml`)
   fs.mkdirSync(path.dirname(a.abs(relEvento)), { recursive: true })
   fs.writeFileSync(a.abs(relEvento), '<evento/>')
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(velha.chave, relEvento)
@@ -1594,7 +1594,7 @@ test('I-3: progresso na tentativa não faz esperar', async (t) => {
 // ---------- rodada 3: o que fica na pasta antiga prende o grupo ----------
 
 const eventoNa = (a, chave, pasta = 'Cliente 1') => {
-  const rel = path.join(pasta, '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${chave}-evento-110111-1.xml`)
+  const rel = path.join(pasta, '2026', '11-Novembro', 'NF-e', 'Eventos e Resumos', `${chave}-evento-110111-1.xml`)
   fs.mkdirSync(path.dirname(a.abs(rel)), { recursive: true })
   fs.writeFileSync(a.abs(rel), '<evento/>')
   a.db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, caminho_xml) VALUES (?, '110111', '1', ?)").run(chave, rel)
@@ -1680,7 +1680,7 @@ test('rodada 3: resumo sem linha no banco travado também prende o grupo; depois
   const a = comClientes(t)
   const velha = a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
-  const relResumo = path.join('Cliente 1', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${velha.chave}-resumo.xml`)
+  const relResumo = path.join('Cliente 1', '2026', '11-Novembro', 'NF-e', 'Eventos e Resumos', `${velha.chave}-resumo.xml`)
   fs.mkdirSync(path.dirname(a.abs(relResumo)), { recursive: true })
   fs.writeFileSync(a.abs(relResumo), '<res/>')
   a.nota()
@@ -1691,7 +1691,7 @@ test('rodada 3: resumo sem linha no banco travado também prende o grupo; depois
   trava.soltar()
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.equal(pendente(a), undefined)
-  assert.ok(a.existe('Novo Nome', '2026', '11-Novembro', 'Eventos e Resumos', 'NF-e', `${velha.chave}-resumo.xml`))
+  assert.ok(a.existe('Novo Nome', '2026', '11-Novembro', 'NF-e', 'Eventos e Resumos', `${velha.chave}-resumo.xml`))
 })
 
 test('rodada 3: evento na pasta do escritório, sem nenhuma junção, não prende o grupo', async (t) => {
@@ -1709,7 +1709,7 @@ test('rodada 3: relatório, ZIP e PDF na pasta antiga não são pendência nem c
   const n = a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
   a.nota()
-  const antiga = path.join('Cliente 1', '2026', '11-Novembro', 'Entradas', 'NF-e')
+  const antiga = path.join('Cliente 1', '2026', '11-Novembro', 'NF-e', 'Entradas')
   const nomes = ['Relatorio NF-e Entradas Novembro 2026.xlsx', 'Cliente 1 NF-e Entradas Novembro 2026.zip', path.join('PDF', 'Entradas', `${n.chave}-nfe.pdf`)]
   for (const nome of nomes) {
     fs.mkdirSync(path.dirname(a.abs(antiga, nome)), { recursive: true })
@@ -1790,7 +1790,7 @@ test('rodada 3: duas pastas antigas com sobra: uma não apaga a pendência da ou
   a.nota()
   apelido(a, a.ids[0], 'Novo Nome')
   a.db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?)').run(`pasta_pendente:${a.ids[0]}`, 'Mais Antiga')
-  const relSobra = path.join('Mais Antiga', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'presa.xml')
+  const relSobra = path.join('Mais Antiga', '2026', '11-Novembro', 'NF-e', 'Entradas', 'XML', 'presa.xml')
   fs.mkdirSync(path.dirname(a.abs(relSobra)), { recursive: true })
   fs.writeFileSync(a.abs(relSobra), '<x/>')
   fs.mkdirSync(a.abs('Novo Nome'))
@@ -1800,7 +1800,7 @@ test('rodada 3: duas pastas antigas com sobra: uma não apaga a pendência da ou
   trava.soltar()
   await a.gerador.gerarGrupo(a.grupoDe(), {})
   assert.equal(pendente(a), undefined)
-  assert.ok(a.existe('Novo Nome', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'presa.xml'))
+  assert.ok(a.existe('Novo Nome', '2026', '11-Novembro', 'NF-e', 'Entradas', 'XML', 'presa.xml'))
 })
 
 // ---------- rodada 3: juntar sem sobrescrever ----------

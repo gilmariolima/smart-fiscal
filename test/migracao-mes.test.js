@@ -53,9 +53,9 @@ function montar(t, { versao = '6' } = {}) {
 
 test('nome novo: pasta do grupo e caminho com o número do mês', () => {
   const cliente = { cnpj: '11222333000181', apelido: 'Luna' }
-  assert.equal(pastaDoGrupo({ cliente, competencia: '2026-01', modelo: 'nfe' }), p('Luna', '2026', '01-Janeiro', 'Entradas', 'NF-e'))
-  assert.equal(pastaDoGrupo({ cliente, competencia: '2026-12', modelo: 'cte' }), p('Luna', '2026', '12-Dezembro', 'Entradas', 'CT-e'))
-  assert.equal(pastaDoGrupo({ cliente, competencia: null, modelo: 'nfe' }), p('Luna', 'sem-data', 'Entradas', 'NF-e'))
+  assert.equal(pastaDoGrupo({ cliente, competencia: '2026-01', modelo: 'nfe' }), p('Luna', '2026', '01-Janeiro', 'NF-e', 'Entradas'))
+  assert.equal(pastaDoGrupo({ cliente, competencia: '2026-12', modelo: 'cte' }), p('Luna', '2026', '12-Dezembro', 'CT-e', 'Entradas'))
+  assert.equal(pastaDoGrupo({ cliente, competencia: null, modelo: 'nfe' }), p('Luna', 'sem-data', 'NF-e', 'Entradas'))
 })
 
 test('comMesNumerado troca só a pasta do mês e mantém a barra', () => {
@@ -81,7 +81,7 @@ test('renomeia o mês inteiro, com PDF, relatório e ZIP, e o banco acompanha', 
 
   assert.deepEqual(r.pendentes, [])
   assert.equal(a.versao(), VERSAO_MES)
-  assert.equal(VERSAO_XML, '10')
+  assert.equal(VERSAO_XML, '11')
   assert.equal(a.ler(NOVO, XML), '<nfe/>')
   assert.ok(a.existe(NOVO, 'PDF', 'Entradas', 'a-nfe.pdf'))
   assert.ok(a.existe(NOVO, 'Relatorio NF-e Novembro 2026.pdf'), 'o nome do arquivo não muda')
@@ -153,7 +153,7 @@ test('XML travado na pasta XML: depois de numerado, a mudança anterior ainda o 
   a.nota(a.gravar(p(ANTIGO, 'Entradas', 'a-nfe.xml'), '<nfe/>'))
   a.migrar()
   const r = migrarLayouts({ db: a.db, pastaXmls: a.pastaXmls, logger: silencioso })
-  const final = p('Luna', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'a-nfe.xml')
+  const final = p('Luna', '2026', '11-Novembro', 'NF-e', 'Entradas', 'XML', 'a-nfe.xml')
   assert.equal(r.pendentes, 0)
   assert.equal(a.ler(final), '<nfe/>')
   assert.equal(a.caminho(), final)
@@ -264,8 +264,8 @@ test('instalação nova, sem notas: chega à versão atual', (t) => {
 // ---------- resumos que sobraram das notas completas ----------
 
 const MES_ATUAL = p('Luna', '2026', '11-Novembro')
-const RESUMO = (chave) => p('Eventos e Resumos', 'NF-e', `${chave}-resumo.xml`)
-const NOTA = (chave) => p('Entradas', 'NF-e', 'XML', `${chave}-nfe.xml`)
+const RESUMO = (chave) => p('NF-e', 'Eventos e Resumos', `${chave}-resumo.xml`)
+const NOTA = (chave) => p('NF-e', 'Entradas', 'XML', `${chave}-nfe.xml`)
 function comResumos(t) {
   const a = montar(t, { versao: VERSAO_XML })
   const id = a.db.prepare('SELECT id FROM clientes').pluck().get()
@@ -303,7 +303,7 @@ test('limpeza: pasta Eventos e Resumos vazia sai', (t) => {
   const a = comResumos(t)
   a.completa('111')
   a.limpar()
-  assert.ok(!a.existe(MES_ATUAL, 'Eventos e Resumos'))
+  assert.ok(!a.existe(MES_ATUAL, 'NF-e', 'Eventos e Resumos'))
 })
 
 test('limpeza: nota sem o arquivo no disco mantém o resumo', (t) => {

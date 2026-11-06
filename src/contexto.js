@@ -43,7 +43,6 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   limparResumosDeNotasCompletas({ db: banco, pastaXmls: config.pastaXmls, logger: log })
   const clientes = criarServicoClientes(deps)
   const ciclo = criarServicoCiclo(deps)
-  ciclo.corrigirNotasDoEscritorio()
   // Com captura rodando, a pasta da empresa não muda de lugar: o grupo fica pendente e volta no fim do ciclo.
   const reconciliarPasta = (cliente) => {
     if (ciclo.cicloEmAndamento()) return ['Há uma captura em andamento: a pasta da empresa não muda de lugar agora. O Smart Fiscal tenta de novo quando ela terminar.']

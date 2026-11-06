@@ -45,7 +45,7 @@ test('CT-e de saída, entrada e outro: notas, pastas, NSU e execução', async (
   assert.equal(n3.destinatario_cnpj, DEST, 'destinatário da nota é o tomador')
 
   const base = 'Cliente 1/2026/10-Outubro'
-  assert.deepEqual(arquivos(pastaXmls), [`${base}/Saidas/CT-e/XML/${n1.chave}-cte.xml`, `${base}/Entradas/CT-e/XML/${n2.chave}-cte.xml`, `${base}/Outros/CT-e/XML/${n3.chave}-cte.xml`].sort())
+  assert.deepEqual(arquivos(pastaXmls), [`${base}/CT-e/Saidas/XML/${n1.chave}-cte.xml`, `${base}/CT-e/Entradas/XML/${n2.chave}-cte.xml`, `${base}/CT-e/Outros/XML/${n3.chave}-cte.xml`].sort())
 
   const c = cliente(db, ids[0])
   assert.deepEqual([c.cte_ult_nsu, c.cte_proxima_consulta, c.cte_ultima_consulta, c.cte_ultimo_erro], ['3', UMA_HORA, AGORA.toISOString(), null])
@@ -146,7 +146,7 @@ test('cancelamento antes do CT-e e CT-e em dois clientes: as duas linhas cancela
   const ev = db.prepare('SELECT * FROM eventos').all()
   assert.equal(ev.length, 1)
   assert.deepEqual([ev[0].chave, ev[0].tp_evento, ev[0].n_seq], [chave, '110111', '1'])
-  assert.ok(arquivos(pastaXmls).includes(`Cliente 1/2026/10-Outubro/Eventos e Resumos/CT-e/${chave}-evento-110111-1.xml`))
+  assert.ok(arquivos(pastaXmls).includes(`Cliente 1/2026/10-Outubro/CT-e/Eventos e Resumos/${chave}-evento-110111-1.xml`))
 })
 
 test('cancelamento depois do CT-e marca a nota já gravada', async (t) => {

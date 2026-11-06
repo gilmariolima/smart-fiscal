@@ -7,7 +7,7 @@
 // O app fica no ícone perto do relógio: fechar a janela não desliga a busca automática de
 // notas; para desligar, "Sair" no menu do ícone.
 
-const { app, BrowserWindow, Menu, Tray, Notification, dialog, nativeImage, powerSaveBlocker, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, Notification, dialog, nativeImage, powerSaveBlocker, shell, utilityProcess } = require('electron')
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -262,14 +262,14 @@ function criarBandeja() {
 
 // ---------- abertura e troca de pasta ----------
 
-// A migração dos XMLs roda ao abrir e trava o processo principal: depois de atualizar, mostra algo antes dela.
+// A organização das pastas roda em processo próprio: esta janela responde e mostra o andamento.
 async function mostrarAbertura() {
-  if (prefs.ultimaVersao === app.getVersion()) return null
   const abertura = new BrowserWindow({
     title: NOME,
     width: 420,
     height: 120,
     frame: false,
+    alwaysOnTop: true, // o Windows pode abrir atrás das outras janelas
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -279,15 +279,44 @@ async function mostrarAbertura() {
   })
   const html = '<!doctype html><meta charset="utf-8"><title>Smart Fiscal</title>'
     + '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;font:15px \'Segoe UI\',sans-serif;color:#1f2937">'
-    + 'Organizando os arquivos do Smart Fiscal…'
+    + '<div style="text-align:center;line-height:1.6">Organizando os arquivos do Smart Fiscal…<br><span id="andamento" style="color:#6b7280;font-size:13px">Pode levar alguns minutos.</span></div>'
   await new Promise((resolve) => {
     abertura.webContents.once('did-finish-load', resolve)
     abertura.webContents.once('did-fail-load', resolve)
     abertura.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(resolve)
   })
-  // Um tique para a janela chegar à tela antes de o processo principal travar.
-  await new Promise((resolve) => setTimeout(resolve, 50))
   return abertura
+}
+
+function mostrarAndamento(abertura, movidos) {
+  if (!abertura || abertura.isDestroyed()) return
+  const texto = `${movidos.toLocaleString('pt-BR')} movidos. Pode levar alguns minutos.`
+  abertura.webContents.executeJavaScript(`document.getElementById('andamento').textContent = ${JSON.stringify(texto)}`).catch(() => {})
+}
+
+// Só abre a janela de andamento se houver o que organizar. Falha aqui não impede a abertura: o contexto tenta de novo.
+function organizarPastas() {
+  return new Promise((resolve) => {
+    let abertura = null
+    let aberturaPronta = Promise.resolve()
+    let filho
+    try {
+      filho = utilityProcess.fork(path.join(__dirname, 'organizar.js'), [], { serviceName: 'Smart Fiscal: organizar', stdio: 'ignore' })
+    } catch {
+      resolve(null)
+      return
+    }
+    filho.on('message', (aviso) => {
+      if (aviso?.tipo === 'inicio') {
+        aberturaPronta = mostrarAbertura().then((a) => {
+          abertura = a
+        })
+      } else if (aviso?.tipo === 'andamento') {
+        aberturaPronta.then(() => mostrarAndamento(abertura, aviso.movidos))
+      }
+    })
+    filho.once('exit', () => aberturaPronta.then(() => resolve(abertura)))
+  })
 }
 
 function fecharAbertura(abertura) {
@@ -487,7 +516,6 @@ async function iniciar() {
     pasta = pastaDados()
     const copiados = await trazerDadosAnteriores()
     if (encerrado) return
-    abertura = await mostrarAbertura()
     const partes = subpastas(pasta)
     fs.mkdirSync(partes.estoque, { recursive: true })
     const env = prepararEnv(partes.notas, path.join(RAIZ, '.env.example'))
@@ -496,6 +524,7 @@ async function iniciar() {
     process.env.ESTOQUE_DADOS = partes.estoque
     process.env.SMART_FISCAL_VERSAO = app.getVersion()
 
+    abertura = await organizarPastas()
     await ligarMotorEstoque(partes.estoque)
     const { criarContexto } = require('../src/contexto')
     const { iniciarServidor } = require('../src/servidor')
@@ -536,7 +565,6 @@ async function iniciar() {
     if (janela) janela.webContents.once('did-finish-load', () => fecharAbertura(abertura))
     else fecharAbertura(abertura)
     setTimeout(() => fecharAbertura(abertura), 10e3).unref()
-    salvarPrefs({ ultimaVersao: app.getVersion() })
     prepararAtualizacao()
 
     if (janela && (copiados.length || env.criado) && !janela.isVisible()) await new Promise((r) => janela.once('show', r))

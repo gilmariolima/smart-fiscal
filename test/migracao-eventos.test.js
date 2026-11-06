@@ -7,7 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { abrirBanco } = require('../src/db')
 const { migrarLayoutEventos, migrarLayoutSemCliente, migrarLayouts, VERSAO_XML } = require('../src/services/migracaoPastas')
-const { caminhoDa, caminhoDoPdf, caminhoDoResumo, comAvulsosNoLugar, foraDoFormatoAtual } = require('../src/services/armazenamento')
+const { comAvulsosNoLugar, foraDoFormatoAtual } = require('../src/services/armazenamento')
 
 const silencioso = { info() {}, warn() {}, error() {} }
 const p = (...partes) => path.join(...partes)
@@ -41,25 +41,13 @@ function montar(t, { versao = '8' } = {}) {
   }
 }
 
-test('caminho novo: evento e resumo juntos, fora de entradas e saídas', () => {
-  const cliente = { cnpj: '11222333000181', apelido: 'Luna' }
-  const base = { cliente, competencia: '2026-11', nomeArquivo: 'x.xml' }
-  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'saida', categoria: 'evento' }), p(AVULSOS, 'NF-e', 'x.xml'))
-  assert.equal(caminhoDa({ ...base, modelo: 'nfse', direcao: 'entrada', categoria: 'evento' }), p(AVULSOS, 'NFS-e', 'x.xml'))
-  assert.equal(caminhoDa({ ...base, modelo: 'nfe', categoria: 'resumo' }), p(AVULSOS, 'NF-e', 'x.xml'))
-  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'saida' }), p(MES, 'Saidas', 'NF-e', 'XML', 'x.xml'))
-  assert.equal(caminhoDa({ cliente, competencia: null, modelo: 'cte', categoria: 'evento', nomeArquivo: 'x.xml' }), p('Luna', 'sem-data', 'Eventos e Resumos', 'CT-e', 'x.xml'))
-  assert.equal(caminhoDoResumo(p(MES, 'Entradas', 'NF-e', 'XML', '1-nfe.xml')), p(AVULSOS, 'NF-e', '1-resumo.xml'))
-  assert.equal(caminhoDoPdf(p(AVULSOS, 'NF-e', '1-evento-110111-1.xml')), null)
-})
-
 test('comAvulsosNoLugar e formato atual', () => {
   assert.equal(comAvulsosNoLugar('L\\2026\\11-Novembro\\Saidas\\NF-e\\XML\\Eventos\\a.xml'), 'L\\2026\\11-Novembro\\Eventos e Resumos\\NF-e\\a.xml')
   assert.equal(comAvulsosNoLugar('L/sem-data/Entradas/CT-e/XML/Resumos/a.xml'), 'L/sem-data/Eventos e Resumos/CT-e/a.xml')
   assert.equal(comAvulsosNoLugar('L/2026/11-Novembro/Entradas/NF-e/XML/a.xml'), 'L/2026/11-Novembro/Entradas/NF-e/XML/a.xml')
   assert.ok(foraDoFormatoAtual('L/2026/11-Novembro/Entradas/NF-e/XML/Resumos/a.xml'))
-  assert.ok(!foraDoFormatoAtual('L/2026/11-Novembro/Eventos e Resumos/NF-e/a.xml'))
-  assert.ok(!foraDoFormatoAtual('L/2026/11-Novembro/Entradas/NF-e/XML/a.xml'))
+  assert.ok(!foraDoFormatoAtual('L/2026/11-Novembro/NF-e/Eventos e Resumos/a.xml'))
+  assert.ok(!foraDoFormatoAtual('L/2026/11-Novembro/NF-e/Entradas/XML/a.xml'))
 })
 
 test('junta eventos e resumos de entradas e saídas, o banco acompanha, e as notas ficam', (t) => {
@@ -73,7 +61,7 @@ test('junta eventos e resumos de entradas e saídas, o banco acompanha, e as not
   const r = a.migrar()
 
   assert.deepEqual(r.pendentes, [])
-  assert.equal(VERSAO_XML, '10')
+  assert.equal(VERSAO_XML, '11')
   assert.equal(a.versao(), '9')
   assert.equal(a.ler(AVULSOS, 'NF-e', 'c-evento.xml'), '<c/>')
   assert.equal(a.ler(AVULSOS, 'NF-e', 'd-evento.xml'), '<d/>')
@@ -125,7 +113,7 @@ test('rodar de novo não faz nada; versão mais antiga que 5 não é tocada; a s
   c.gravar(p(MES, 'NF-e', 'XML', 'Saidas', 'Eventos', 'c.xml'))
   migrarLayouts({ db: c.db, pastaXmls: c.pastaXmls, logger: silencioso })
   assert.equal(c.versao(), VERSAO_XML)
-  assert.ok(c.existe(AVULSOS, 'NF-e', 'c.xml'))
+  assert.ok(c.existe(MES, 'NF-e', 'Eventos e Resumos', 'c.xml'))
   assert.ok(!c.existe(MES, 'Saidas'))
 })
 
@@ -149,15 +137,14 @@ test('fora-da-carteira vira Sem cliente cadastrado, com o banco', (t) => {
   assert.equal(a.ler(novo), '<a/>')
   assert.ok(!a.existe('Luna', 'fora-da-carteira'))
   assert.equal(a.caminhoEvento(), novo)
-  assert.equal(a.versao(), VERSAO_XML)
-  assert.equal(VERSAO_XML, '10')
+  assert.equal(a.versao(), '10')
 })
 
 test('sem a pasta antiga, só grava a versão; com etapa anterior pendente, renomeia e não grava', (t) => {
   const a = montar(t, { versao: '9' })
   a.gravar(p('Luna', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'a-nfe.xml'))
   migrarLayoutSemCliente({ db: a.db, pastaXmls: a.pastaXmls, logger: silencioso })
-  assert.equal(a.versao(), VERSAO_XML)
+  assert.equal(a.versao(), '10')
 
   const b = montar(t, { versao: '8' })
   b.gravar(p('Luna', 'fora-da-carteira', 'x.xml'))
@@ -171,5 +158,5 @@ test('a sequência inteira leva fora-da-carteira do formato anterior até o nome
   a.gravar(p('Luna', 'fora-da-carteira', '2026', '11-Novembro', 'NF-e', 'XML', 'Entradas', 'a-nfe.xml'))
   migrarLayouts({ db: a.db, pastaXmls: a.pastaXmls, logger: silencioso })
   assert.equal(a.versao(), VERSAO_XML)
-  assert.ok(a.existe('Luna', 'Sem cliente cadastrado', '2026', '11-Novembro', 'Entradas', 'NF-e', 'XML', 'a-nfe.xml'))
+  assert.ok(a.existe('Luna', 'Sem cliente cadastrado', '2026', '11-Novembro', 'NF-e', 'Entradas', 'XML', 'a-nfe.xml'))
 })

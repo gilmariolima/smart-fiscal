@@ -17,12 +17,12 @@ function montar(t) {
   const amb = montarAmbiente()
   t.after(amb.limpar)
   const [comArquivo, semArquivo] = inserirNotas(amb.db, amb.ids[0], 3)
-  const relativo = path.join('Empresa', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', 'a.xml')
+  const relativo = path.join('Empresa', '2026', '10-Outubro', 'NF-e', 'Entradas', 'XML', 'a.xml')
   fs.mkdirSync(path.join(amb.pastaXmls, path.dirname(relativo)), { recursive: true })
   fs.writeFileSync(path.join(amb.pastaXmls, relativo), '<x/>')
   const apontar = amb.db.prepare('UPDATE notas SET caminho_xml = ? WHERE chave = ?')
   apontar.run(relativo, comArquivo)
-  apontar.run(path.join('Empresa', '2026', '10-Outubro', 'Entradas', 'NF-e', 'XML', 'sumiu.xml'), semArquivo)
+  apontar.run(path.join('Empresa', '2026', '10-Outubro', 'NF-e', 'Entradas', 'XML', 'sumiu.xml'), semArquivo)
   return { amb, logger: registrador() }
 }
 

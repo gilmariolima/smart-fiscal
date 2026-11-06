@@ -15,6 +15,8 @@ const CANCELAMENTO = '110111'
 
 const nsu15 = (v) => String(v || '0').replace(/\D/g, '').padStart(15, '0').slice(-15)
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
+// Arquivo a arquivo pela rede: entre um e outro, a janela responde.
+const cederAVez = () => new Promise((r) => setImmediate(r))
 
 /**
  * Serviço de captura por NSU (NFeDistribuicaoDFe).
@@ -377,10 +379,11 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     })
   }
 
-  function resgatarDeForaDaCarteira(escritorio, resultado) {
+  async function resgatarDeForaDaCarteira(escritorio, resultado) {
     for (const raiz of pastasForaDaCarteira(escritorio)) {
       for (const item of fs.readdirSync(raiz, { recursive: true, withFileTypes: true })) {
         if (!item.isFile() || !/-nfe\.xml$/i.test(item.name)) continue
+        await cederAVez()
         const arquivo = path.join(item.parentPath, item.name)
         try {
           const xml = fs.readFileSync(arquivo, 'utf8')
@@ -437,7 +440,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
    * Depois, as notas da pasta Sem cliente cadastrado que já têm cliente vão para ele, e a cópia de quem já está com o dono sai. A pasta vazia some.
    * @returns {{ movidas: number, resgatadas: number, copias: number, semDono: number, falhas: number }}
    */
-  function corrigirNotasDoEscritorio() {
+  async function corrigirNotasDoEscritorio() {
     const resultado = { movidas: 0, resgatadas: 0, copias: 0, semDono: 0, falhas: 0 }
     const escritorio = db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio'").get()
     const valor = (chave) => db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get(chave)
@@ -446,6 +449,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     const apagarNota = db.prepare('DELETE FROM notas WHERE id = ?')
     const meses = new Map()
     for (const n of db.prepare("SELECT * FROM notas WHERE cliente_id = ? AND modelo = 'nfe' AND status = 'completa' AND caminho_xml IS NOT NULL").all(escritorio.id)) {
+      await cederAVez()
       try {
         const xml = fs.readFileSync(armazenamento.absoluto(n.caminho_xml), 'utf8')
         const json = xmlParaJson(xml)
@@ -490,7 +494,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
         logger.warn('Relatório ou ZIP antigo não saiu da pasta do escritório', { pasta: m.pasta, erro: e.code || e.message })
       }
     }
-    resgatarDeForaDaCarteira(escritorio, resultado)
+    await resgatarDeForaDaCarteira(escritorio, resultado)
     if (!resultado.falhas) db.prepare("INSERT INTO sistema (chave, valor) VALUES ('notas_escritorio_corrigidas', '1') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run()
     if (resultado.movidas || resultado.resgatadas || resultado.copias || resultado.semDono || resultado.falhas) logger.info('Notas do escritório corrigidas', resultado)
     return resultado

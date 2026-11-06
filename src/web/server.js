@@ -866,10 +866,10 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     const b = req.body || {}
     const pfx = lerPfx(b)
     // Cliente que vira escritório pode mudar de pasta: a geração pausa, e a captura pode ter começado na espera.
-    const r = await ctx.organizador.pausarDurante(() => {
+    const r = await ctx.organizador.pausarDurante(async () => {
       if (capturaOcupada()) throw new ErroHttp(409, ocupada)
       const feito = comoErroHttp(() => ctx.clientes.cadastrarEscritorio({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), pfx, senha: b.senha }))
-      ctx.ciclo.corrigirNotasDoEscritorio()
+      await ctx.ciclo.corrigirNotasDoEscritorio()
       return feito
     })
     res.status(201).json(recibo(r))

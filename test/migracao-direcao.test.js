@@ -47,12 +47,12 @@ function montar(t, { versao = '7' } = {}) {
 test('caminho novo: empresa, ano, mês, direção, tipo', () => {
   const cliente = { cnpj: '11222333000181', apelido: 'Luna' }
   const base = { cliente, competencia: '2026-11', nomeArquivo: 'x.xml' }
-  assert.equal(pastaDoGrupo({ cliente, competencia: '2026-11', modelo: 'nfe', direcao: 'saida' }), p(MES, 'Saidas', 'NF-e'))
-  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'entrada' }), p(MES, 'Entradas', 'NF-e', 'XML', 'x.xml'))
-  assert.equal(caminhoDa({ ...base, modelo: 'cte', direcao: 'outro' }), p(MES, 'Outros', 'CT-e', 'XML', 'x.xml'))
-  assert.equal(caminhoDa({ cliente, competencia: null, modelo: 'nfe', direcao: 'entrada', nomeArquivo: 'x.xml' }), p('Luna', 'sem-data', 'Entradas', 'NF-e', 'XML', 'x.xml'))
-  assert.equal(caminhoDoPdf(p(MES, 'Saidas', 'NF-e', 'XML', '1-nfe.xml')), p(MES, 'Saidas', 'NF-e', 'PDF', '1-nfe.pdf'))
-  assert.equal(caminhoDoPdf(p(MES, 'Saidas', 'NF-e', 'XML', 'Eventos', '1.xml')), null)
+  assert.equal(pastaDoGrupo({ cliente, competencia: '2026-11', modelo: 'nfe', direcao: 'saida' }), p(MES, 'NF-e', 'Saidas'))
+  assert.equal(caminhoDa({ ...base, modelo: 'nfe', direcao: 'entrada' }), p(MES, 'NF-e', 'Entradas', 'XML', 'x.xml'))
+  assert.equal(caminhoDa({ ...base, modelo: 'cte', direcao: 'outro' }), p(MES, 'CT-e', 'Outros', 'XML', 'x.xml'))
+  assert.equal(caminhoDa({ cliente, competencia: null, modelo: 'nfe', direcao: 'entrada', nomeArquivo: 'x.xml' }), p('Luna', 'sem-data', 'NF-e', 'Entradas', 'XML', 'x.xml'))
+  assert.equal(caminhoDoPdf(p(MES, 'NF-e', 'Saidas', 'XML', '1-nfe.xml')), p(MES, 'NF-e', 'Saidas', 'PDF', '1-nfe.pdf'))
+  assert.equal(caminhoDoPdf(p(MES, 'NF-e', 'Saidas', 'XML', 'Eventos', '1.xml')), null)
 })
 
 test('comDirecaoAntesDoTipo troca a ordem e mantém a barra', () => {
@@ -60,8 +60,8 @@ test('comDirecaoAntesDoTipo troca a ordem e mantém a barra', () => {
   assert.equal(comDirecaoAntesDoTipo('L/sem-data/CT-e/XML/Outros/a.xml'), 'L/sem-data/Outros/CT-e/XML/a.xml')
   assert.equal(comDirecaoAntesDoTipo('L/2026/11-Novembro/Saidas/NF-e/XML/a.xml'), 'L/2026/11-Novembro/Saidas/NF-e/XML/a.xml')
   assert.ok(foraDoFormatoAtual('L/2026/11-Novembro/NF-e/XML/Saidas/a.xml'))
-  assert.ok(foraDoFormatoAtual('L/2026/Novembro/Saidas/NF-e/XML/a.xml'))
-  assert.ok(!foraDoFormatoAtual('L\\2026\\11-Novembro\\Saidas\\NF-e\\XML\\a.xml'))
+  assert.ok(foraDoFormatoAtual('L/2026/Novembro/NF-e/Saidas/XML/a.xml'))
+  assert.ok(!foraDoFormatoAtual('L\\2026\\11-Novembro\\NF-e\\Saidas\\XML\\a.xml'))
 })
 
 test('muda a ordem de XML e PDF, o banco acompanha, os PDFs são aproveitados e relatório e ZIP antigos saem', (t) => {
@@ -81,7 +81,7 @@ test('muda a ordem de XML e PDF, o banco acompanha, os PDFs são aproveitados e 
 
   assert.deepEqual(r.pendentes, [])
   assert.equal(a.versao(), '8')
-  assert.equal(VERSAO_XML, '10')
+  assert.equal(VERSAO_XML, '11')
   assert.equal(a.ler(MES, 'Entradas', 'NF-e', 'XML', 'a-nfe.xml'), '<nfe/>')
   assert.ok(a.existe(MES, 'Saidas', 'NF-e', 'XML', 'b-nfe.xml'))
   assert.ok(a.existe(MES, 'Saidas', 'NF-e', 'XML', 'Eventos', 'c-evento.xml'))
