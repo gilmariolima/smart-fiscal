@@ -202,7 +202,7 @@ function textoEstado() {
   if (!e) return NOME
   if (pastaPendente()) return `${NOME}: Escolha a pasta: captura parada`
   if (e.rodandoAgora) return `${NOME}: buscando notas…`
-  if (!e.automatica) return `${NOME}: busca automática de notas desligada`
+  if (!e.proximaExecucao) return `${NOME}: sem horário de busca automática`
   return `${NOME}: próxima busca de notas ${dataHora(e.proximaExecucao)}`
 }
 

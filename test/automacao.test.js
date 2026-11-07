@@ -12,15 +12,30 @@ const { criarSefazMock, CNPJ_MOCK_OK } = require('../src/sefaz/mock-client')
 const ciencias = (db) => db.prepare("SELECT COUNT(*) n FROM eventos WHERE tp_evento = '210210'").get().n
 const resumosPendentes = (db) => db.prepare("SELECT COUNT(*) n FROM notas WHERE status = 'resumo' AND cancelada = 0").get().n
 
-test('automação: a busca começa ligada, muda e fica salva no banco', (t) => {
-  const amb = montarAmbiente()
+const autos = (db) => db.prepare('SELECT auto_nfe a, auto_nfse b, auto_cte c FROM clientes ORDER BY id').all().map((r) => [r.a, r.b, r.c])
+const geral = (db) => db.prepare("SELECT valor FROM sistema WHERE chave = 'captura_automatica'").get()
+
+test('chave geral antiga desligada: some e desliga todos os clientes (uma vez só)', (t) => {
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, '99888777000100'] })
   t.after(amb.limpar)
-  const a = criarAutomacao(amb.deps)
-  assert.deepEqual(a.obter(), { captura: true })
-  assert.deepEqual(a.definir({ captura: false }), { captura: false })
-  assert.deepEqual(criarAutomacao(amb.deps).obter(), { captura: false })
-  assert.throws(() => a.definir({ captura: 'sim' }), /Valor inválido/)
-  assert.throws(() => a.definir({ ciencia: true }), /desconhecida/)
+  amb.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('captura_automatica', '0')").run()
+  criarAutomacao(amb.deps)
+  assert.deepEqual(autos(amb.db), [[0, 0, 0], [0, 0, 0]])
+  assert.equal(geral(amb.db), undefined)
+  // Depois disso, o que o usuário ligar fica ligado.
+  amb.db.prepare('UPDATE clientes SET auto_nfe = 1').run()
+  criarAutomacao(amb.deps)
+  assert.deepEqual(autos(amb.db), [[1, 0, 0], [1, 0, 0]])
+})
+
+test('chave geral antiga ligada: some e a escolha de cada cliente fica', (t) => {
+  const amb = montarAmbiente({ clientes: [CNPJ_MOCK_OK, '99888777000100'] })
+  t.after(amb.limpar)
+  amb.db.prepare("UPDATE clientes SET auto_cte = 0 WHERE cnpj = ?").run(CNPJ_MOCK_OK)
+  amb.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('captura_automatica', '1')").run()
+  criarAutomacao(amb.deps)
+  assert.deepEqual(autos(amb.db), [[1, 1, 0], [1, 1, 1]])
+  assert.equal(geral(amb.db), undefined)
 })
 
 test('o ciclo não dá ciência: a nota espera o dono e o XML chega na captura seguinte', async (t) => {
@@ -45,31 +60,20 @@ test('o ciclo não dá ciência: a nota espera o dono e o XML chega na captura s
   assert.equal(amb.db.prepare('SELECT status FROM notas WHERE chave = ?').get(chave).status, 'completa')
 })
 
-test('busca automática desligada: horário e início são ignorados; disparo à mão roda', async (t) => {
+test('sem chave geral: o horário sempre roda o ciclo, que segue a escolha de cada cliente', async (t) => {
   const amb = montarAmbiente()
   t.after(amb.limpar)
   const automacao = criarAutomacao(amb.deps)
-  const chamadas = []
-  const ciclo = { executarCiclo: async () => (chamadas.push(1), { ok: true, clientes: [] }) }
+  const opcoes = []
+  const ciclo = { executarCiclo: async (o) => (opcoes.push(o), { ok: true, clientes: [] }) }
   const tarefas = []
   const cron = { validate: nodeCron.validate, schedule: (e, fn) => (tarefas.push(fn), { destroy() {}, getNextRun: () => new Date('2026-10-10T11:00:00Z') }) }
-  const iniciais = []
-  const ag = criarAgendador({ ciclo, config: { cronCaptura: '0 8,13 * * *' }, logger: silencioso, automacao, cron, atrasoInicialMs: 15000, agendarUmaVez: (fn) => iniciais.push(fn) })
+  const ag = criarAgendador({ ciclo, config: { cronCaptura: '0 8,13 * * *' }, logger: silencioso, automacao, cron })
   ag.iniciar()
 
-  automacao.definir({ captura: false })
-  iniciais[0]()
-  assert.equal((await tarefas[0]()).pulado, 'busca automática desligada')
-  assert.equal(chamadas.length, 0)
-  assert.equal(ag.estado().automatica, false)
-  assert.equal(ag.estado().proximaExecucao, null)
-
-  await ag.executarAgora('painel')
-  assert.equal(chamadas.length, 1)
-
-  automacao.definir({ captura: true })
   await tarefas[0]()
-  assert.equal(chamadas.length, 2)
+  assert.deepEqual(opcoes, [{ automatica: true }])
+  assert.equal(ag.estado().automatica, undefined)
   assert.equal(ag.estado().proximaExecucao, '2026-10-10T11:00:00.000Z')
 })
 

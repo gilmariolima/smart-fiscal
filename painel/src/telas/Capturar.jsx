@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import Etiqueta from '../componentes/Etiqueta.jsx'
 import Interruptor from '../componentes/Interruptor.jsx'
@@ -152,13 +152,7 @@ function ListaDeClientes({ modelo }) {
   const fila = dados?.filaCaptura || []
   const capturando = !!(resumo?.capturaEmAndamento || capturandoAgora || fila.length)
 
-  // Ao abrir cada modelo, vêm marcados todos os que podem ser capturados.
-  const marcouAoAbrir = useRef(null)
-  useEffect(() => {
-    if (!dados || marcouAoAbrir.current === modelo) return
-    marcouAoAbrir.current = modelo
-    selecao.marcar(dados.clientes.filter((c) => marcavel(c, modelo)).map((c) => c.cnpj))
-  }, [dados, modelo])
+  // Ao abrir cada tipo de nota, ninguém vem marcado: quem captura escolhe (ou usa Marcar todos).
 
   // Durante a captura, a lista recarrega a cada 5 s para mostrar quem está sendo capturado e quem está na fila.
   useEffect(() => {
@@ -382,13 +376,13 @@ function ListaDeClientes({ modelo }) {
   )
 }
 
-// Busca automática e os horários do dia em que ela roda (valem na hora, sem reiniciar).
+// Horários do dia em que a busca automática roda (valem na hora, sem reiniciar).
+// Quem entra em cada horário é a chave de cada cliente na lista.
 function BuscaAutomatica({ aoErrar }) {
   const { resumo, recarregar } = useResumo()
   const [novo, setNovo] = useState('')
   const [enviando, setEnviando] = useState(false)
   if (!resumo) return null
-  const ligada = !!resumo.automacao?.captura
   const horarios = resumo.agendador?.horarios || []
 
   async function enviar(corpo) {
@@ -413,8 +407,8 @@ function BuscaAutomatica({ aoErrar }) {
   }
 
   return (
-    <div className={`automacao${ligada ? '' : ' desligada'}`}>
-      <Interruptor ligado={ligada} onChange={(captura) => enviar({ captura })} desabilitado={enviando} rotulo="Busca automática" />
+    <div className="automacao">
+      <span className="grupo-rotulo">Horários da busca automática</span>
       <div className="horarios" role="group" aria-label="Horários da busca automática">
         {horarios.map((h) => (
           <span key={h} className="horario">

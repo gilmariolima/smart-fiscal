@@ -204,7 +204,6 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
       ambiente: { producao: config.tpAmb === '1', sefazSimulada: config.sefazMock },
       versao: process.env.SMART_FISCAL_VERSAO || '',
       cadastroLiberado: ehLocal(req),
-      automacao: ctx.automacao.obter(),
       backup: ctx.backup.estado(),
       agendador: agendador.estado(),
       ultimaCaptura: sql.ultimaCaptura.get()?.fim ?? null,
@@ -622,23 +621,15 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
 
   app.post('/api/automacao', async (req, res) => {
     const b = req.body || {}
-    const mudancas = {}
-    for (const nome of ['captura']) {
-      if (b[nome] === undefined) continue
-      if (typeof b[nome] !== 'boolean') throw new ErroHttp(400, 'Use ligado (true) ou desligado (false).')
-      mudancas[nome] = b[nome]
+    // Só os horários: quem entra neles é a escolha de cada cliente, na tela Capturar.
+    if (b.horarios === undefined) throw new ErroHttp(400, 'Nada para mudar.')
+    try {
+      ctx.automacao.definirHorarios(b.horarios)
+    } catch (e) {
+      throw new ErroHttp(400, e.message)
     }
-    if (!Object.keys(mudancas).length && b.horarios === undefined) throw new ErroHttp(400, 'Nada para mudar.')
-    if (b.horarios !== undefined) {
-      try {
-        ctx.automacao.definirHorarios(b.horarios)
-      } catch (e) {
-        throw new ErroHttp(400, e.message)
-      }
-      await agendador.reagendar()
-    }
-    const automacao = Object.keys(mudancas).length ? ctx.automacao.definir(mudancas) : ctx.automacao.obter()
-    res.json({ ok: true, automacao, agendador: agendador.estado() })
+    await agendador.reagendar()
+    res.json({ ok: true, agendador: agendador.estado() })
   })
 
   // "Baixar selecionados": `incluir` (xml, danfe, danfse, dacte, excel, pdf) escolhe o conteúdo; um arquivo só vai solto, o resto em ZIP.

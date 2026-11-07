@@ -732,19 +732,17 @@ test('pastas: a escolha salva vale ao abrir de novo; trocar fora do próprio PC 
 
 // ---------- chaves de automação e ciência à mão ----------
 
-test('automação pelo painel: liga e desliga a busca, recusa valor inválido; não há ciência', async (t) => {
+test('automação pelo painel: só horários, sem chave geral; não há ciência', async (t) => {
   const { pedir } = await montar(t)
-  assert.deepEqual((await pedir('/api/resumo')).corpo.automacao, { captura: true })
+  assert.equal((await pedir('/api/resumo')).corpo.automacao, undefined)
 
-  const semBusca = await pedir('/api/automacao', { method: 'POST', body: { captura: false } })
-  assert.equal(semBusca.status, 200)
-  assert.equal(semBusca.corpo.agendador.automatica, false)
-  assert.deepEqual((await pedir('/api/resumo')).corpo.automacao, { captura: false })
-
-  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { captura: 'sim' } })).status, 400)
+  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { captura: false } })).status, 400)
   assert.equal((await pedir('/api/automacao', { method: 'POST', body: { ciencia: true } })).status, 400)
   assert.equal((await pedir('/api/automacao', { method: 'POST', body: {} })).status, 400)
-  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { captura: true }, headers: { 'X-Painel': '0' } })).status, 403)
+  assert.equal((await pedir('/api/automacao', { method: 'POST', body: { horarios: ['09:00'] }, headers: { 'X-Painel': '0' } })).status, 403)
+  const ok = await pedir('/api/automacao', { method: 'POST', body: { horarios: ['09:00'] } })
+  assert.equal(ok.status, 200)
+  assert.deepEqual(ok.corpo.agendador.horarios, ['09:00'])
   assert.equal((await pedir('/api/ciencia', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK } })).status, 404)
 })
 

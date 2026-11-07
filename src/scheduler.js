@@ -12,8 +12,8 @@ const nodeCron = require('node-cron')
  * @param {object} deps.config         usa cronCaptura
  * @param {object} deps.logger
  * @param {object} [deps.cron]         node-cron (injetável nos testes)
- * @param {object} [deps.automacao]    criarAutomacao(...); com a busca automática desligada, só roda o que for disparado à mão;
- *                                     os horários dela substituem o cron do .env
+ * @param {object} [deps.automacao]    criarAutomacao(...); os horários dela substituem o cron do .env
+ *                                     (quem entra em cada horário é a escolha de cada cliente)
  * @param {number|false} [deps.atrasoInicialMs] só o servidor pelo terminal roda um ciclo logo depois de iniciar; o app captura só nos horários
  * @param {Function} [deps.agendarUmaVez] setTimeout injetável
  * @param {Function} [deps.podeCapturar] () => boolean; falso recusa o ciclo de qualquer origem (sem pasta escolhida ou pasta em troca)
@@ -27,8 +27,6 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
   let timerInicial = null
   let emExecucao = null
   let ultima = null
-
-  const automatica = () => !automacao || automacao.obter().captura
 
   // Horários "HH:MM" em uso: os do painel ou, sem eles, os do cron do .env quando ele é do tipo "M H1,H2 * * *".
   function horarios() {
@@ -57,10 +55,6 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
 
   /** Roda um ciclo agora; se já houver um rodando, devolve o mesmo (não empilha). */
   function executarAgora(origem = 'agendado') {
-    if ((origem === 'agendado' || origem === 'inicio') && !automatica()) {
-      logger.info('Busca automática desligada; horário ignorado', { origem })
-      return Promise.resolve({ ok: true, pulado: 'busca automática desligada', clientes: [] })
-    }
     if (!podeCapturar()) {
       const motivo = motivoPulo()
       const semPasta = faltaPasta()
@@ -143,8 +137,7 @@ function criarAgendador({ ciclo, config, logger, automacao, cron = nodeCron, atr
   }
 
   function estado() {
-    const ligada = automatica()
-    return { ativo: iniciado, automatica: ligada, cron: config.cronCaptura, horarios: horarios(), proximaExecucao: ligada ? proximaExecucao() : null, rodandoAgora: !!emExecucao, ultimaExecucao: ultima }
+    return { ativo: iniciado, cron: config.cronCaptura, horarios: horarios(), proximaExecucao: proximaExecucao(), rodandoAgora: !!emExecucao, ultimaExecucao: ultima }
   }
 
   return { iniciar, parar, reagendar, executarAgora, proximaExecucao, estado }

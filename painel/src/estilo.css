@@ -2006,12 +2006,12 @@ a.card-captura {
   font-weight: 600;
 }
 
-/* Busca automática e os horários dela, no cabeçalho do Capturar */
+/* Horários da busca automática, no cabeçalho do Capturar */
 .automacao {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 22px;
+  gap: 8px 12px;
 }
 
 .horarios {
@@ -2078,10 +2078,6 @@ a.card-captura {
 
 .horario-novo .botao {
   height: 32px;
-}
-
-.automacao.desligada .horarios {
-  opacity: 0.55;
 }
 
 @media (max-width: 1100px) {

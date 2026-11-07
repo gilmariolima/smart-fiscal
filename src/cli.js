@@ -274,9 +274,7 @@ function criarPrograma(io) {
       const e = servidor.agendador.estado()
       log(`Servidor rodando (${c.config.tpAmb === '1' ? 'PRODUÇÃO' : 'homologação'}${c.config.sefazMock ? ', SEFAZ simulada' : ''}).`)
       log(`Painel: ${servidor.painel.url}`)
-      log(e.automatica
-        ? `Agendamento: ${e.cron} | próxima execução: ${dataHora(e.proximaExecucao)}${o.semCicloInicial ? '' : ' | primeiro ciclo em instantes'}`
-        : `Agendamento: ${e.cron} | busca automática DESLIGADA (ligue no painel, em Visão geral)`)
+      log(`Agendamento: ${e.cron} | próxima execução: ${dataHora(e.proximaExecucao)}${o.semCicloInicial ? '' : ' | primeiro ciclo em instantes'}`)
       log('Ctrl+C para parar. Detalhes em logs/app.log.')
       await aguardarEncerramento(servidor, c.logger)
     })
@@ -316,9 +314,10 @@ function criarPrograma(io) {
       const escritorio = c.clientes.obterEscritorio()
       log(escritorio ? `Escritório: ${escritorio.cnpj} - ${escritorio.razao_social} | ${escritorio.ativo ? 'ativo' : 'inativo'} | certificado até ${dataHora(escritorio.cert_validade)}` : 'Escritório: não cadastrado (use escritorio:add)')
       const [proxima] = require('./scheduler').proximosHorarios(c.config.cronCaptura)
-      const auto = c.automacao.obter()
-      log(`Busca automática: ${auto.captura ? 'ligada' : 'desligada'} (mude no painel, no Início)`)
-      log(`Agendamento: ${c.config.cronCaptura} | próximo horário: ${dataHora(proxima)} (com o servidor rodando${auto.captura ? '' : ', mas a busca automática está desligada'})`)
+      const horarios = c.automacao.horarios()
+      log(horarios
+        ? `Busca automática: ${horarios.join(', ') || 'nenhum horário'} (cada cliente liga ou desliga na tela Capturar)`
+        : `Agendamento: ${c.config.cronCaptura} | próximo horário: ${dataHora(proxima)} (com o servidor rodando)`)
       log('\nNotas por status:')
       log(tabela(r.notasPorStatus, [['Status', 'status'], ['Total', 'total'], ['Canceladas', 'canceladas']]))
       log('\nClientes com erro:')
