@@ -2262,3 +2262,12 @@ test('importar com corpo grande demais dá 413', async (t) => {
   assert.equal(r.status, 413)
   assert.match(r.corpo.erro, /grandes demais/)
 })
+
+test('importar sem a pasta principal escolhida dá 409', async (t) => {
+  const { ctx } = await montar(t)
+  const post = await appComPastas(t, ctx, { exigirPasta: true })
+  const r = await post('/api/importar', { arquivos: [arquivoImportado(1)] })
+  assert.equal(r.status, 409)
+  assert.equal(r.corpo.erro, 'Escolha a pasta principal na tela Pastas antes de importar.')
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfse'").get().n, 0)
+})

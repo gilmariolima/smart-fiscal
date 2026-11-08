@@ -10,6 +10,9 @@ const MOTIVOS = {
   'nao-nfse': 'não é NFS-e',
   invalido: 'XML ilegível',
   'zip-invalido': 'ZIP corrompido',
+  'arquivo-grande': 'grande demais para ser uma NFS-e',
+  'zip-grande-demais': 'ZIP grande demais: importe o resto em outra vez',
+  'erro-gravacao': 'não foi possível gravar na pasta (veja o log)',
 }
 
 function Resultado({ r }) {

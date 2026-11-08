@@ -125,3 +125,67 @@ test('banco novo tem a coluna origem com padrão captura', (t) => {
   db.prepare("INSERT INTO notas (cliente_id, chave, tipo, status) VALUES (?, 'k', 'entrada', 'completa')").run(id)
   assert.equal(db.prepare('SELECT origem FROM notas').get().origem, 'captura')
 })
+
+// ---------- correções da revisão final ----------
+
+function montarCom(config) {
+  const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'importar-'))
+  const db = abrirBanco(':memory:')
+  db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, 'Cliente 1 Ltda', 'Cliente 1', 'CE', 'x.pfx', 'a:b:c')`).run(CNPJ_MOCK_OK)
+  const avisos = []
+  const servico = criarServicoImportacao({ db, config: { pastaXmls, ...config }, logger: { info() {}, warn: (m) => avisos.push(m), error() {} } })
+  return { db, servico, avisos, pastaXmls, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
+}
+
+test('escritório só é dono quando também é cliente', (t) => {
+  const { db, servico, limpar } = montar()
+  t.after(limpar)
+  db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc, papel) VALUES (?, 'Escritório Ltda', 'Escritório', 'CE', 'e.pfx', 'a:b:c', 'escritorio')`).run(OUTRO)
+  const honorario = () => arq('honorario.xml', xmlNfse({ chave: chaveNfse(OUTRO, 8), prestador: OUTRO, tomador: FORA }))
+  assert.deepEqual(servico.importar([honorario()]).ignoradas, [{ nome: 'honorario.xml', motivo: 'cnpj-nao-cadastrado' }])
+  db.prepare('UPDATE clientes SET tambem_cliente = 1 WHERE cnpj = ?').run(OUTRO)
+  assert.deepEqual(servico.importar([honorario()]).importadas, { entrada: 0, saida: 1 })
+})
+
+test('cliente só intermediário entra como entrada', (t) => {
+  const { db, servico, limpar } = montar()
+  t.after(limpar)
+  const xml = xmlNfse({ chave: chaveNfse(PRESTADOR_MOCK, 9), prestador: PRESTADOR_MOCK, tomador: FORA }).replace('</toma>', `</toma><interm><CNPJ>${CNPJ_MOCK_OK}</CNPJ></interm>`)
+  const r = servico.importar([arq('interm.xml', xml)])
+  assert.deepEqual(r.importadas, { entrada: 1, saida: 0 })
+  assert.equal(notas(db)[0].tipo, 'entrada')
+})
+
+test('chave fora do formato é inválida', (t) => {
+  const { db, servico, limpar } = montar()
+  t.after(limpar)
+  const semDigitos = xmlNfse({ chave: 'ABC', prestador: PRESTADOR_MOCK, tomador: CNPJ_MOCK_OK })
+  const curta = xmlNfse({ chave: '123', prestador: PRESTADOR_MOCK, tomador: CNPJ_MOCK_OK })
+  const r = servico.importar([arq('a.xml', semDigitos), arq('b.xml', curta)])
+  assert.deepEqual(r.ignoradas, [{ nome: 'a.xml', motivo: 'invalido' }, { nome: 'b.xml', motivo: 'invalido' }])
+  assert.equal(notas(db).length, 0)
+})
+
+test('erro ao gravar um arquivo não perde o lote', (t) => {
+  const { db, servico, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc) VALUES (?, 'Outro Ltda', 'Outro', 'CE', '', '')`).run(OUTRO)
+  fs.writeFileSync(path.join(pastaXmls, 'Cliente 1'), 'arquivo no lugar da pasta')
+  const r = servico.importar([arq('do-cliente-1.xml', entrada(1)), arq('do-outro.xml', xmlNfse({ chave: chaveNfse(OUTRO, 4), prestador: OUTRO, tomador: FORA }))])
+  assert.deepEqual(r.ignoradas, [{ nome: 'do-cliente-1.xml', motivo: 'erro-gravacao' }])
+  assert.deepEqual(r.importadas, { entrada: 0, saida: 1 })
+  assert.deepEqual(notas(db).map((n) => n.emitente_cnpj), [OUTRO])
+})
+
+test('arquivo grande demais e ZIP acima do total são ignorados', (t) => {
+  const { db, servico, limpar } = montarCom({ importacaoLimiteArquivo: 50 * 1024, importacaoLimiteTotal: 1000 }) // cada XML de teste tem 789 bytes: o 2º passa do total
+  t.after(limpar)
+  const zip = Buffer.from(zipSync({ '1.xml': strToU8(entrada(1)), '2.xml': strToU8(entrada(3)), 'grande.xml': strToU8('a'.repeat(60 * 1024)) }))
+  const r = servico.importar([{ nome: 'z.zip', bytes: zip }, arq('solto-grande.xml', 'a'.repeat(60 * 1024))])
+  assert.deepEqual(r.ignoradas, [
+    { nome: 'z.zip/2.xml', motivo: 'zip-grande-demais' },
+    { nome: 'z.zip/grande.xml', motivo: 'arquivo-grande' },
+    { nome: 'solto-grande.xml', motivo: 'arquivo-grande' },
+  ])
+  assert.equal(notas(db).length, 1)
+})

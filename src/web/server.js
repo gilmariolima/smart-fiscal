@@ -614,6 +614,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
 
   // Importar XMLs de NFS-e obtidos fora do app; a geração (PDF, Excel, ZIP) roda depois no organizador.
   app.post('/api/importar', (req, res) => {
+    if (pastaPendente()) throw new ErroHttp(409, 'Escolha a pasta principal na tela Pastas antes de importar.')
     if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para importar.')
     const lista = Array.isArray(req.body?.arquivos) ? req.body.arquivos : []
     const arquivos = lista
