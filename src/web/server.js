@@ -23,6 +23,7 @@ const HOSTS_LOCAIS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
 const ENDERECOS_LOCAIS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const ROTA_CERTIFICADO = /^\/(clientes(\/\d{14}\/certificado)?|escritorio(\/certificado)?)$/
 const LIMITE_PFX = '300kb' // o .pfx chega em base64 dentro do JSON
+const LIMITE_IMPORTACAO = '64mb' // XMLs e ZIPs da tela Importar XMLs, em base64 dentro do JSON
 /** Abre a pasta no Explorador do Windows (fora do Windows, no gerenciador de arquivos). */
 function abrirNoExplorador(pasta) {
   const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [pasta]] : [process.platform === 'darwin' ? 'open' : 'xdg-open', [pasta]]
@@ -123,6 +124,16 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     if (req.method !== 'POST' || !ROTA_CERTIFICADO.test(req.path)) return next()
     if (!ehLocal(req)) return res.status(403).json({ erro: 'O cadastro de clientes só pode ser feito no próprio computador do sistema.' })
     jsonCertificado(req, res, next)
+  })
+  // Importar XMLs: só no próprio PC (grava na pasta) e recusa antes de ler um corpo de até 64 MB.
+  const jsonImportacao = express.json({ limit: LIMITE_IMPORTACAO })
+  app.use('/api', (req, res, next) => {
+    if (req.method !== 'POST' || req.path !== '/importar') return next()
+    if (!ehLocal(req)) return res.status(403).json({ erro: 'A importação só pode ser feita no próprio computador do sistema.' })
+    jsonImportacao(req, res, (err) => {
+      if (err?.type === 'entity.too.large') return res.status(413).json({ erro: 'Arquivos grandes demais para uma importação só. Separe em partes menores.' })
+      next(err)
+    })
   })
   // ZIP das selecionadas e da tela Exportar: até 2.000 ids cabem em 64 KB; o limite maior vale só nestas rotas.
   const jsonZip = express.json({ limit: '64kb' })
@@ -600,6 +611,19 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     logger.info('Captura dos clientes marcados disparada pelo painel', { clientes: cnpjs.length })
     res.status(202).json({ ok: true, mensagem: `Captura de ${cnpjs.length} clientes iniciada.` })
   }
+
+  // Importar XMLs de NFS-e obtidos fora do app; a geração (PDF, Excel, ZIP) roda depois no organizador.
+  app.post('/api/importar', (req, res) => {
+    if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para importar.')
+    const lista = Array.isArray(req.body?.arquivos) ? req.body.arquivos : []
+    const arquivos = lista
+      .filter((a) => a && typeof a.nome === 'string' && typeof a.base64 === 'string')
+      .map((a) => ({ nome: path.basename(a.nome), bytes: Buffer.from(a.base64, 'base64') }))
+    if (!arquivos.length) throw new ErroHttp(400, 'Arraste ao menos um arquivo XML ou ZIP.')
+    const r = ctx.importacao.importar(arquivos)
+    if (r.clientesAfetados.length) ctx.organizador.agendar({ conferirArquivos: true })
+    res.json(r)
+  })
 
   app.post('/api/captura', (req, res) => {
     if (req.body && 'cnpjs' in req.body) return capturaDeLista(req.body.cnpjs, res, modelosDaCaptura(req.body.modelos))

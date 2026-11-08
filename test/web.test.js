@@ -2215,3 +2215,50 @@ test('I-1: GET /api/pastas traz a última troca: o erro de verdade e o sucesso c
   assert.equal(errada.mensagem, r.corpo.erro)
   assert.deepEqual(errada.avisos, [])
 })
+
+// ---------- Importar XMLs ----------
+
+const { xmlNfse: xmlImportado, chaveNfse: chaveImportada, PRESTADOR_MOCK: PRESTADOR_IMPORTADO } = require('../src/sefaz/adn-mock')
+const arquivoImportado = (n = 1) => ({
+  nome: `nota-${n}.xml`,
+  base64: Buffer.from(xmlImportado({ chave: chaveImportada(PRESTADOR_IMPORTADO, n), prestador: PRESTADOR_IMPORTADO, tomador: CNPJ_MOCK_OK, numero: String(n) })).toString('base64'),
+})
+
+test('importar grava a NFS-e e devolve o resumo', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [arquivoImportado(1)] } })
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.corpo.importadas, { entrada: 1, saida: 0 })
+  const nota = ctx.db.prepare("SELECT origem, modelo FROM notas WHERE modelo = 'nfse'").get()
+  assert.deepEqual({ ...nota }, { origem: 'importada', modelo: 'nfse' })
+})
+
+test('importar só no próprio PC', async (t) => {
+  const { pedir } = await montar(t, {}, { ehLocal: () => false })
+  const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [arquivoImportado(1)] } })
+  assert.equal(r.status, 403)
+  assert.match(r.corpo.erro, /próprio computador/)
+})
+
+test('importar recusa durante a captura', async (t) => {
+  const { pedir } = await montar(t, {}, { atrasoSefazMs: 200 })
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK } })).status, 202)
+  const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [arquivoImportado(1)] } })
+  assert.equal(r.status, 409)
+  assert.match(r.corpo.erro, /captura/)
+  await esperarFimDaCaptura(pedir)
+})
+
+test('importar sem arquivos dá 400', async (t) => {
+  const { pedir } = await montar(t)
+  const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [] } })
+  assert.equal(r.status, 400)
+  assert.equal(r.corpo.erro, 'Arraste ao menos um arquivo XML ou ZIP.')
+})
+
+test('importar com corpo grande demais dá 413', async (t) => {
+  const { pedir } = await montar(t)
+  const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [{ nome: 'grande.zip', base64: 'A'.repeat(65 * 1024 * 1024) }] } })
+  assert.equal(r.status, 413)
+  assert.match(r.corpo.erro, /grandes demais/)
+})
