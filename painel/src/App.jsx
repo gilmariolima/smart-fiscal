@@ -10,6 +10,7 @@ import NotasNovas from './telas/NotasNovas.jsx'
 import Clientes from './telas/Clientes.jsx'
 import Execucoes from './telas/Execucoes.jsx'
 import Exportar from './telas/Exportar.jsx'
+import Importar from './telas/Importar.jsx'
 import Backup from './telas/Backup.jsx'
 import Pastas from './telas/Pastas.jsx'
 import Inicio from './telas/Inicio.jsx'
@@ -93,6 +94,7 @@ const rotas = createHashRouter([
       { path: 'clientes/:cnpj/certificado', element: <Cadastro key="certificado" modo="certificado" /> },
       { path: 'clientes/:cnpj/editar', element: <Cadastro key="editar" modo="editar" /> },
       { path: 'escritorio', element: <Cadastro key="escritorio" modo="escritorio" /> },
+      { path: 'importar', element: <Importar /> },
       { path: 'exportar', element: <Exportar /> },
       { path: 'execucoes', element: <Execucoes /> },
       { path: 'backup', element: <Backup /> },

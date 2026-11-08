@@ -3166,3 +3166,61 @@ a.botao-icone {
     break-after: avoid;
   }
 }
+
+/* ---------- Importar XMLs ---------- */
+
+.importar-texto {
+  margin: 0 0 12px;
+  color: var(--apagado);
+}
+
+.importar-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 180px;
+  padding: 24px;
+  border-style: dashed;
+  border-width: 2px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.importar-area i {
+  font-size: 32px;
+  color: var(--azul-escuro);
+}
+
+.importar-area-ativa {
+  background: var(--azul-claro);
+  border-color: var(--azul-escuro);
+}
+
+.importar-area:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.importar-resultado {
+  margin-top: 16px;
+  padding: 14px 16px;
+}
+
+.importar-resultado p {
+  margin: 0 0 6px;
+}
+
+.importar-ignoradas {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.importar-nome {
+  overflow-wrap: anywhere;
+}
