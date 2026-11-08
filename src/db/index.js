@@ -98,6 +98,7 @@ const COLUNAS_NOVAS = [
   ['clientes', 'cte_ultimo_erro', 'TEXT'],
   ['clientes', 'cte_bloqueado_ate', 'TEXT'],
   ['clientes', 'auto_cte', 'INTEGER NOT NULL DEFAULT 0'], // cliente de antes do CT-e não começa a buscar sozinho; o cadastro grava 1
+  ['notas', 'origem', "TEXT NOT NULL DEFAULT 'captura'"], // captura | importada (tela Importar XMLs)
 ]
 
 // Banco de antes do captura_id: liga à última captura de cada cliente as notas criadas desde o início dela,
