@@ -24,7 +24,7 @@ function criarServicoResumo({ db, config = {}, agora = () => new Date() }) {
     comErro: db.prepare(`SELECT cnpj, COALESCE(apelido, razao_social) nome, ultimo_erro, ultima_consulta FROM clientes
       WHERE ativo = 1 AND ultimo_erro IS NOT NULL ORDER BY razao_social`),
     agenda: db.prepare(`SELECT cnpj, COALESCE(apelido, razao_social) nome, proxima_consulta, bloqueado_ate FROM clientes
-      WHERE ativo = 1 AND papel = 'cliente' ORDER BY COALESCE(bloqueado_ate, proxima_consulta, '')`),
+      WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo <> '' ORDER BY COALESCE(bloqueado_ate, proxima_consulta, '')`),
     certVencendo: db.prepare(`SELECT cnpj, COALESCE(apelido, razao_social) nome, cert_validade FROM clientes
       WHERE ativo = 1 AND cert_validade IS NOT NULL AND cert_validade < ? ORDER BY cert_validade`),
   }

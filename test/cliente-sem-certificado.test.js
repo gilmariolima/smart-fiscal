@@ -31,16 +31,18 @@ test('cadastrar sem certificado grava a linha sem arquivo nem senha', (t) => {
   const r = clientes.cadastrar({ cnpj: SEM, razao: 'Sem Cert Ltda', uf: 'CE', apelido: 'Sem Cert' })
   assert.equal(r.certificado, null)
   const linha = amb.db.prepare('SELECT cert_arquivo, cert_senha_enc, cert_validade, ativo FROM clientes WHERE cnpj = ?').get(SEM)
-  assert.deepEqual({ ...linha }, { cert_arquivo: '', cert_senha_enc: '', cert_validade: null, ativo: 0 }, 'nasce desativado: não tem o que capturar')
+  assert.deepEqual({ ...linha }, { cert_arquivo: '', cert_senha_enc: '', cert_validade: null, ativo: 1 }, 'nasce ativo: a captura já o pula por não ter certificado')
 })
 
-test('reativar sem certificado é recusado; adicionar o certificado ativa sozinho', (t) => {
+test('sem certificado desativa e reativa; adicionar o certificado mantém a escolha', (t) => {
   const { clientes } = montar(t)
   clientes.cadastrar({ cnpj: SEM, razao: 'Sem Cert Ltda', uf: 'CE' })
-  assert.throws(() => clientes.definirAtivo(SEM, true), /sem certificado/i)
+  clientes.definirAtivo(SEM, false)
   assert.equal(clientes.obter(SEM).ativo, 0)
   const cert = gerarPfx({ cnpj: SEM })
   clientes.trocarCertificado({ cnpj: SEM, pfx: cert.pfx, senha: cert.senha })
+  assert.equal(clientes.obter(SEM).ativo, 0, 'desativado por escolha continua desativado')
+  clientes.definirAtivo(SEM, true)
   assert.equal(clientes.obter(SEM).ativo, 1)
 })
 
@@ -79,4 +81,30 @@ test('o resumo não conta quem não tem certificado como vencido nem a vencer', 
   assert.equal(r.certificados.total, 1)
   assert.equal(r.certificados.vencidos, 0)
   assert.ok(!r.certificadosVencendo.some((c) => c.cnpj === SEM))
+})
+
+test('agenda do Início não lista quem não tem certificado', (t) => {
+  const { deps, clientes } = montar(t)
+  clientes.cadastrar({ cnpj: SEM, razao: 'Sem Cert Ltda', uf: 'CE' })
+  const agenda = criarServicoResumo(deps).resumo().agenda.map((c) => c.cnpj)
+  assert.ok(agenda.includes(CNPJ_MOCK_OK))
+  assert.ok(!agenda.includes(SEM))
+})
+
+test('banco antigo: sem certificado desativado volta ativo uma vez só', (t) => {
+  const { abrirBanco } = require('../src/db')
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), 'nfe-banco-'))
+  t.after(() => fs.rmSync(pasta, { recursive: true, force: true }))
+  const arquivo = path.join(pasta, 'nfe.db')
+  let db = abrirBanco(arquivo)
+  db.prepare("INSERT INTO clientes (cnpj, razao_social, uf, cert_arquivo, cert_senha_enc, ativo) VALUES (?, 'Sem Cert', 'CE', '', '', 0)").run(SEM)
+  db.prepare("DELETE FROM sistema WHERE chave = 'sem_certificado_ativos'").run()
+  db.close()
+  db = abrirBanco(arquivo)
+  assert.equal(db.prepare('SELECT ativo FROM clientes WHERE cnpj = ?').get(SEM).ativo, 1)
+  db.prepare('UPDATE clientes SET ativo = 0 WHERE cnpj = ?').run(SEM)
+  db.close()
+  db = abrirBanco(arquivo)
+  assert.equal(db.prepare('SELECT ativo FROM clientes WHERE cnpj = ?').get(SEM).ativo, 0, 'desativar depois da migração vale')
+  db.close()
 })

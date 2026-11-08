@@ -65,9 +65,7 @@ export default function Importar() {
 
   return (
     <Pagina titulo="Importar XMLs" subtitulo="NFS-e obtidas fora do Smart Fiscal" erro={erro} aoFecharErro={() => setErro('')}>
-      <p className="importar-texto">
-        Solte aqui XMLs de NFS-e ou um ZIP com eles. O Smart Fiscal acha o cliente pelo CNPJ e organiza como uma nota capturada.
-      </p>
+      <p className="importar-texto">Solte aqui XMLs de NFS-e ou um ZIP com eles.</p>
       <button
         type="button"
         className={`cartao importar-area${arrastando ? ' importar-area-ativa' : ''}`}

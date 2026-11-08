@@ -110,12 +110,23 @@ function Pendencias({ notas: n }) {
   )
 }
 
+// Mesmo prazo do aviso de certificado no Início (DIAS_ALERTA_CERT no servidor).
+const DIAS_A_VENCER = 30
+
+const VAZIO = {
+  '': 'Nenhum cliente cadastrado.',
+  com: 'Nenhum cliente com certificado.',
+  sem: 'Nenhum cliente sem certificado.',
+  vencidos: 'Nenhum cliente ativo com o certificado vencido.',
+  aVencer: 'Nenhum cliente ativo com o certificado vencendo nos próximos 30 dias.',
+}
+
 function Acoes({ c, cadastroLiberado, onAtivo, onExcluir, ocupado }) {
   return (
     <span className="acoes-cliente">
       {cadastroLiberado && <BotaoIcone icone="fa-pen" dica="Editar os dados" to={c.escritorio ? '/escritorio' : `/clientes/${c.cnpj}/editar`} />}
       {cadastroLiberado && <BotaoIcone icone="fa-id-card" dica={c.temCertificado ? 'Trocar o certificado' : 'Adicionar o certificado'} to={`/clientes/${c.cnpj}/certificado`} />}
-      {cadastroLiberado && c.temCertificado && (
+      {cadastroLiberado && (
         <BotaoIcone
           icone={c.ativo ? 'fa-power-off' : 'fa-rotate-left'}
           dica={c.escritorio ? 'Tirar da lista de clientes' : c.ativo ? 'Desativar (fica fora das capturas)' : 'Reativar (volta a entrar nas capturas)'}
@@ -205,8 +216,15 @@ export default function Clientes() {
   // Busca por nome, razão social ou CNPJ (com ou sem pontuação).
   const termo = busca.trim().toLowerCase()
   const digitos = termo.replace(/\D/g, '')
-  const comCertificado = lista.filter((c) => c.temCertificado).length
-  const doFiltro = ordenados.filter((c) => !filtro || c.temCertificado === (filtro === 'com'))
+  // Vencidos e a vencer contam como o cartão do Início: só clientes ativos com certificado.
+  const FILTROS = {
+    com: (c) => c.temCertificado,
+    sem: (c) => !c.temCertificado,
+    vencidos: (c) => c.ativo && c.temCertificado && c.certDias < 0,
+    aVencer: (c) => c.ativo && c.temCertificado && c.certDias >= 0 && c.certDias < DIAS_A_VENCER,
+  }
+  const contar = (nome) => lista.filter(FILTROS[nome]).length
+  const doFiltro = ordenados.filter((c) => !filtro || FILTROS[filtro](c))
   const visiveis = doFiltro.filter(
     (c) => !termo || nomeDe(c).toLowerCase().includes(termo) || (c.razaoSocial || '').toLowerCase().includes(termo) || (digitos && c.cnpj.includes(digitos)),
   )
@@ -274,7 +292,7 @@ Para só parar de capturar, use Desativar. Esta exclusão não pode ser desfeita
         )}
       </p>
     )
-  else if (!visiveis.length) conteudo = <p className="vazio">{termo ? 'Nenhum cliente encontrado para essa busca.' : filtro === 'com' ? 'Nenhum cliente com certificado.' : 'Nenhum cliente sem certificado.'}</p>
+  else if (!visiveis.length) conteudo = <p className="vazio">{termo ? 'Nenhum cliente encontrado para essa busca.' : VAZIO[filtro]}</p>
   else
     conteudo = (
       <div className="tabela-moldura">
@@ -352,8 +370,10 @@ Para só parar de capturar, use Desativar. Esta exclusão não pode ser desfeita
             onChange={setFiltro}
             opcoes={[
               { valor: '', rotulo: `Todos (${inteiro(lista.length)})` },
-              { valor: 'com', rotulo: `Com certificado (${inteiro(comCertificado)})` },
-              { valor: 'sem', rotulo: `Sem certificado (${inteiro(lista.length - comCertificado)})` },
+              { valor: 'com', rotulo: `Com certificado (${inteiro(contar('com'))})` },
+              { valor: 'sem', rotulo: `Sem certificado (${inteiro(contar('sem'))})` },
+              { valor: 'vencidos', rotulo: `Vencidos (${inteiro(contar('vencidos'))})` },
+              { valor: 'aVencer', rotulo: `A vencer (${inteiro(contar('aVencer'))})` },
             ]}
           />
         </div>

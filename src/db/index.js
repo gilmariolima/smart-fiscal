@@ -139,6 +139,11 @@ function abrirBanco(caminho) {
       if (!existe && coluna === 'captura_id') preencherCapturaId(db)
     }
     db.exec('CREATE INDEX IF NOT EXISTS idx_notas_cliente_modelo_comp ON notas(cliente_id, modelo, competencia)')
+    // Uma vez só (1.11.1): cliente sem certificado deixou de nascer desativado; os de antes voltam a ativos.
+    if (!db.prepare("SELECT 1 FROM sistema WHERE chave = 'sem_certificado_ativos'").get()) {
+      db.exec("UPDATE clientes SET ativo = 1 WHERE cert_arquivo = '' AND papel = 'cliente'")
+      db.prepare("INSERT INTO sistema (chave, valor) VALUES ('sem_certificado_ativos', '1')").run()
+    }
     db.pragma('user_version = 1')
   } catch (e) {
     db.close()

@@ -168,7 +168,7 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
       cert_senha_enc: '',
       cert_validade: null,
     })
-    sql.ativo.run(0, cnpj)
+    // Fica ativo: a captura já o pula por não ter certificado, e as notas dele podem vir pelo Importar XMLs.
     return { cliente: sql.porCnpj.get(cnpj), certificado: null, avisos: [] }
   }
 
@@ -600,7 +600,6 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     const { cert, avisos } = validarCertificado(c, pfx, senha)
     const certArquivo = gravarPfx(c, pfx)
     sql.trocarCert.run({ cnpj: c, cert_arquivo: certArquivo, cert_senha_enc: criptografar(senha, config.masterKey), cert_validade: cert.validade })
-    if (!atual.cert_arquivo) sql.ativo.run(1, c) // estava desativado só por não ter certificado
     logger.info('Certificado trocado', { cnpj: c, validade: cert.validade })
     return { cliente: sql.porCnpj.get(c), certificado: cert, avisos }
   }
@@ -615,7 +614,6 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     }
     const atual = sql.porCnpj.get(c)
     if (!atual) throw new Error(`CNPJ ${c} não cadastrado.`)
-    if (ativo && !atual.cert_arquivo) throw new Error('Cliente sem certificado: adicione o certificado para ativar.')
     sql.ativo.run(ativo ? 1 : 0, c)
     logger.info(ativo ? 'Cliente ativado' : 'Cliente desativado', { cnpj: c })
     return sql.porCnpj.get(c)
