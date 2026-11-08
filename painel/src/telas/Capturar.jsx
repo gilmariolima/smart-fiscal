@@ -333,20 +333,20 @@ function ListaDeClientes({ modelo }) {
             <button
               type="button"
               className="botao botao-claro"
-              onClick={() => alternarTodas(true)}
-              disabled={!!trocando || visiveis.every(automaticaLigada)}
-              title={`Liga a busca automática de ${rotulo} em todos os clientes da lista`}
-            >
-              Ligar todos
-            </button>
-            <button
-              type="button"
-              className="botao botao-claro"
               onClick={() => alternarTodas(false)}
               disabled={!!trocando || !visiveis.some(automaticaLigada)}
               title={`Desliga a busca automática de ${rotulo} em todos os clientes da lista. O botão Capturar continua valendo.`}
             >
               Desligar todos
+            </button>
+            <button
+              type="button"
+              className="botao botao-claro"
+              onClick={() => alternarTodas(true)}
+              disabled={!!trocando || visiveis.every(automaticaLigada)}
+              title={`Liga a busca automática de ${rotulo} em todos os clientes da lista`}
+            >
+              Ligar todos
             </button>
           </div>
           <button
