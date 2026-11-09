@@ -2,8 +2,8 @@ import Etiqueta from './Etiqueta.jsx'
 import { data, plural } from '../formato.js'
 
 // Situação do certificado A1 do cliente: sem certificado, vencido, vencendo em menos de 30 dias ou no prazo.
-export default function SeloCertificado({ c }) {
-  if (c.temCertificado === false) return <Etiqueta cor="cinza">Sem certificado</Etiqueta>
+export default function SeloCertificado({ c, procurador = false }) {
+  if (c.temCertificado === false) return <Etiqueta cor="cinza">{procurador ? 'pelo procurador' : 'Sem certificado'}</Etiqueta>
   if (c.certDias === null || c.certDias === undefined) return '—'
   if (c.certDias < 0)
     return (

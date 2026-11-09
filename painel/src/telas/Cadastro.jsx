@@ -202,6 +202,7 @@ function FormNovo({ escritorio }) {
           </div>
         </form>
       )}
+      {escritorio && !envio.recibo && <Procurador />}
     </Pagina>
   )
 }
@@ -252,7 +253,59 @@ function FormTroca({ alvo, escritorio, aoSalvar, aoExcluir }) {
         </form>
       )}
       {escritorio && !envio.recibo && <DadosDoEscritorio alvo={alvo} aoSalvar={aoSalvar} aoExcluir={aoExcluir} />}
+      {escritorio && <Procurador />}
     </Pagina>
+  )
+}
+
+// Certificado procurador: e-CPF (ou e-CNPJ) com procuração no portal nacional, para puxar a NFS-e de
+// clientes sem certificado próprio. Fica na tela Escritório, mas é um certificado à parte.
+function Procurador() {
+  const { dados, recarregar } = useApi('/api/procurador')
+  const envio = useEnvioDeCertificado()
+  const [removendo, setRemovendo] = useState(false)
+  const proc = dados?.procurador
+  const salvar = (e) =>
+    envio.enviar(e, async (cert) => {
+      const r = await api.post('/api/procurador/certificado', cert)
+      recarregar()
+      return r.procurador
+    })
+  async function remover() {
+    setRemovendo(true)
+    try {
+      await api.post('/api/procurador/remover')
+      recarregar()
+    } finally {
+      setRemovendo(false)
+    }
+  }
+  const aviso = proc && (proc.diasParaVencer < 0 ? ' (vencido)' : proc.diasParaVencer < 30 ? ` (vence em ${plural(proc.diasParaVencer, 'dia', 'dias')})` : '')
+  return (
+    <section className="cartao cartao-procurador" aria-label="Certificado procurador">
+      <h2>Certificado procurador</h2>
+      <p className="apagado">Para puxar a NFS-e de clientes sem certificado, cadastre aqui o certificado com procuração no portal nacional. Ele vale só para a NFS-e desses clientes.</p>
+      {proc && (
+        <p>
+          Titular: <strong>{proc.titular || '—'}</strong> · válido até {data(proc.validade)}
+          {aviso}
+        </p>
+      )}
+      {envio.erro && <div className="faixa faixa-erro" role="alert">{envio.erro}</div>}
+      <form className="formulario" onSubmit={salvar}>
+        <CamposCertificado arquivo={envio.arquivo} senha={envio.senha} />
+        <div className="formulario-acoes">
+          <button type="submit" className="botao botao-azul" disabled={envio.enviando}>
+            {envio.enviando ? 'Conferindo o certificado…' : proc ? 'Trocar certificado' : 'Cadastrar procurador'}
+          </button>
+          {proc && (
+            <button type="button" className="botao botao-claro" onClick={remover} disabled={removendo}>
+              Remover
+            </button>
+          )}
+        </div>
+      </form>
+    </section>
   )
 }
 

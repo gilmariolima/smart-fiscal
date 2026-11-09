@@ -3224,3 +3224,19 @@ a.botao-icone {
 .importar-nome {
   overflow-wrap: anywhere;
 }
+
+/* ---------- Certificado procurador ---------- */
+
+.cartao-procurador {
+  margin-top: 20px;
+  padding: 16px 18px;
+}
+
+.cartao-procurador h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.cartao-procurador .apagado {
+  margin: 0 0 12px;
+}

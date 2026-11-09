@@ -183,6 +183,7 @@ function LinhaEscritorio({ escritorio: e, cadastroLiberado, capturandoAgora, fil
 export default function Clientes() {
   const { resumo, recarregar: recarregarResumo } = useResumo()
   const { dados, erro: erroLista, recarregar } = useApi('/api/clientes')
+  const { dados: dadosProcurador } = useApi('/api/procurador')
   const { dados: escritorio, recarregar: recarregarEscritorio } = useApi('/api/escritorio')
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
@@ -320,7 +321,7 @@ Para só parar de capturar, use Desativar. Esta exclusão não pode ser desfeita
                   </td>
                   <td className="mono sem-quebra">{formatarCnpj(c.cnpj)}</td>
                   <td className="sem-quebra">
-                    <SeloCertificado c={c} />
+                    <SeloCertificado c={c} procurador={!!dadosProcurador?.procurador} />
                   </td>
                   <td>{c.ativo && c.temCertificado ? <UltimaCaptura c={c} capturandoAgora={capturandoAgora} fila={fila} /> : '—'}</td>
                   <td>
