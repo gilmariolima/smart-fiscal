@@ -98,3 +98,16 @@ test('fabricaAdn sem procurador devolve o cliente indisponível', async (t) => {
   assert.equal(r.ok, false)
   assert.match(r.erro, /indispon/i)
 })
+
+// ---- correções da revisão ----
+
+test('procurador vencido depois de salvo é tratado como indisponível', async (t) => {
+  const { clientes, config, db } = montar(t)
+  const cert = gerarPfx({ comSan: false, comCnpjNoCn: false, senha: 's' })
+  clientes.salvarProcurador({ pfx: cert.pfx, senha: 's' })
+  db.prepare("UPDATE sistema SET valor = '2020-01-01T00:00:00.000Z' WHERE chave = 'procurador_validade'").run()
+  const fabrica = criarFabricaAdn(config, () => lerProcuradorCert({ db, config }))
+  const r = await fabrica({ cnpj: '10539120001430', cert_arquivo: '' }).consultarLote(0)
+  assert.equal(r.ok, false)
+  assert.match(r.erro, /procurador vencido/i)
+})

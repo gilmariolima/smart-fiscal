@@ -685,12 +685,14 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
   return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado, reconciliarPasta, salvarProcurador, removerProcurador, obterProcurador }
 }
 
-// Certificado procurador para a captura: o .pfx no disco e a senha descriptografada, ou null.
-function lerProcuradorCert({ db, config }) {
-  const enc = db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get('procurador_senha_enc')
+// Certificado procurador para a captura: o .pfx no disco, a senha descriptografada e se já venceu, ou null.
+function lerProcuradorCert({ db, config, agora = new Date() }) {
+  const ler = (chave) => db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get(chave)
+  const enc = ler('procurador_senha_enc')
   const arquivo = path.join(config.pastaCerts, 'procurador.pfx')
   if (!enc || !fs.existsSync(arquivo)) return null
-  return { pfx: fs.readFileSync(arquivo), passphrase: descriptografar(enc, config.masterKey) }
+  const validade = ler('procurador_validade')
+  return { pfx: fs.readFileSync(arquivo), passphrase: descriptografar(enc, config.masterKey), vencido: !!validade && diasParaVencer(validade, agora) < 0 }
 }
 
 module.exports = { criarServicoClientes, lerProcuradorCert, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }

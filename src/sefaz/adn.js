@@ -127,6 +127,7 @@ function criarFabricaAdn(config, obterProcurador = () => null) {
       const comArquivo = cliente.cert_arquivo
       const proc = comArquivo ? null : obterProcurador()
       if (!comArquivo && !proc) throw new Error('cliente sem certificado e sem procurador')
+      if (proc?.vencido) throw new Error('certificado procurador vencido; cadastre um novo')
       return criarClienteAdn({
         cnpj: cliente.cnpj,
         pfx: comArquivo ? fs.readFileSync(path.join(config.pastaCerts, comArquivo)) : proc.pfx,

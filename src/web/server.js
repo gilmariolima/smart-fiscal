@@ -581,7 +581,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     for (const cnpj of cnpjs) {
       const cliente = sql.clientePorCnpj.get(cnpj)
       if (!cliente) throw new ErroHttp(404, `Cliente ${cnpj} não cadastrado.`)
-      if (!cliente.cert_arquivo) throw new ErroHttp(400, `Cliente ${cnpj} está sem certificado: cadastre o A1 para capturar.`)
+      if (!cliente.cert_arquivo && !ctx.clientes.obterProcurador()) throw new ErroHttp(400, `Cliente ${cnpj} está sem certificado: cadastre o A1 para capturar.`)
       if (cliente.papel === 'escritorio' && !cliente.tambem_cliente) throw new ErroHttp(400, 'O escritório é capturado sempre junto; não o marque na lista.')
     }
     exigirPastaEscolhida()
@@ -631,7 +631,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined
     const alvo = cnpj ? sql.clientePorCnpj.get(cnpj) : null
     if (cnpj && !alvo) throw new ErroHttp(404, 'Cliente não cadastrado.')
-    if (alvo && !alvo.cert_arquivo) throw new ErroHttp(400, 'Cliente sem certificado: cadastre o A1 para capturar.')
+    if (alvo && !alvo.cert_arquivo && !ctx.clientes.obterProcurador()) throw new ErroHttp(400, 'Cliente sem certificado: cadastre o A1 para capturar.')
     exigirPastaEscolhida()
     if (capturaOcupada()) throw new ErroHttp(409, 'Já existe uma captura em andamento. Aguarde terminar.')
     const execucao = cnpj ? ctx.ciclo.executarCiclo({ cnpj }) : agendador.executarAgora('painel')

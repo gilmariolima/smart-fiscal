@@ -2299,3 +2299,22 @@ test('procurador: rotas de escrita recusadas fora do PC', async (t) => {
   assert.equal((await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'p' } })).status, 403)
   assert.equal((await pedir('/api/procurador/remover', { method: 'POST', body: {} })).status, 403)
 })
+
+test('captura manual de cliente sem A1 vale com procurador e erra sem ele', async (t) => {
+  const { pedir } = await montar(t)
+  const semA1 = '27865757000102'
+  await pedir('/api/clientes', { method: 'POST', body: { cnpj: semA1, razao: 'Sem Cert Ltda', uf: 'CE', apelido: 'Sem Cert', semCertificado: true } })
+
+  // sem procurador → 400
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpj: semA1 } })).status, 400)
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [semA1] } })).status, 400)
+
+  const cert = gerarPfx({ comSan: false, comCnpjNoCn: false, razao: 'MARCOS AURELIO', senha: 'p' })
+  assert.equal((await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'p' } })).status, 200)
+
+  // com procurador → aceita (202)
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpj: semA1 } })).status, 202)
+  await esperarFimDaCaptura(pedir)
+  assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [semA1] } })).status, 202)
+  await esperarFimDaCaptura(pedir)
+})
