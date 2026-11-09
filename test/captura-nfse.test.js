@@ -162,3 +162,12 @@ test('pausa também entre uma captura e outra', async () => {
   assert.equal(pausas[antes], 2000)
   limpar()
 })
+
+test('erro E2245 do ADN vira aviso de sem procuração e não trava o ciclo', async (t) => {
+  const { db, servico, mock, id, limpar } = montar()
+  t.after(limpar)
+  mock.falhar(CNPJ_MOCK_OK, 'HTTP 400: E2245 Não há procuração da inscrição 32314230310 para a inscrição 11222333000181.')
+  const r = await servico.capturarCliente(id)
+  assert.equal(r.ok, false)
+  assert.equal(cliente(db, id).nfse_ultimo_erro, 'Sem procuração para este cliente no certificado procurador.')
+})

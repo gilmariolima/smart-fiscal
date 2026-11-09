@@ -168,8 +168,9 @@ function criarServicoCapturaNfse({ db, config, logger, fabricaAdn, dormir = dorm
         const r = await adn.consultarLote(nsu)
         if (!r.ok) {
           resultado.ok = false
-          resultado.erro = r.erro
-          sql.erro.run(iso(), r.erro, cliente.id)
+          // E2245: o procurador não tem procuração deste cliente no portal nacional.
+          resultado.erro = /E2245/.test(r.erro || '') ? 'Sem procuração para este cliente no certificado procurador.' : r.erro
+          sql.erro.run(iso(), resultado.erro, cliente.id)
           logger.error('Falha na captura de NFS-e', { cnpj: cliente.cnpj, erro: r.erro })
           return fechar()
         }
