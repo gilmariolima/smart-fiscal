@@ -21,7 +21,7 @@ const { pastaDoCliente, nomeNoZip } = require('../services/armazenamento')
 const POR_PAGINA = 50
 const HOSTS_LOCAIS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
 const ENDERECOS_LOCAIS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
-const ROTA_CERTIFICADO = /^\/(clientes(\/\d{14}\/certificado)?|escritorio(\/certificado)?)$/
+const ROTA_CERTIFICADO = /^\/(clientes(\/\d{14}\/certificado)?|escritorio(\/certificado)?|procurador\/certificado)$/
 const LIMITE_PFX = '300kb' // o .pfx chega em base64 dentro do JSON
 const LIMITE_IMPORTACAO = '64mb' // XMLs e ZIPs da tela Importar XMLs, em base64 dentro do JSON
 /** Abre a pasta no Explorador do Windows (fora do Windows, no gerenciador de arquivos). */
@@ -912,6 +912,25 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     if (!esc) throw new ErroHttp(404, 'Escritório não cadastrado.')
     const r = comoErroHttp(() => ctx.clientes.trocarCertificado({ cnpj: esc.cnpj, pfx, senha: req.body.senha }))
     res.json(recibo(r))
+  })
+
+  // ---------- certificado procurador (só no próprio computador) ----------
+
+  app.get('/api/procurador', (req, res) => {
+    res.json({ procurador: ctx.clientes.obterProcurador() })
+  })
+
+  app.post('/api/procurador/certificado', (req, res) => {
+    exigirLocal(req)
+    const pfx = lerPfx(req.body)
+    const r = comoErroHttp(() => ctx.clientes.salvarProcurador({ pfx, senha: req.body.senha }))
+    res.json({ procurador: r })
+  })
+
+  app.post('/api/procurador/remover', (req, res) => {
+    exigirLocal(req)
+    ctx.clientes.removerProcurador()
+    res.json({ ok: true })
   })
 
   // ---------- atualização do app ----------

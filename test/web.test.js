@@ -2272,3 +2272,30 @@ test('importar sem a pasta principal escolhida dá 409', async (t) => {
   assert.equal(r.corpo.erro, 'Escolha a pasta principal na tela Pastas antes de importar.')
   assert.equal(ctx.db.prepare("SELECT COUNT(*) n FROM notas WHERE modelo = 'nfse'").get().n, 0)
 })
+
+// ---------- Certificado procurador ----------
+
+test('procurador: cadastrar, consultar e remover; só no PC local', async (t) => {
+  const { pedir } = await montar(t)
+  assert.deepEqual((await pedir('/api/procurador')).corpo, { procurador: null })
+
+  const cert = gerarPfx({ comSan: false, comCnpjNoCn: false, razao: 'MARCOS AURELIO', senha: 'p' })
+  const ok = await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'p' } })
+  assert.equal(ok.status, 200, JSON.stringify(ok.corpo))
+  const info = (await pedir('/api/procurador')).corpo.procurador
+  assert.match(info.titular, /MARCOS AURELIO/)
+  assert.ok(info.validade)
+
+  const senhaErrada = await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'errada' } })
+  assert.equal(senhaErrada.status, 400)
+
+  assert.equal((await pedir('/api/procurador/remover', { method: 'POST', body: {} })).status, 200)
+  assert.deepEqual((await pedir('/api/procurador')).corpo, { procurador: null })
+})
+
+test('procurador: rotas de escrita recusadas fora do PC', async (t) => {
+  const { pedir } = await montar(t, {}, { ehLocal: () => false })
+  const cert = gerarPfx({ comSan: false, comCnpjNoCn: false, senha: 'p' })
+  assert.equal((await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'p' } })).status, 403)
+  assert.equal((await pedir('/api/procurador/remover', { method: 'POST', body: {} })).status, 403)
+})
