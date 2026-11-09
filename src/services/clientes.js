@@ -2,7 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { criptografar } = require('../crypto')
+const { criptografar, descriptografar } = require('../crypto')
 const { lerCertificado, diasParaVencer } = require('../certificado')
 const { dadosUf } = require('../sefaz/uf')
 const { pastaDoClienteNoDisco, pastasDoClienteNoBanco, chavePastaPendente, pastasPendentesDoCliente } = require('./armazenamento')
@@ -119,6 +119,36 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     layout: db.prepare("SELECT valor FROM sistema WHERE chave = 'pastas_layout'").pluck(),
     gravarSistema: db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor'),
     apagarSistema: db.prepare('DELETE FROM sistema WHERE chave = ?'),
+    lerSistema: db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck(),
+  }
+
+  // Certificado procurador: um e-CPF (ou e-CNPJ) com procuração no portal nacional, para puxar a NFS-e de
+  // clientes sem certificado próprio. Guardado em certs/procurador.pfx + linhas em `sistema`. Não é cliente.
+  function salvarProcurador({ pfx, senha }) {
+    const cert = lerCertificado(pfx, senha)
+    if (diasParaVencer(cert.validade, agora()) < 0) throw new Error(`Certificado vencido em ${cert.validade.slice(0, 10)}.`)
+    fs.mkdirSync(config.pastaCerts, { recursive: true })
+    const destino = path.join(config.pastaCerts, 'procurador.pfx')
+    const tmp = `${destino}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, pfx, { mode: 0o600 })
+    fs.renameSync(tmp, destino)
+    sql.gravarSistema.run('procurador_senha_enc', criptografar(senha, config.masterKey))
+    sql.gravarSistema.run('procurador_titular', cert.titular || '')
+    sql.gravarSistema.run('procurador_validade', cert.validade)
+    logger.info('Certificado procurador salvo', { titular: cert.titular, validade: cert.validade })
+    return { titular: cert.titular, validade: cert.validade }
+  }
+
+  function removerProcurador() {
+    fs.rmSync(path.join(config.pastaCerts, 'procurador.pfx'), { force: true })
+    for (const c of ['procurador_senha_enc', 'procurador_titular', 'procurador_validade']) sql.apagarSistema.run(c)
+    logger.info('Certificado procurador removido')
+  }
+
+  function obterProcurador() {
+    if (!sql.lerSistema.get('procurador_senha_enc')) return null
+    const validade = sql.lerSistema.get('procurador_validade')
+    return { titular: sql.lerSistema.get('procurador_titular') || null, validade, diasParaVencer: validade ? diasParaVencer(validade, agora()) : null }
   }
 
   /** Abre o .pfx e confere senha, validade e raiz do CNPJ. Lança Error com a mensagem para o usuário. */
@@ -652,7 +682,15 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado, reconciliarPasta }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado, reconciliarPasta, salvarProcurador, removerProcurador, obterProcurador }
 }
 
-module.exports = { criarServicoClientes, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }
+// Certificado procurador para a captura: o .pfx no disco e a senha descriptografada, ou null.
+function lerProcuradorCert({ db, config }) {
+  const enc = db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get('procurador_senha_enc')
+  const arquivo = path.join(config.pastaCerts, 'procurador.pfx')
+  if (!enc || !fs.existsSync(arquivo)) return null
+  return { pfx: fs.readFileSync(arquivo), passphrase: descriptografar(enc, config.masterKey) }
+}
+
+module.exports = { criarServicoClientes, lerProcuradorCert, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }
