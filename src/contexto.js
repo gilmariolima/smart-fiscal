@@ -8,7 +8,7 @@ const { abrirBanco } = require('./db')
 const { criarFabricaSefaz } = require('./sefaz/client')
 const { criarFabricaAdn } = require('./sefaz/adn')
 const { criarFabricaCte } = require('./sefaz/cte')
-const { criarServicoClientes } = require('./services/clientes')
+const { criarServicoClientes, lerProcuradorCert } = require('./services/clientes')
 const { criarServicoCiclo } = require('./services/ciclo')
 const { criarConferenciaXmls } = require('./services/conferenciaXmls')
 const { criarServicoImportacao } = require('./services/importacao')
@@ -35,7 +35,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
       throw e
     }
   }
-  const deps = { db: banco, config, logger: log, fabricaSefaz: fabricaSefaz || criarFabricaSefaz(config), fabricaAdn: fabricaAdn || criarFabricaAdn(config), fabricaCte: fabricaCte || criarFabricaCte(config) }
+  const deps = { db: banco, config, logger: log, fabricaSefaz: fabricaSefaz || criarFabricaSefaz(config), fabricaAdn: fabricaAdn || criarFabricaAdn(config, () => lerProcuradorCert({ db: banco, config })), fabricaCte: fabricaCte || criarFabricaCte(config) }
   if (agora) deps.agora = agora
   // Antes dos outros serviços: aplica as pastas escolhidas na tela Pastas.
   const pastas = criarServicoPastas(deps)

@@ -114,21 +114,27 @@ function criarClienteAdn({ cnpj, pfx, passphrase, producao = true, requisitar, d
 let mockCompartilhado = null
 
 /** Fábrica usada pelos serviços: linha de `clientes` → cliente do ADN (ou o simulado, com SEFAZ_MOCK=1). */
-function criarFabricaAdn(config) {
+// `obterProcurador()` devolve { pfx, passphrase } do certificado procurador (ou null): usado só para
+// clientes sem certificado próprio, com `cnpjConsulta` = CNPJ do cliente.
+function criarFabricaAdn(config, obterProcurador = () => null) {
   if (config.sefazMock) {
     if (!mockCompartilhado) mockCompartilhado = require('./adn-mock').criarAdnMock()
     return (cliente) => mockCompartilhado.cliente(cliente.cnpj)
   }
+  const indisponivel = (cnpj, e) => ({ cnpj, consultarLote: async () => ({ ok: false, status: null, documentos: [], erro: `Certificado indisponível: ${e.message}` }) })
   return (cliente) => {
     try {
+      const comArquivo = cliente.cert_arquivo
+      const proc = comArquivo ? null : obterProcurador()
+      if (!comArquivo && !proc) throw new Error('cliente sem certificado e sem procurador')
       return criarClienteAdn({
         cnpj: cliente.cnpj,
-        pfx: fs.readFileSync(path.join(config.pastaCerts, cliente.cert_arquivo)),
-        passphrase: descriptografar(cliente.cert_senha_enc, config.masterKey),
+        pfx: comArquivo ? fs.readFileSync(path.join(config.pastaCerts, comArquivo)) : proc.pfx,
+        passphrase: comArquivo ? descriptografar(cliente.cert_senha_enc, config.masterKey) : proc.passphrase,
         producao: config.tpAmb === '1',
       })
     } catch (e) {
-      return { cnpj: cliente.cnpj, consultarLote: async () => ({ ok: false, status: null, documentos: [], erro: `Certificado indisponível: ${e.message}` }) }
+      return indisponivel(cliente.cnpj, e)
     }
   }
 }
