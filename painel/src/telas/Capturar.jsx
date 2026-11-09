@@ -29,7 +29,9 @@ const capturaDo = (c, modelo) => {
 }
 
 // Desativado não entra; bloqueado pelo 656 (NF-e e CT-e, cada um com o seu) fica de fora.
-const marcavel = (c, modelo) => c.ativo && c.temCertificado && !capturaDo(c, modelo).bloqueadoAte
+// Na NFS-e, cliente sem certificado próprio entra se houver procurador cadastrado.
+const usavel = (c, modelo, temProcurador) => c.temCertificado || (modelo === 'nfse' && temProcurador)
+const marcavel = (c, modelo, temProcurador) => c.ativo && usavel(c, modelo, temProcurador) && !capturaDo(c, modelo).bloqueadoAte
 
 // Cada serviço pede 1 hora entre consultas do mesmo CNPJ; a captura pula quem ainda está esperando.
 const liberadoEm = (c, modelo) => {
@@ -137,6 +139,7 @@ function BarraDaCaptura({ progresso, pulados }) {
 function ListaDeClientes({ modelo }) {
   const { resumo, recarregar: recarregarResumo } = useResumo()
   const { dados, erro: erroLista, recarregar } = useApi('/api/clientes')
+  const { dados: dadosProcurador } = useApi('/api/procurador')
   const selecao = useSelecao(`captura-${modelo}`)
   const [erro, setErro] = useState(null)
   const [aviso, setAviso] = useState(null)
@@ -161,15 +164,16 @@ function ListaDeClientes({ modelo }) {
     return () => clearInterval(t)
   }, [capturando])
 
-  // Sem certificado não há o que capturar: fica só na tela Clientes.
-  const ativos = lista.filter((c) => c.ativo && c.temCertificado)
-  const semCertificado = lista.filter((c) => !c.temCertificado).length
+  // Sem certificado não há o que capturar: fica só na tela Clientes. Exceção: NFS-e com procurador.
+  const temProcurador = !!dadosProcurador?.procurador
+  const ativos = lista.filter((c) => c.ativo && usavel(c, modelo, temProcurador))
+  const semCertificado = lista.filter((c) => !c.temCertificado && !usavel(c, modelo, temProcurador)).length
   const termo = busca.trim().toLowerCase()
   const digitos = termo.replace(/\D/g, '')
   const visiveis = ativos.filter(
     (c) => !termo || nomeDe(c).toLowerCase().includes(termo) || (c.razaoSocial || '').toLowerCase().includes(termo) || (digitos && c.cnpj.includes(digitos)),
   )
-  const marcados = ativos.filter((c) => marcavel(c, modelo) && selecao.ids.has(c.cnpj))
+  const marcados = ativos.filter((c) => marcavel(c, modelo, temProcurador) && selecao.ids.has(c.cnpj))
   const rotulo = MODELOS[modelo].rotulo
 
   async function capturar() {
@@ -253,7 +257,7 @@ function ListaDeClientes({ modelo }) {
           </thead>
           <tbody>
             {visiveis.map((c) => {
-              const pode = marcavel(c, modelo)
+              const pode = marcavel(c, modelo, temProcurador)
               const marcado = pode && selecao.ids.has(c.cnpj)
               return (
                 <tr key={c.cnpj} className={marcado ? 'selecionada' : undefined}>
@@ -274,7 +278,7 @@ function ListaDeClientes({ modelo }) {
                   </td>
                   <td className="mono sem-quebra">{formatarCnpj(c.cnpj)}</td>
                   <td className="sem-quebra">
-                    <SeloCertificado c={c} />
+                    <SeloCertificado c={c} procurador={temProcurador} />
                   </td>
                   <td>
                     <UltimaCaptura c={c} modelo={modelo} capturandoAgora={capturandoAgora} fila={fila} />
@@ -319,8 +323,8 @@ function ListaDeClientes({ modelo }) {
             <button
               type="button"
               className="botao botao-claro"
-              onClick={() => selecao.marcar(visiveis.filter((c) => marcavel(c, modelo)).map((c) => c.cnpj))}
-              disabled={!ativos.some((c) => marcavel(c, modelo))}
+              onClick={() => selecao.marcar(visiveis.filter((c) => marcavel(c, modelo, temProcurador)).map((c) => c.cnpj))}
+              disabled={!ativos.some((c) => marcavel(c, modelo, temProcurador))}
             >
               Marcar todos
             </button>
