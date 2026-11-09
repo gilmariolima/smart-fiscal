@@ -34,6 +34,9 @@ function criarServicoCiclo(deps) {
       notas_recebidas = (SELECT COUNT(*) FROM notas WHERE notas.captura_id = execucoes.id) WHERE fim IS NULL`),
     // Sem certificado não há como consultar: quem não tem fica de fora (cert_arquivo vazio).
     ativos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo <> '' ORDER BY id"),
+    // Com procurador cadastrado, os sem certificado entram só para a NFS-e (via procuração no ADN).
+    ativosSemCert: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo = '' ORDER BY id"),
+    temProcurador: db.prepare("SELECT 1 FROM sistema WHERE chave = 'procurador_senha_enc'").pluck(),
     escritorio: db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio' AND ativo = 1 LIMIT 1"),
     porCnpj: db.prepare('SELECT * FROM clientes WHERE cnpj = ?'),
   }
@@ -61,6 +64,8 @@ function criarServicoCiclo(deps) {
   }
 
   // `escritorioComoCliente`: o escritório entra também como cliente (NFS-e e CT-e dele), quando ele é cliente e foi escolhido.
+  const temProcurador = () => !!sql.temProcurador.get()
+
   function clientesAlvo({ cnpj, cnpjs }) {
     if (cnpjs) {
       const achados = []
@@ -75,13 +80,17 @@ function criarServicoCiclo(deps) {
         }
         achados.push(c)
       }
-      return { clientes: achados.filter((c) => c.ativo === 1 && c.cert_arquivo).sort((a, b) => a.id - b.id), escritorioComoCliente }
+      const comProcurador = temProcurador()
+      return { clientes: achados.filter((c) => c.ativo === 1 && (c.cert_arquivo || comProcurador)).sort((a, b) => a.id - b.id), escritorioComoCliente }
     }
-    if (!cnpj) return { clientes: sql.ativos.all(), escritorioComoCliente: true }
+    if (!cnpj) {
+      const lista = temProcurador() ? [...sql.ativos.all(), ...sql.ativosSemCert.all()].sort((a, b) => a.id - b.id) : sql.ativos.all()
+      return { clientes: lista, escritorioComoCliente: true }
+    }
     const c = sql.porCnpj.get(cnpj)
     if (!c) return { erro: `CNPJ ${cnpj} não cadastrado.` }
     if (c.papel === 'escritorio') return { clientes: [], escritorio: c.ativo ? c : null, escritorioComoCliente: true }
-    if (!c.cert_arquivo) return { erro: `CNPJ ${cnpj} está sem certificado: cadastre o A1 para capturar.` }
+    if (!c.cert_arquivo && !temProcurador()) return { erro: `CNPJ ${cnpj} está sem certificado: cadastre o A1 para capturar.` }
     return { clientes: [c] }
   }
 
@@ -157,9 +166,11 @@ function criarServicoCiclo(deps) {
   function executarCiclo({ cnpj, cnpjs, forcar = false, aoIniciarCliente, modelos = ['nfe', 'nfse', 'cte'], automatica = false } = {}) {
     const liga = (c, m) => modelos.includes(m) && (!automatica || c[`auto_${m}`] !== 0)
     return comTrava({ cnpj, cnpjs }, async (cliente) => {
-      const comNfe = liga(cliente, 'nfe')
-      const comNfse = liga(cliente, 'nfse')
-      const comCte = liga(cliente, 'cte')
+      // Sem A1 próprio: só NFS-e, e só se houver procurador. NF-e e CT-e exigem o certificado do cliente.
+      const comA1 = !!cliente.cert_arquivo
+      const comNfe = liga(cliente, 'nfe') && comA1
+      const comNfse = liga(cliente, 'nfse') && (comA1 || temProcurador())
+      const comCte = liga(cliente, 'cte') && comA1
       if (!comNfe && !comNfse && !comCte) return { pulado: 'fora da busca automática' }
       // NF-e, NFS-e e CT-e são serviços separados: a falha de um não impede o outro.
       const resultado = {}
