@@ -320,6 +320,9 @@ function ListaDeClientes({ modelo }) {
       {!!ativos.length && (
         <div className="barra-notas">
           <div className="grupo-botoes">
+            <button type="button" className="botao botao-claro" onClick={selecao.limpar} disabled={!marcados.length}>
+              Desmarcar todos
+            </button>
             <button
               type="button"
               className="botao botao-claro"
@@ -327,9 +330,6 @@ function ListaDeClientes({ modelo }) {
               disabled={!ativos.some((c) => marcavel(c, modelo, temProcurador))}
             >
               Marcar todos
-            </button>
-            <button type="button" className="botao botao-claro" onClick={selecao.limpar} disabled={!marcados.length}>
-              Desmarcar todos
             </button>
           </div>
           <div className="grupo-botoes grupo-automatica" role="group" aria-label={`Busca automática de ${rotulo}`}>
