@@ -111,6 +111,8 @@
   - `listar({ situacao } = {}) → linhas[]`: até 500, `ORDER BY id DESC`, com `cnpj` e `nome` do cliente.
   - `pausar()`, `continuar()`, `limparConcluidas() → n`, `iniciar()` e `parar()`.
   - `processarProxima() → Promise<string|null>`, exportado para os testes. Processa uma chave e devolve a situação final, ou `null` quando a fila está vazia.
+  - `configurar({ podeRodar, aoImportar })`: troca os ganchos depois de criado; o servidor liga na Tarefa 4.
+  - Intervalo base: `config.buscaAntigaIntervaloMs || 60000`. O `config.js` lê `BUSCA_ANTIGA_INTERVALO_MS`, opcional, só para a demonstração. Os outros tempos da spec ficam fixos.
 
 - [ ] **Passo 1: escrever os testes que falham.** Usam o banco `:memory:`, a SVRS falsa (fábrica injetada, com respostas por chave), um temporizador falso que guarda os callbacks com os atrasos e a pasta temporária. O Importar é o real, com `criarServicoImportacao`.
   - `adicionar`:
