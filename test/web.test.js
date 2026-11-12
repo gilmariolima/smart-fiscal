@@ -2229,7 +2229,7 @@ test('importar grava a NFS-e e devolve o resumo', async (t) => {
   const { ctx, pedir } = await montar(t)
   const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [arquivoImportado(1)] } })
   assert.equal(r.status, 200)
-  assert.deepEqual(r.corpo.importadas, { entrada: 1, saida: 0 })
+  assert.deepEqual(r.corpo.importadas.nfse, { entrada: 1, saida: 0 })
   const nota = ctx.db.prepare("SELECT origem, modelo FROM notas WHERE modelo = 'nfse'").get()
   assert.deepEqual({ ...nota }, { origem: 'importada', modelo: 'nfse' })
 })

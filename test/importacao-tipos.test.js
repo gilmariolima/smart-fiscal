@@ -3,7 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { lerDocumento, donos, nomeArquivo, CANCELAMENTOS } = require('../src/services/importacaoTipos')
-const { chaveNfe, nfeProc, procEventoNfe } = require('./apoio/nfe')
+const { chaveNfe, nfeProc, procEventoNfe } = require('./apoio/nfe-importada')
 const { cteProc, procEventoCte, chaveCte, TRANSP, REM, DEST } = require('./apoio/cte')
 const { xmlNfse, xmlEventoNfse, chaveNfse, PRESTADOR_MOCK } = require('../src/sefaz/adn-mock')
 

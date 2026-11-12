@@ -1,20 +1,18 @@
 'use strict'
 
-// Importação de XMLs de NFS-e obtidos fora do app (Emissor Nacional, cliente, outro sistema).
-// Grava como a captura de NFS-e grava, sem ADN e sem NSU: o dono é achado pelo CNPJ do XML.
+// Importação de XMLs de NF-e, CT-e e NFS-e (e dos eventos) obtidos fora do app: emissor do cliente,
+// e-mail de fornecedor, outro sistema, portal. Grava como a captura grava, sem NSU: o dono é achado pelo CNPJ.
 
 const { unzipSync } = require('fflate')
-const { XMLParser, XMLValidator } = require('fast-xml-parser')
-const { criarArmazenamento, nomes } = require('./armazenamento')
-const { decodificarXml, dadosNfse } = require('./extracaoNfse')
+const { criarArmazenamento, nomes, direcaoPelaChave } = require('./armazenamento')
+const { competenciaDe } = require('./extracao')
+const { lerDocumento, donos, nomeArquivo, CANCELAMENTOS } = require('./importacaoTipos')
 
-const CANCELAMENTOS = ['101101', '105102']
-// Uma NFS-e tem poucos KB: o limite por arquivo barra o que não é nota, e o total segura ZIP que explode na memória.
+// Uma nota tem poucos KB: o limite por arquivo barra o que não é nota, e o total segura ZIP que explode na memória.
 const LIMITE_ARQUIVO = 5 * 1024 * 1024
 const LIMITE_TOTAL = 300 * 1024 * 1024
-const CHAVE_NFSE = /^\d{50}$/
-const raiz = new XMLParser({ removeNSPrefix: true, ignoreAttributes: true })
 const termina = (nome, ext) => nome.toLowerCase().endsWith(ext)
+const lista = (v) => v.map((c) => `'${c}'`).join(',')
 
 function criarServicoImportacao({ db, config, logger, agora = () => new Date() }) {
   const armazenamento = criarArmazenamento({ config, db })
@@ -23,23 +21,36 @@ function criarServicoImportacao({ db, config, logger, agora = () => new Date() }
   const sql = {
     // Só a carteira: o escritório entra quando também é cliente, como na captura e nas telas de notas.
     clientes: db.prepare("SELECT * FROM clientes WHERE papel = 'cliente' OR tambem_cliente = 1"),
-    existe: db.prepare('SELECT 1 FROM notas WHERE cliente_id = ? AND chave = ?'),
-    cancelada: db.prepare(`SELECT 1 FROM eventos WHERE chave = ? AND tp_evento IN (${CANCELAMENTOS.map((c) => `'${c}'`).join(',')}) LIMIT 1`),
-    inserir: db.prepare(`INSERT INTO notas (cliente_id, chave, nsu, tipo, modelo, emitente_cnpj, emitente_nome, destinatario_cnpj, destinatario_nome,
-        numero, data_emissao, valor_total, status, cancelada, caminho_xml, competencia, origem, atualizado_em, criado_em)
-      VALUES (@cliente_id, @chave, NULL, @tipo, 'nfse', @emitente_cnpj, @emitente_nome, @destinatario_cnpj, @destinatario_nome,
-        @numero, @data_emissao, @valor_total, 'completa', @cancelada, @caminho_xml, @competencia, 'importada', @agora, @agora)`),
+    escritorio: db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio'"),
+    nota: db.prepare('SELECT * FROM notas WHERE cliente_id = ? AND chave = ?'),
+    primeiroDono: db.prepare('SELECT * FROM notas WHERE chave = ? ORDER BY id LIMIT 1'),
+    cliente: db.prepare('SELECT * FROM clientes WHERE id = ?'),
+    cancelada: Object.fromEntries(Object.entries(CANCELAMENTOS).map(([m, c]) => [m, db.prepare(`SELECT 1 FROM eventos WHERE chave = ? AND tp_evento IN (${lista(c)}) LIMIT 1`)])),
+    inserir: db.prepare(`INSERT INTO notas (cliente_id, chave, nsu, tipo, modelo, emitente_cnpj, emitente_nome, emitente_ie, destinatario_cnpj, destinatario_nome,
+        numero, serie, data_emissao, valor_total, tipo_nf, status, cancelada, caminho_xml, competencia, origem, atualizado_em, criado_em)
+      VALUES (@cliente_id, @chave, NULL, @tipo, @modelo, @emitente_cnpj, @emitente_nome, @emitente_ie, @destinatario_cnpj, @destinatario_nome,
+        @numero, @serie, @data_emissao, @valor_total, @tipo_nf, 'completa', @cancelada, @caminho_xml, @competencia, 'importada', @agora, @agora)`),
+    // Completa o resumo que já estava no banco; a origem fica a da linha (a captura).
+    completar: db.prepare(`UPDATE notas SET tipo = @tipo, emitente_cnpj = @emitente_cnpj, emitente_nome = @emitente_nome, emitente_ie = @emitente_ie,
+        destinatario_cnpj = @destinatario_cnpj, destinatario_nome = @destinatario_nome, numero = @numero, serie = @serie, data_emissao = @data_emissao,
+        valor_total = @valor_total, tipo_nf = @tipo_nf, status = 'completa', cancelada = MAX(cancelada, @cancelada), caminho_xml = @caminho_xml,
+        competencia = @competencia, atualizado_em = @agora
+      WHERE cliente_id = @cliente_id AND chave = @chave`),
+    evento: db.prepare('SELECT * FROM eventos WHERE chave = ? AND tp_evento = ? AND n_seq = ?'),
+    inserirEvento: db.prepare(`INSERT INTO eventos (chave, tp_evento, n_seq, descricao, data_evento, protocolo, caminho_xml)
+      VALUES (@chave, @tp_evento, @n_seq, @descricao, @data_evento, @protocolo, @caminho_xml)`),
+    marcarCancelada: db.prepare('UPDATE notas SET cancelada = 1, atualizado_em = ? WHERE chave = ?'),
   }
 
   // ZIPs viram a lista dos arquivos de dentro (sem as pastas); o nome mostra de qual ZIP veio.
   // Arquivo grande demais nem é descompactado; passando do total, o resto do ZIP fica de fora.
   function expandir(arquivos, ignoradas) {
-    const lista = []
+    const saida = []
     let total = 0
     for (const { nome, bytes } of arquivos) {
       if (!termina(nome, '.zip')) {
         if (bytes.length > limiteArquivo) ignoradas.push({ nome, motivo: 'arquivo-grande' })
-        else lista.push({ nome, bytes })
+        else saida.push({ nome, bytes })
         continue
       }
       const recusados = []
@@ -60,85 +71,131 @@ function criarServicoImportacao({ db, config, logger, agora = () => new Date() }
       }
       ignoradas.push(...recusados)
       for (const [dentro, dados] of Object.entries(conteudo)) {
-        lista.push({ nome: `${nome}/${dentro}`, bytes: Buffer.from(dados.buffer, dados.byteOffset, dados.length) })
+        saida.push({ nome: `${nome}/${dentro}`, bytes: Buffer.from(dados.buffer, dados.byteOffset, dados.length) })
       }
     }
-    return lista
+    return saida
   }
 
-  // Lê o XML e devolve os dados da NFS-e ou o motivo de não servir.
-  function ler({ nome, bytes }) {
-    if (!termina(nome, '.xml')) return { motivo: 'nao-xml' }
-    const texto = decodificarXml(bytes).replace(/^﻿/, '')
-    if (XMLValidator.validate(texto) !== true) return { motivo: 'invalido' }
-    if (!raiz.parse(texto)?.NFSe) return { motivo: 'nao-nfse' }
-    const d = dadosNfse(texto)
-    // A chave vira nome de arquivo e decide modelo e direção: só a de 50 dígitos do padrão nacional.
-    return CHAVE_NFSE.test(d.chave || '') ? { d, xml: texto } : { motivo: 'invalido' }
-  }
-
-  // Quem fica com a nota: prestador (saída) e tomador (entrada); sem nenhum dos dois, o intermediário como entrada.
-  function donos(d, porCnpj) {
-    const lista = [
-      [porCnpj.get(d.prestadorCnpj), 'saida'],
-      [porCnpj.get(d.tomadorCnpj), 'entrada'],
-    ].filter(([c]) => c)
-    if (lista.length) return lista
-    const intermediario = porCnpj.get(d.intermediarioCnpj)
-    if (!intermediario) return []
-    logger.warn('NFS-e em que o cliente é só intermediário: gravada como entrada', { cnpj: intermediario.cnpj, chave: d.chave })
-    return [[intermediario, 'entrada']]
-  }
-
-  function importar(arquivos) {
-    const r = { importadas: { entrada: 0, saida: 0 }, jaExistiam: 0, ignoradas: [], clientesAfetados: [] }
-    const lista = expandir(arquivos, r.ignoradas)
+  /**
+   * @param {{ nome: string, bytes: Buffer }[]} arquivos
+   * @param {{ soDaCarteira?: boolean }} [opcoes] com soDaCarteira, nota sem dono não vai para Sem cliente cadastrado
+   */
+  function importar(arquivos, { soDaCarteira = false } = {}) {
+    const r = {
+      importadas: { nfe: { entrada: 0, saida: 0 }, cte: { entrada: 0, saida: 0, outro: 0 }, nfse: { entrada: 0, saida: 0 } },
+      eventos: 0,
+      semCliente: 0,
+      jaExistiam: 0,
+      ignoradas: [],
+      clientesAfetados: [],
+    }
+    const arquivosLidos = expandir(arquivos, r.ignoradas)
     const porCnpj = new Map(sql.clientes.all().map((c) => [c.cnpj, c]))
+    const escritorio = sql.escritorio.get()
     const afetados = new Set()
     const agoraIso = agora().toISOString()
 
     // Cada nota no seu ponto de salvamento: erro de disco numa não desfaz as outras.
-    const gravarNota = db.transaction((cliente, tipo, d, xml) => {
-      const caminho = armazenamento.salvar({ cliente, modelo: 'nfse', direcao: tipo, competencia: d.competencia, nomeArquivo: nomes.nfse(d.chave), xml })
-      sql.inserir.run({
-        cliente_id: cliente.id, chave: d.chave, tipo, emitente_cnpj: d.prestadorCnpj, emitente_nome: d.prestadorNome,
-        destinatario_cnpj: d.tomadorCnpj, destinatario_nome: d.tomadorNome, numero: d.numero, data_emissao: d.dataEmissao,
-        valor_total: d.valor, cancelada: sql.cancelada.get(d.chave) ? 1 : 0, caminho_xml: caminho, competencia: d.competencia, agora: agoraIso,
-      })
+    const gravarNota = db.transaction((cliente, direcao, modelo, d, xml, existente) => {
+      const competencia = d.competencia || existente?.competencia
+      const caminho = armazenamento.salvar({ cliente, modelo, direcao, competencia, nomeArquivo: nomeArquivo(modelo, d.chave), xml })
+      const { partes, ...campos } = d
+      const linha = { ...campos, competencia, cliente_id: cliente.id, tipo: direcao, modelo, caminho_xml: caminho, agora: agoraIso, cancelada: sql.cancelada[modelo].get(d.chave) ? 1 : 0 }
+      if (existente) {
+        sql.completar.run(linha)
+        try {
+          armazenamento.tirarResumo(caminho)
+        } catch (e) {
+          logger.warn('Resumo da nota importada não saiu da pasta', { chave: d.chave, erro: e.code || e.message })
+        }
+      } else {
+        sql.inserir.run(linha)
+      }
     })
 
+    const gravarEvento = db.transaction((dono, modelo, e, xml) => {
+      const nota = sql.nota.get(dono.id, e.chave)
+      const caminho = armazenamento.salvar({
+        cliente: dono,
+        modelo,
+        direcao: nota?.tipo || direcaoPelaChave(e.chave, dono.cnpj),
+        competencia: nota?.competencia || competenciaDe(e.data_evento),
+        categoria: 'evento',
+        nomeArquivo: nomes.evento(e.chave, e.tp_evento, e.n_seq),
+        xml,
+      })
+      sql.inserirEvento.run({ ...e, caminho_xml: caminho })
+      if (CANCELAMENTOS[modelo].includes(e.tp_evento)) sql.marcarCancelada.run(agoraIso, e.chave)
+    })
+
+    // Dono do evento: o primeiro cliente que tem a nota; sem ela, o emitente da chave (NF-e e CT-e).
+    function donoDoEvento(modelo, chave) {
+      const nota = sql.primeiroDono.get(chave)
+      if (nota) return sql.cliente.get(nota.cliente_id)
+      return modelo === 'nfse' ? null : porCnpj.get(chave.slice(6, 20)) || null
+    }
+
+    function processarNota(arquivo, modelo, d, xml) {
+      const deQuem = donos(modelo, d, porCnpj)
+      if (!deQuem.length) {
+        if (!escritorio || soDaCarteira) return r.ignoradas.push({ nome: arquivo.nome, motivo: 'cnpj-nao-cadastrado' })
+        try {
+          armazenamento.salvar({ cliente: escritorio, foraDaCarteira: true, modelo, direcao: 'entrada', competencia: d.competencia, nomeArquivo: nomeArquivo(modelo, d.chave), xml })
+          r.semCliente++
+        } catch (e) {
+          logger.error('XML importado sem cliente não gravado', { arquivo: arquivo.nome, chave: d.chave, erro: e.message })
+          r.ignoradas.push({ nome: arquivo.nome, motivo: 'erro-gravacao' })
+        }
+        return
+      }
+      for (const [cliente, direcao] of deQuem) {
+        const existente = sql.nota.get(cliente.id, d.chave)
+        if (existente?.status === 'completa') {
+          r.jaExistiam++
+          continue
+        }
+        try {
+          gravarNota(cliente, direcao, modelo, d, xml, existente)
+        } catch (e) {
+          logger.error('XML importado não gravado', { arquivo: arquivo.nome, chave: d.chave, erro: e.message })
+          r.ignoradas.push({ nome: arquivo.nome, motivo: 'erro-gravacao' })
+          continue
+        }
+        r.importadas[modelo][direcao]++
+        afetados.add(cliente.id)
+      }
+    }
+
+    function processarEvento(arquivo, modelo, e, xml) {
+      if (sql.evento.get(e.chave, e.tp_evento, e.n_seq)?.caminho_xml) return r.jaExistiam++
+      const dono = donoDoEvento(modelo, e.chave)
+      if (!dono) return r.ignoradas.push({ nome: arquivo.nome, motivo: 'cnpj-nao-cadastrado' })
+      try {
+        gravarEvento(dono, modelo, e, xml)
+      } catch (err) {
+        logger.error('Evento importado não gravado', { arquivo: arquivo.nome, chave: e.chave, erro: err.message })
+        return r.ignoradas.push({ nome: arquivo.nome, motivo: 'erro-gravacao' })
+      }
+      r.eventos++
+      afetados.add(dono.id)
+    }
+
     const gravar = db.transaction(() => {
-      for (const arquivo of lista) {
-        const { d, xml, motivo } = ler(arquivo)
-        if (motivo) {
-          r.ignoradas.push({ nome: arquivo.nome, motivo })
+      for (const arquivo of arquivosLidos) {
+        if (!termina(arquivo.nome, '.xml')) {
+          r.ignoradas.push({ nome: arquivo.nome, motivo: 'nao-xml' })
           continue
         }
-        const deQuem = donos(d, porCnpj)
-        if (!deQuem.length) {
-          r.ignoradas.push({ nome: arquivo.nome, motivo: 'cnpj-nao-cadastrado' })
-          continue
-        }
-        for (const [cliente, tipo] of deQuem) {
-          if (sql.existe.get(cliente.id, d.chave)) {
-            r.jaExistiam++
-            continue
-          }
-          try {
-            gravarNota(cliente, tipo, d, xml)
-          } catch (e) {
-            logger.error('XML importado não gravado', { arquivo: arquivo.nome, chave: d.chave, erro: e.message })
-            r.ignoradas.push({ nome: arquivo.nome, motivo: 'erro-gravacao' })
-            continue
-          }
-          r.importadas[tipo]++
-          afetados.add(cliente.id)
-        }
+        const doc = lerDocumento(arquivo.bytes)
+        if (doc.motivo) r.ignoradas.push({ nome: arquivo.nome, motivo: doc.motivo })
+        else if (doc.tipo === 'nota') processarNota(arquivo, doc.modelo, doc.d, doc.xml)
+        else processarEvento(arquivo, doc.modelo, doc.e, doc.xml)
       }
     })
     gravar()
     r.clientesAfetados = [...afetados]
-    logger.info('Importação de XMLs', { importadas: r.importadas, jaExistiam: r.jaExistiam, ignoradas: r.ignoradas.length })
+    logger.info('Importação de XMLs', { importadas: r.importadas, eventos: r.eventos, semCliente: r.semCliente, jaExistiam: r.jaExistiam, ignoradas: r.ignoradas.length })
     return r
   }
 
