@@ -2331,3 +2331,14 @@ test('cadastrar cliente leva as notas dele que estavam sem cliente', async (t) =
   for (let i = 0; i < 50 && !contar(); i++) await new Promise((ok) => setTimeout(ok, 20))
   assert.equal(contar(), 1)
 })
+
+test('importar grava NF-e e devolve o resultado por tipo', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { nfeProc: nfeImportada } = require('./apoio/nfe-importada')
+  const base64 = Buffer.from(nfeImportada({ emit: '66777888000199', dest: CNPJ_MOCK_OK })).toString('base64')
+  const r = await pedir('/api/importar', { method: 'POST', body: { arquivos: [{ nome: 'nfe.xml', base64 }] } })
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.corpo.importadas.nfe, { entrada: 1, saida: 0 })
+  assert.deepEqual([r.corpo.eventos, r.corpo.semCliente], [0, 0])
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) FROM notas WHERE modelo = 'nfe' AND origem = 'importada'").pluck().get(), 1)
+})

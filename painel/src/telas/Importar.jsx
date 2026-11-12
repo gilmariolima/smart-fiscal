@@ -7,21 +7,43 @@ import { plural } from '../formato.js'
 const MOTIVOS = {
   'cnpj-nao-cadastrado': 'CNPJ não cadastrado em Clientes',
   'nao-xml': 'não é XML',
-  'nao-nfse': 'não é NFS-e',
+  'nao-suportado': 'tipo não suportado (só NF-e, NFS-e e CT-e)',
+  'sem-protocolo': 'nota sem autorização da SEFAZ',
+  homologacao: 'nota de homologação (teste)',
   invalido: 'XML ilegível',
   'zip-invalido': 'ZIP corrompido',
-  'arquivo-grande': 'grande demais para ser uma NFS-e',
+  'arquivo-grande': 'grande demais para ser uma nota',
   'zip-grande-demais': 'ZIP grande demais: importe o resto em outra vez',
   'erro-gravacao': 'não foi possível gravar na pasta (veja o log)',
 }
 
+const TIPOS = [
+  ['nfe', 'NF-e'],
+  ['cte', 'CT-e'],
+  ['nfse', 'NFS-e'],
+]
+
+// "NF-e: 120 entradas, 30 saídas" — só o que teve nota.
+function linhaDoTipo(rotulo, q) {
+  const partes = [
+    q.entrada > 0 && plural(q.entrada, 'entrada', 'entradas'),
+    q.saida > 0 && plural(q.saida, 'saída', 'saídas'),
+    q.outro > 0 && `${q.outro} em Outros`,
+  ].filter(Boolean)
+  return partes.length ? `${rotulo}: ${partes.join(', ')}` : null
+}
+
 function Resultado({ r }) {
-  const total = r.importadas.entrada + r.importadas.saida
+  const linhas = TIPOS.map(([tipo, rotulo]) => linhaDoTipo(rotulo, r.importadas[tipo] || {})).filter(Boolean)
+  const nada = !linhas.length && !r.eventos && !r.semCliente
   return (
     <div className="cartao importar-resultado" role="status">
-      <p>
-        {plural(total, 'nota importada', 'notas importadas')} ({plural(r.importadas.entrada, 'entrada', 'entradas')}, {plural(r.importadas.saida, 'saída', 'saídas')}).
-      </p>
+      {linhas.map((l) => (
+        <p key={l}>{l}</p>
+      ))}
+      {nada && <p>Nenhuma nota nova.</p>}
+      {r.eventos > 0 && <p>{plural(r.eventos, 'evento', 'eventos')}</p>}
+      {r.semCliente > 0 && <p>{r.semCliente} sem cliente cadastrado (vão para o cliente quando ele for cadastrado)</p>}
       {r.jaExistiam > 0 && <p>{plural(r.jaExistiam, 'já estava', 'já estavam')} no Smart Fiscal.</p>}
       {r.ignoradas.length > 0 && (
         <>
@@ -64,8 +86,8 @@ export default function Importar() {
   }
 
   return (
-    <Pagina titulo="Importar XMLs" subtitulo="NFS-e obtidas fora do Smart Fiscal" erro={erro} aoFecharErro={() => setErro('')}>
-      <p className="importar-texto">Solte aqui XMLs de NFS-e ou um ZIP com eles.</p>
+    <Pagina titulo="Importar XMLs" subtitulo="NF-e, NFS-e e CT-e obtidas fora do Smart Fiscal" erro={erro} aoFecharErro={() => setErro('')}>
+      <p className="importar-texto">Solte aqui XMLs de NF-e, NFS-e ou CT-e, ou um ZIP com eles.</p>
       <button
         type="button"
         className={`cartao importar-area${arrastando ? ' importar-area-ativa' : ''}`}

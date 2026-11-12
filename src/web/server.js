@@ -612,7 +612,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     res.status(202).json({ ok: true, mensagem: `Captura de ${cnpjs.length} clientes iniciada.` })
   }
 
-  // Importar XMLs de NFS-e obtidos fora do app; a geração (PDF, Excel, ZIP) roda depois no organizador.
+  // Importar XMLs de NF-e, CT-e e NFS-e obtidos fora do app; a geração (PDF, Excel, ZIP) roda depois no organizador.
   app.post('/api/importar', (req, res) => {
     if (pastaPendente()) throw new ErroHttp(409, 'Escolha a pasta principal na tela Pastas antes de importar.')
     if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para importar.')
