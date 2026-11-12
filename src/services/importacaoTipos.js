@@ -12,6 +12,8 @@ const { nomes } = require('./armazenamento')
 
 const CANCELAMENTOS = { nfe: ['110111'], cte: ['110111'], nfse: ['101101', '105102'] }
 const AUTORIZADA = ['100', '150']
+// Evento registrado (vinculado, fora do prazo ou não vinculado, mas registrado).
+const EVENTO_REGISTRADO = ['135', '136', '155']
 const CHAVE_44 = /^\d{44}$/
 const CHAVE_NFSE = /^\d{50}$/
 const raiz = new XMLParser({ removeNSPrefix: true, ignoreAttributes: true })
@@ -66,9 +68,12 @@ function lerNfse(xml) {
   }
 }
 
-function evento(modelo, e) {
+function evento(modelo, e, retorno = null) {
   const valido = modelo === 'nfse' ? CHAVE_NFSE : CHAVE_44
   if (!valido.test(e.chave || '') || !e.tp_evento) return { motivo: 'invalido' }
+  // NF-e e CT-e: só evento registrado em produção (cancelamento rejeitado não pode cancelar a nota).
+  if (retorno && retorno.tpAmb === '2') return { motivo: 'homologacao' }
+  if (retorno && !EVENTO_REGISTRADO.includes(retorno.cStat)) return { motivo: 'sem-protocolo' }
   const { chave, tp_evento, n_seq, descricao, data_evento, protocolo } = e
   return { tipo: 'evento', modelo, e: { chave, tp_evento, n_seq: n_seq || '1', descricao, data_evento, protocolo } }
 }
@@ -77,10 +82,16 @@ const LEITORES = {
   nfeProc: lerNfe,
   cteProc: lerCte,
   NFSe: lerNfse,
-  procEventoNFe: (xml) => evento('nfe', dadosEvento(xmlParaJson(xml))),
+  procEventoNFe: (xml) => {
+    const json = xmlParaJson(xml)
+    const retorno = { cStat: textoEm(json, 'procEventoNFe.retEvento.infEvento.cStat'), tpAmb: textoEm(json, 'procEventoNFe.evento.infEvento.tpAmb') }
+    return evento('nfe', dadosEvento(json), retorno)
+  },
   procEventoCTe: (xml) => {
     const e = dadosEventoCte(xml)
-    return evento('cte', { chave: e.chave, tp_evento: e.tpEvento, n_seq: e.nSeq, descricao: e.descricao, data_evento: e.dataEvento, protocolo: e.protocolo })
+    const json = xmlParaJson(xml)
+    const retorno = { cStat: textoEm(json, 'procEventoCTe.retEventoCTe.infEvento.cStat'), tpAmb: textoEm(json, 'procEventoCTe.eventoCTe.infEvento.tpAmb') }
+    return evento('cte', { chave: e.chave, tp_evento: e.tpEvento, n_seq: e.nSeq, descricao: e.descricao, data_evento: e.dataEvento, protocolo: e.protocolo }, retorno)
   },
   evento: (xml, arvore) => (arvore.evento?.infEvento?.pedRegEvento ? evento('nfse', dadosEventoNfse(xml)) : { motivo: 'nao-suportado' }),
 }

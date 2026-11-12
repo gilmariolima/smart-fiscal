@@ -346,3 +346,44 @@ test('ZIP misto com os três tipos e um resumo', (t) => {
   assert.deepEqual([r.importadas.nfe.entrada, r.importadas.cte.entrada, r.importadas.nfse.entrada], [1, 1, 1])
   assert.deepEqual(r.ignoradas, [{ nome: 'lote.zip/resumo.xml', motivo: 'nao-suportado' }])
 })
+
+// ---------- correções da revisão final (NF-e e CT-e) ----------
+
+test('evento que já existe sem XML recebe o arquivo', (t) => {
+  const { db, servico, limpar } = montar()
+  t.after(limpar)
+  const chave = chaveNfe(CNPJ_MOCK_OK, 21)
+  servico.importar([arq('n.xml', nfeProc({ emit: CNPJ_MOCK_OK, dest: FORA, nNF: '21' }))])
+  db.prepare("INSERT INTO eventos (chave, tp_evento, n_seq, descricao) VALUES (?, '110111', '1', 'Cancelamento')").run(chave)
+  const r = servico.importar([arq('e.xml', procEventoNfe({ chave, emit: CNPJ_MOCK_OK }))])
+  assert.deepEqual([r.eventos, r.ignoradas], [1, []])
+  const ev = db.prepare('SELECT * FROM eventos WHERE chave = ?').all(chave)
+  assert.equal(ev.length, 1)
+  assert.ok(ev[0].caminho_xml.endsWith(`${chave}-evento-110111-1.xml`))
+})
+
+test('nota completa no banco sem o arquivo no disco é regravada', (t) => {
+  const { db, servico, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  const xml = nfeProc({ emit: CNPJ_MOCK_OK, dest: FORA, nNF: '22' })
+  servico.importar([arq('n.xml', xml)])
+  const n = notas(db)[0]
+  fs.rmSync(path.join(pastaXmls, n.caminho_xml))
+  const r = servico.importar([arq('n.xml', xml)])
+  assert.deepEqual([r.importadas.nfe.saida, r.jaExistiam], [1, 0])
+  assert.equal(fs.existsSync(path.join(pastaXmls, n.caminho_xml)), true)
+  assert.equal(notas(db).length, 1)
+})
+
+test('evento rejeitado ou de homologação não cancela a nota', (t) => {
+  const { db, servico, limpar } = montar()
+  t.after(limpar)
+  const chave = chaveNfe(CNPJ_MOCK_OK, 23)
+  servico.importar([arq('n.xml', nfeProc({ emit: CNPJ_MOCK_OK, dest: FORA, nNF: '23' }))])
+  const rejeitado = procEventoNfe({ chave, emit: CNPJ_MOCK_OK }).replace('<cStat>135</cStat>', '<cStat>573</cStat>')
+  const homolog = procEventoNfe({ chave, emit: CNPJ_MOCK_OK }).replace('<tpAmb>1</tpAmb><CNPJ>', '<tpAmb>2</tpAmb><CNPJ>')
+  const cteRejeitado = procEventoCte({ chave: chaveCte(TRANSP, '77') }).replace('<cStat>135</cStat>', '<cStat>220</cStat>')
+  const r = servico.importar([arq('r.xml', rejeitado), arq('h.xml', homolog), arq('c.xml', cteRejeitado)])
+  assert.deepEqual(r.ignoradas, [{ nome: 'r.xml', motivo: 'sem-protocolo' }, { nome: 'h.xml', motivo: 'homologacao' }, { nome: 'c.xml', motivo: 'sem-protocolo' }])
+  assert.equal(notas(db)[0].cancelada, 0)
+})

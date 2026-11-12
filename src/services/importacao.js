@@ -3,6 +3,7 @@
 // Importação de XMLs de NF-e, CT-e e NFS-e (e dos eventos) obtidos fora do app: emissor do cliente,
 // e-mail de fornecedor, outro sistema, portal. Grava como a captura grava, sem NSU: o dono é achado pelo CNPJ.
 
+const fs = require('node:fs')
 const { unzipSync } = require('fflate')
 const { criarArmazenamento, nomes, direcaoPelaChave } = require('./armazenamento')
 const { competenciaDe } = require('./extracao')
@@ -37,6 +38,8 @@ function criarServicoImportacao({ db, config, logger, agora = () => new Date() }
         competencia = @competencia, atualizado_em = @agora
       WHERE cliente_id = @cliente_id AND chave = @chave`),
     evento: db.prepare('SELECT * FROM eventos WHERE chave = ? AND tp_evento = ? AND n_seq = ?'),
+    atualizarEvento: db.prepare(`UPDATE eventos SET descricao = COALESCE(@descricao, descricao), data_evento = COALESCE(@data_evento, data_evento),
+        protocolo = COALESCE(@protocolo, protocolo), caminho_xml = @caminho_xml WHERE id = @id`),
     inserirEvento: db.prepare(`INSERT INTO eventos (chave, tp_evento, n_seq, descricao, data_evento, protocolo, caminho_xml)
       VALUES (@chave, @tp_evento, @n_seq, @descricao, @data_evento, @protocolo, @caminho_xml)`),
     marcarCancelada: db.prepare('UPDATE notas SET cancelada = 1, atualizado_em = ? WHERE chave = ?'),
@@ -125,9 +128,20 @@ function criarServicoImportacao({ db, config, logger, agora = () => new Date() }
         nomeArquivo: nomes.evento(e.chave, e.tp_evento, e.n_seq),
         xml,
       })
-      sql.inserirEvento.run({ ...e, caminho_xml: caminho })
+      // Evento já no banco sem o XML (ciência feita pelo app, resumo): ganha o arquivo.
+      const existente = sql.evento.get(e.chave, e.tp_evento, e.n_seq)
+      if (existente) sql.atualizarEvento.run({ ...e, caminho_xml: caminho, id: existente.id })
+      else sql.inserirEvento.run({ ...e, caminho_xml: caminho })
       if (CANCELAMENTOS[modelo].includes(e.tp_evento)) sql.marcarCancelada.run(agoraIso, e.chave)
     })
+
+    function temArquivo(relativo) {
+      try {
+        return !!relativo && fs.statSync(armazenamento.absoluto(relativo)).size > 0
+      } catch {
+        return false
+      }
+    }
 
     // Dono do evento: o primeiro cliente que tem a nota; sem ela, o emitente da chave (NF-e e CT-e).
     function donoDoEvento(modelo, chave) {
@@ -151,7 +165,8 @@ function criarServicoImportacao({ db, config, logger, agora = () => new Date() }
       }
       for (const [cliente, direcao] of deQuem) {
         const existente = sql.nota.get(cliente.id, d.chave)
-        if (existente?.status === 'completa') {
+        // Já existia só se o XML está mesmo no disco; linha completa sem o arquivo é regravada.
+        if (existente?.status === 'completa' && temArquivo(existente.caminho_xml)) {
           r.jaExistiam++
           continue
         }
