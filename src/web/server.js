@@ -789,6 +789,14 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     avisos,
   })
 
+  // Notas do cliente novo que estavam em Sem cliente cadastrado: depois da resposta, sem segurar a tela.
+  function levarNotasSemCliente() {
+    ctx.notasSemCliente
+      ?.levar()
+      .then((r) => r.clientesAfetados.length && ctx.organizador?.agendar({ conferirArquivos: true }))
+      .catch((e) => logger.warn('Notas sem cliente não levadas ao cadastrar', { erro: e.message }))
+  }
+
   app.post('/api/clientes', (req, res) => {
     exigirLocal(req)
     const b = req.body || {}
@@ -796,6 +804,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     const pfx = b.semCertificado === true ? null : lerPfx(b)
     const r = comoErroHttp(() => ctx.clientes.cadastrar({ cnpj: String(b.cnpj || ''), razao: String(b.razao || ''), uf: String(b.uf || ''), apelido: String(b.apelido || ''), pfx, senha: b.senha }))
     res.status(201).json(recibo(r))
+    levarNotasSemCliente()
   })
 
   app.post('/api/clientes/:cnpj/certificado', (req, res) => {

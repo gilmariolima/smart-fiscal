@@ -2318,3 +2318,16 @@ test('captura manual de cliente sem A1 vale com procurador e erra sem ele', asyn
   assert.equal((await pedir('/api/captura', { method: 'POST', body: { cnpjs: [semA1] } })).status, 202)
   await esperarFimDaCaptura(pedir)
 })
+
+test('cadastrar cliente leva as notas dele que estavam sem cliente', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  ctx.db.prepare(`INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc, papel) VALUES ('44555666000181', 'Escritorio Ltda', 'Escritorio', 'CE', '', '', 'escritorio')`).run()
+  const novo = '22333444000181'
+  const xml = xmlImportado({ chave: chaveImportada(PRESTADOR_IMPORTADO, 40), prestador: PRESTADOR_IMPORTADO, tomador: novo, numero: '40' })
+  assert.equal(ctx.importacao.importar([{ nome: 'a.xml', bytes: Buffer.from(xml) }]).semCliente, 1)
+  const r = await pedir('/api/clientes', { method: 'POST', body: { cnpj: novo, razao: 'Novo Cliente Ltda', uf: 'CE', semCertificado: true } })
+  assert.equal(r.status, 201)
+  const contar = () => ctx.db.prepare("SELECT COUNT(*) FROM notas n JOIN clientes c ON c.id = n.cliente_id WHERE c.cnpj = ?").pluck().get(novo)
+  for (let i = 0; i < 50 && !contar(); i++) await new Promise((ok) => setTimeout(ok, 20))
+  assert.equal(contar(), 1)
+})

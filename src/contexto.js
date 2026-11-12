@@ -12,6 +12,7 @@ const { criarServicoClientes, lerProcuradorCert } = require('./services/clientes
 const { criarServicoCiclo } = require('./services/ciclo')
 const { criarConferenciaXmls } = require('./services/conferenciaXmls')
 const { criarServicoImportacao } = require('./services/importacao')
+const { criarNotasSemCliente } = require('./services/notasSemCliente')
 const { criarServicoResumo } = require('./services/resumo')
 const { criarServicoExportacao } = require('./services/exportacao')
 const { criarServicoSelecao } = require('./services/selecao')
@@ -51,6 +52,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   }
   // O servidor liga `deps.aoTerminarCiclo` ao organizador; a CLI fecha o banco logo após o ciclo e não gera nada.
   const organizador = criarOrganizador({ db: banco, config, logger: log, pastas, reconciliarPasta, capturaEmAndamento: () => ciclo.cicloEmAndamento() })
+  const importacao = criarServicoImportacao(deps)
   return {
     config,
     logger: log,
@@ -65,7 +67,8 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     automacao: criarAutomacao(deps),
     backup: criarServicoBackup(deps),
     conferenciaXmls: criarConferenciaXmls(deps),
-    importacao: criarServicoImportacao(deps),
+    importacao,
+    notasSemCliente: criarNotasSemCliente({ ...deps, importacao }),
     pastas,
     organizador,
     fechar: () => banco.close(),

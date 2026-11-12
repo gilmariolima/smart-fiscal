@@ -49,6 +49,11 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, podeCapturar, motivoPulo, faltaPasta, ...(aoPularSemPasta ? { aoPularSemPasta } : {}), ...(cron ? { cron } : {}) })
   // Uma vez, se existe escritório: antes de qualquer captura ou geração.
   await ctx.ciclo?.corrigirNotasDoEscritorio?.()
+  // Notas em Sem cliente cadastrado cujo cliente já existe (NF-e, CT-e e NFS-e) vão para ele, sem atrasar a janela.
+  ctx.notasSemCliente
+    ?.levar()
+    .then((r) => r.clientesAfetados.length && ctx.organizador?.agendar({ conferirArquivos: true }))
+    .catch((e) => logger.warn('Notas sem cliente não levadas ao abrir', { erro: e.message }))
   let painel = null
   if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirPasta })
   agendador.iniciar()
