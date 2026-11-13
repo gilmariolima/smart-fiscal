@@ -110,3 +110,17 @@ CREATE TABLE IF NOT EXISTS sistema (
   chave TEXT PRIMARY KEY,
   valor TEXT NOT NULL
 );
+
+-- Fila do "Buscar notas antigas": chaves de NF-e a baixar pela SVRS com o certificado do cliente.
+-- situacao: fila | baixada | ja-existia | nao-envolvido | nao-nfe | erro
+CREATE TABLE IF NOT EXISTS busca_antiga (
+  id INTEGER PRIMARY KEY,
+  cliente_id INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  chave TEXT NOT NULL,
+  situacao TEXT NOT NULL DEFAULT 'fila',
+  mensagem TEXT,
+  tentativas INTEGER NOT NULL DEFAULT 0,
+  criado_em TEXT NOT NULL,
+  atualizado_em TEXT,
+  UNIQUE(cliente_id, chave)
+);

@@ -76,10 +76,10 @@ function novoCliente(db) {
     VALUES ('12345678000199', 'Cliente Teste', 'CE', '12345678000199.pfx', 'x:y:z')`).run().lastInsertRowid
 }
 
-test('migrations criam as 6 tabelas', () => {
+test('migrations criam as 7 tabelas', () => {
   const db = abrirBanco(':memory:')
   const tabelas = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((r) => r.name)
-  assert.deepEqual(tabelas, ['clientes', 'eventos', 'execucoes', 'notas', 'pasta_grupos', 'sistema'])
+  assert.deepEqual(tabelas, ['busca_antiga', 'clientes', 'eventos', 'execucoes', 'notas', 'pasta_grupos', 'sistema'])
   assert.equal(db.prepare('SELECT ult_nsu FROM clientes').get(), undefined)
 })
 
@@ -254,4 +254,15 @@ test('ult_nsu começa em 15 zeros e foreign key é respeitada', () => {
   novoCliente(db)
   assert.equal(db.prepare('SELECT ult_nsu FROM clientes').get().ult_nsu, '000000000000000')
   assert.throws(() => db.prepare("INSERT INTO notas (cliente_id, chave, status) VALUES (999, 'x', 'resumo')").run(), /FOREIGN KEY/)
+})
+
+test('fila de notas antigas some com o cliente', () => {
+  const db = abrirBanco(':memory:')
+  const id = db.prepare("INSERT INTO clientes (cnpj, razao_social, uf, cert_arquivo, cert_senha_enc) VALUES ('11222333000181', 'X', 'CE', 'x.pfx', 'a:b:c')").run().lastInsertRowid
+  db.prepare("INSERT INTO busca_antiga (cliente_id, chave, criado_em) VALUES (?, ?, '2026-11-13')").run(id, '2'.repeat(44))
+  const linha = db.prepare('SELECT situacao, tentativas FROM busca_antiga').get()
+  assert.deepEqual({ ...linha }, { situacao: 'fila', tentativas: 0 })
+  assert.throws(() => db.prepare("INSERT INTO busca_antiga (cliente_id, chave, criado_em) VALUES (?, ?, 'x')").run(id, '2'.repeat(44)), /UNIQUE/)
+  db.prepare('DELETE FROM clientes WHERE id = ?').run(id)
+  assert.equal(db.prepare('SELECT COUNT(*) FROM busca_antiga').pluck().get(), 0)
 })
