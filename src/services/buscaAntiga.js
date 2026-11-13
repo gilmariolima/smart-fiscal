@@ -215,6 +215,8 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     if (st.ocupado) return
     st.ocupado = true
     let r
+    let fim
+    st.rodada = new Promise((ok) => (fim = ok))
     try {
       r = await processarProxima()
     } catch (e) {
@@ -222,6 +224,8 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       r = 'erro'
     } finally {
       st.ocupado = false
+      st.rodada = null
+      fim()
     }
     if (st.pausada || !st.iniciado || r === null) return
     agendar(r === 'bloqueado' ? PAUSA_BLOQUEIO_MS : st.consultou ? st.intervaloMs : 0)
@@ -232,9 +236,11 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     if (!st.pausada && sql.pendentes.get()) agendar(base())
   }
 
+  /** Para de agendar; devolve a promessa da consulta em curso (o banco só fecha depois dela). */
   function parar() {
     st.iniciado = false
     cancelar()
+    return st.rodada || Promise.resolve()
   }
 
   function pausar() {

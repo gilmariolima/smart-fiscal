@@ -57,6 +57,17 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   let painel = null
   if (comPainel) painel = await require('./web/server').iniciarPainel({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirPasta })
   agendador.iniciar()
+  // Notas antigas pela SVRS: espera a captura e a troca de pasta; cada nota importada atualiza a pasta organizada.
+  ctx.buscaAntiga?.configurar({
+    podeRodar: () => {
+      if (ctx.pastas?.movendoAgora()) return 'Esperando a troca da pasta'
+      if (exigirPasta && !ctx.pastas?.temPasta()) return 'Escolha a pasta principal na tela Pastas'
+      if (agendador.estado().rodandoAgora || ctx.ciclo.cicloEmAndamento()) return 'Esperando a captura terminar'
+      return null
+    },
+    aoImportar: () => ctx.organizador?.agendar({ conferirArquivos: true }),
+  })
+  ctx.buscaAntiga?.iniciar()
 
   // Backup: 1 min depois de ligar e a cada hora; o serviço só copia se houver pasta escolhida
   // (a pasta pode ser escolhida depois, na tela Backup) e ainda não houver a cópia do dia.
@@ -97,11 +108,13 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
       // Pede a parada antes de tudo; a captura pelo painel não passa pelo agendador e também precisa terminar antes de o banco fechar.
       const fimDoCiclo = ctx.ciclo.parar()
       const fimDaTroca = ctx.pastas?.pararTroca?.()
+      const fimDaBusca = ctx.buscaAntiga?.parar()
       if (painel) await painel.fechar()
       for (const cancelar of cancelarBackup) cancelar()
       await agendador.parar()
       await fimDoCiclo
       await comLimite(fimDaTroca, 'A troca de pasta')
+      await comLimite(fimDaBusca, 'A busca de notas antigas')
       await ctx.conferenciaXmls?.parar()
       await comLimite(ctx.organizador?.parar(), 'A organização da pasta')
       if (ctx.backup) await ctx.backup.aguardar()

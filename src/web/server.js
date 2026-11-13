@@ -626,6 +626,49 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     res.json(r)
   })
 
+  // Buscar notas antigas: fila de chaves de NF-e baixadas pela SVRS com o certificado do cliente, uma por minuto.
+  function exigirLocalBusca(req) {
+    if (!ehLocal(req)) throw new ErroHttp(403, 'A busca de notas antigas só pode ser feita no próprio computador do sistema.')
+  }
+
+  app.get('/api/busca-antiga', (req, res) => {
+    exigirLocalBusca(req)
+    const situacao = typeof req.query.situacao === 'string' && req.query.situacao ? req.query.situacao : undefined
+    res.json({ estado: ctx.buscaAntiga.estado(), linhas: ctx.buscaAntiga.listar({ situacao }) })
+  })
+
+  app.post('/api/busca-antiga', (req, res) => {
+    exigirLocalBusca(req)
+    const cliente = sql.clientePorCnpj.get(String(req.body?.cnpj || '').replace(/\D/g, ''))
+    if (!cliente) throw new ErroHttp(404, 'Cliente sem certificado: escolha um cliente com certificado A1.')
+    let r
+    try {
+      r = ctx.buscaAntiga.adicionar(cliente.id, String(req.body?.texto || ''))
+    } catch (e) {
+      if (e.codigo === 404) throw new ErroHttp(404, e.message)
+      throw e
+    }
+    if (!r.adicionadas && !r.repetidas && !r.naoNfe) throw new ErroHttp(400, 'Cole ao menos uma chave de 44 dígitos.')
+    res.json(r)
+  })
+
+  app.post('/api/busca-antiga/pausar', (req, res) => {
+    exigirLocalBusca(req)
+    ctx.buscaAntiga.pausar()
+    res.json({ ok: true })
+  })
+
+  app.post('/api/busca-antiga/continuar', (req, res) => {
+    exigirLocalBusca(req)
+    ctx.buscaAntiga.continuar()
+    res.json({ ok: true })
+  })
+
+  app.post('/api/busca-antiga/limpar', (req, res) => {
+    exigirLocalBusca(req)
+    res.json({ removidas: ctx.buscaAntiga.limparConcluidas() })
+  })
+
   app.post('/api/captura', (req, res) => {
     if (req.body && 'cnpjs' in req.body) return capturaDeLista(req.body.cnpjs, res, modelosDaCaptura(req.body.modelos))
     const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined

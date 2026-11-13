@@ -2342,3 +2342,37 @@ test('importar grava NF-e e devolve o resultado por tipo', async (t) => {
   assert.deepEqual([r.corpo.eventos, r.corpo.semCliente], [0, 0])
   assert.equal(ctx.db.prepare("SELECT COUNT(*) FROM notas WHERE modelo = 'nfe' AND origem = 'importada'").pluck().get(), 1)
 })
+
+// ---------- Notas antigas ----------
+
+test('notas antigas: adicionar, listar, pausar, continuar e limpar', async (t) => {
+  const { pedir } = await montar(t)
+  const { chaveNfe } = require('./apoio/nfe-importada')
+  const chave = chaveNfe('66777888000199', 31)
+  const r = await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, texto: `chave: ${chave}` } })
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.corpo, { adicionadas: 1, repetidas: 0, naoNfe: 0 })
+  const lista = await pedir('/api/busca-antiga')
+  assert.equal(lista.status, 200)
+  assert.deepEqual(lista.corpo.linhas.map((l) => [l.chave, l.situacao, l.cnpj]), [[chave, 'fila', CNPJ_MOCK_OK]])
+  assert.equal(lista.corpo.estado.pendentes, 1)
+  assert.equal((await pedir('/api/busca-antiga?situacao=erro')).corpo.linhas.length, 0)
+  assert.equal((await pedir('/api/busca-antiga/pausar', { method: 'POST' })).status, 200)
+  assert.equal((await pedir('/api/busca-antiga')).corpo.estado.pausada, true)
+  assert.equal((await pedir('/api/busca-antiga/continuar', { method: 'POST' })).status, 200)
+  assert.equal((await pedir('/api/busca-antiga')).corpo.estado.pausada, false)
+  const limpo = await pedir('/api/busca-antiga/limpar', { method: 'POST' })
+  assert.deepEqual([limpo.status, limpo.corpo.removidas], [200, 0])
+})
+
+test('notas antigas: sem chave, sem certificado e fora do PC', async (t) => {
+  const { pedir } = await montar(t)
+  const { chaveNfe } = require('./apoio/nfe-importada')
+  const semChave = await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, texto: 'nada aqui' } })
+  assert.deepEqual([semChave.status, semChave.corpo.erro], [400, 'Cole ao menos uma chave de 44 dígitos.'])
+  await pedir('/api/clientes', { method: 'POST', body: { cnpj: '22333444000181', razao: 'Sem Cert Ltda', uf: 'CE', semCertificado: true } })
+  const semCert = await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: '22333444000181', texto: chaveNfe('66777888000199', 1) } })
+  assert.deepEqual([semCert.status, semCert.corpo.erro], [404, 'Cliente sem certificado: escolha um cliente com certificado A1.'])
+  const fora = await montar(t, {}, { ehLocal: () => false })
+  assert.equal((await fora.pedir('/api/busca-antiga')).status, 403)
+})
