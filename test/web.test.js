@@ -2376,3 +2376,14 @@ test('notas antigas: sem chave, sem certificado e fora do PC', async (t) => {
   const fora = await montar(t, {}, { ehLocal: () => false })
   assert.equal((await fora.pedir('/api/busca-antiga')).status, 403)
 })
+
+test('notas antigas: excluir marcadas', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const { chaveNfe } = require('./apoio/nfe-importada')
+  await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, texto: `${chaveNfe('66777888000199', 41)} ${chaveNfe('66777888000199', 42)}` } })
+  const [l] = ctx.buscaAntiga.listar()
+  const r = await pedir('/api/busca-antiga/excluir', { method: 'POST', body: { ids: [l.id] } })
+  assert.deepEqual([r.status, r.corpo.removidas], [200, 1])
+  assert.equal(ctx.buscaAntiga.listar().length, 1)
+  assert.equal((await pedir('/api/busca-antiga/excluir', { method: 'POST', body: {} })).status, 400)
+})

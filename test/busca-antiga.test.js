@@ -290,3 +290,14 @@ test('intervalo de demonstração só vale com a SEFAZ simulada', (t) => {
   t.after(demo.limpar)
   assert.equal(demo.servico.estado().intervaloS, 3)
 })
+
+test('excluir linhas marcadas', (t) => {
+  const { db, id, servico, limpar } = montar()
+  t.after(limpar)
+  const cs = [31, 32, 33].map((n) => chaveNfe(FORNECEDOR, n))
+  servico.adicionar(id, cs.join(' '))
+  const ids = [linha(db, cs[0]).id, linha(db, cs[2]).id]
+  assert.equal(servico.excluir([...ids, 9999, 'x']), 2)
+  assert.deepEqual(servico.listar().map((l) => l.chave), [cs[1]])
+  assert.equal(servico.excluir([]), 0)
+})

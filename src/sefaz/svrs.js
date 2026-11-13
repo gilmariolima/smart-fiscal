@@ -20,7 +20,10 @@ const decodificar = (t) =>
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
     .replace(/&([a-z]+);/gi, (m, n) => ENTIDADES[n.toLowerCase()] ?? m)
-const semTags = (html) => decodificar(String(html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
+const semTags = (html) =>
+  decodificar(String(html).replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
 // Sem depender do acento: "IP não autorizado devido múltiplas consultas".
 const BLOQUEIO = /IP n\S{1,8}o autorizado|m\S{1,8}ltiplas consultas/i
 

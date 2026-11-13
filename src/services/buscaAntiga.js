@@ -311,12 +311,20 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
   }
 
   const limparConcluidas = () => sql.limpar.run().changes
+
+  /** Tira da fila as linhas escolhidas (chaves coladas por engano). Devolve quantas saíram. */
+  function excluir(ids) {
+    const validos = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))]
+    if (!validos.length) return 0
+    const apagar = db.prepare('DELETE FROM busca_antiga WHERE id = ?')
+    return db.transaction(() => validos.reduce((n, id) => n + apagar.run(id).changes, 0))()
+  }
   const configurar = (ganchos) => {
     if (ganchos.podeRodar) podeRodar = ganchos.podeRodar
     if (ganchos.aoImportar) aoImportar = ganchos.aoImportar
   }
 
-  return { adicionar, processarProxima, iniciar, parar, pausar, continuar, estado, listar, limparConcluidas, configurar }
+  return { adicionar, processarProxima, iniciar, parar, pausar, continuar, estado, listar, limparConcluidas, excluir, configurar }
 }
 
 module.exports = { criarBuscaAntiga, chavesDoTexto }

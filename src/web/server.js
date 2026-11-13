@@ -669,6 +669,13 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     res.json({ removidas: ctx.buscaAntiga.limparConcluidas() })
   })
 
+  app.post('/api/busca-antiga/excluir', (req, res) => {
+    exigirLocalBusca(req)
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : []
+    if (!ids.length) throw new ErroHttp(400, 'Marque ao menos uma chave para excluir.')
+    res.json({ removidas: ctx.buscaAntiga.excluir(ids) })
+  })
+
   app.post('/api/captura', (req, res) => {
     if (req.body && 'cnpjs' in req.body) return capturaDeLista(req.body.cnpjs, res, modelosDaCaptura(req.body.modelos))
     const cnpj = req.body?.cnpj ? String(req.body.cnpj).replace(/\D/g, '') : undefined

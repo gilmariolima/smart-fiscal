@@ -64,3 +64,11 @@ test('sem resposta da SVRS é marcado como tal', async () => {
   assert.equal((await caiu.baixarNfe(CHAVE)).semResposta, true)
   assert.equal(lerRespostaSvrs(pagina('NF-e inexistente na base')).semResposta, undefined)
 })
+
+test('mensagem sem o CSS da página', () => {
+  const html = pagina('CNPJ base do certificado digital (CNPJ8) informado difere do CNPJ base dos envolvidos (CNPJ8). CNPJ8 Certificado : 10699246 <style>.rounded-button { background-color: #f5f5f5; color: #1351b4; }</style> <button class="rounded-button">Voltar</button>')
+  const r = lerRespostaSvrs(html)
+  assert.equal(r.motivo, 'nao-envolvido')
+  assert.doesNotMatch(r.mensagem, /rounded-button|background-color/)
+  assert.match(r.mensagem, /CNPJ8 Certificado : 10699246/)
+})

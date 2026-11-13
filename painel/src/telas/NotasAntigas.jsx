@@ -47,8 +47,15 @@ export default function NotasAntigas() {
   const [erro, setErro] = useState('')
   const [aviso, setAviso] = useState('')
   const [agora, setAgora] = useState(() => new Date())
+  const [marcadas, setMarcadas] = useState(() => new Set())
 
   const estado = fila.dados?.estado
+  const pausada = !!estado?.pausada
+
+  // Marcar só existe com a fila pausada: ao continuar, as marcas somem.
+  useEffect(() => {
+    if (!pausada) setMarcadas(new Set())
+  }, [pausada])
   const pendentes = estado?.pendentes || 0
   const { recarregar } = fila
 
@@ -94,6 +101,26 @@ export default function NotasAntigas() {
   }
 
   const linhas = fila.dados?.linhas || []
+  const todasMarcadas = linhas.length > 0 && linhas.every((l) => marcadas.has(l.id))
+  const alternar = (id) =>
+    setMarcadas((m) => {
+      const n = new Set(m)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  const alternarTodas = () => setMarcadas(todasMarcadas ? new Set() : new Set(linhas.map((l) => l.id)))
+
+  async function excluirMarcadas() {
+    setErro('')
+    try {
+      await api.post('/api/busca-antiga/excluir', { ids: [...marcadas] })
+      setMarcadas(new Set())
+      recarregar()
+    } catch (e) {
+      setErro(e.message)
+    }
+  }
   return (
     <Pagina titulo="Notas antigas" subtitulo="NF-e com mais de 90 dias, pela SVRS" erro={erro || fila.erro} aoFecharErro={() => setErro('')}>
       <form className="cartao antigas-form" onSubmit={buscar}>
@@ -137,6 +164,11 @@ export default function NotasAntigas() {
             <button type="button" className="botao botao-claro" onClick={() => acao('limpar')}>
               Limpar concluídas
             </button>
+            {estado.pausada && (
+              <button type="button" className="botao botao-claro" onClick={excluirMarcadas} disabled={!marcadas.size}>
+                Excluir marcadas{marcadas.size ? ` (${marcadas.size})` : ''}
+              </button>
+            )}
             {estado.pausada ? (
               <button type="button" className="botao botao-verde" onClick={() => acao('continuar')}>
                 Continuar
@@ -155,6 +187,11 @@ export default function NotasAntigas() {
           <table className="tabela">
             <thead>
               <tr>
+                {pausada && (
+                  <th scope="col" className="marcar">
+                    <input type="checkbox" aria-label="Marcar todas as chaves da lista" checked={todasMarcadas} onChange={alternarTodas} />
+                  </th>
+                )}
                 <th scope="col">Cliente</th>
                 <th scope="col">Chave</th>
                 <th scope="col">Situação</th>
@@ -164,6 +201,11 @@ export default function NotasAntigas() {
             <tbody>
               {linhas.map((l) => (
                 <tr key={l.id}>
+                  {pausada && (
+                    <td className="marcar">
+                      <input type="checkbox" aria-label={`Marcar a chave ${l.chave}`} checked={marcadas.has(l.id)} onChange={() => alternar(l.id)} />
+                    </td>
+                  )}
                   <td>{l.nome}</td>
                   <td className="antigas-chave">{emBlocos(l.chave)}</td>
                   <td className={`antigas-situacao antigas-${l.situacao}`}>{SITUACOES[l.situacao] || l.situacao}</td>
