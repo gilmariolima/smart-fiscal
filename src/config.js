@@ -55,6 +55,8 @@ function carregarConfig(env = process.env) {
       maxConsultasChavePorCiclo: inteiro(env.MAX_CONSULTAS_CHAVE_POR_CICLO, 20, 'MAX_CONSULTAS_CHAVE_POR_CICLO'),
       maxTentativasDownload: inteiro(env.MAX_TENTATIVAS_DOWNLOAD, 5, 'MAX_TENTATIVAS_DOWNLOAD'),
       painelPorta: inteiro(env.PAINEL_PORTA, 3030, 'PAINEL_PORTA'),
+      // Só para demonstração: intervalo da busca de notas antigas (a SVRS bloqueia abaixo de ~60 s).
+      buscaAntigaIntervaloMs: inteiro(env.BUSCA_ANTIGA_INTERVALO_MS, 60000, 'BUSCA_ANTIGA_INTERVALO_MS'),
     }
   } catch (e) {
     erros.push(e.message)

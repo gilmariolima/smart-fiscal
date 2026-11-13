@@ -13,6 +13,8 @@ const { criarServicoCiclo } = require('./services/ciclo')
 const { criarConferenciaXmls } = require('./services/conferenciaXmls')
 const { criarServicoImportacao } = require('./services/importacao')
 const { criarNotasSemCliente } = require('./services/notasSemCliente')
+const { criarBuscaAntiga } = require('./services/buscaAntiga')
+const { criarFabricaSvrs } = require('./sefaz/svrs')
 const { criarServicoResumo } = require('./services/resumo')
 const { criarServicoExportacao } = require('./services/exportacao')
 const { criarServicoSelecao } = require('./services/selecao')
@@ -25,7 +27,7 @@ const { criarOrganizador } = require('./services/pastaOrganizada')
 const { migrarLayouts, limparResumosDeNotasCompletas } = require('./services/migracaoPastas')
 
 // `verificarAmbiente: false` só para o comando que troca o ambiente do banco.
-function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, agora, verificarAmbiente: verificar = true } = {}) {
+function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', db, fabricaSefaz, fabricaAdn, fabricaCte, fabricaSvrs, agora, verificarAmbiente: verificar = true } = {}) {
   const log = logger || criarLogger({ pasta: config.pastaLogs, nivelConsole })
   const banco = db || abrirBanco(config.caminhoBanco)
   if (verificar) {
@@ -69,6 +71,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     conferenciaXmls: criarConferenciaXmls(deps),
     importacao,
     notasSemCliente: criarNotasSemCliente({ ...deps, importacao }),
+    buscaAntiga: criarBuscaAntiga({ ...deps, importacao, fabricaSvrs: fabricaSvrs || criarFabricaSvrs(config) }),
     pastas,
     organizador,
     fechar: () => banco.close(),
