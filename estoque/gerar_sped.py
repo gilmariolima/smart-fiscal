@@ -753,7 +753,27 @@ def ler_planilha(caminho):
     if all(not i.qtd and not i.vl_unit and not i.vl_item for i in itens):
         for i in itens:
             i.qtd = i.vl_unit = i.vl_item = None
+    if aviso := unidade_deslocada(itens):
+        avisos.append(aviso)
     return Fonte(caminho, "Planilha", itens, empresa, data_inv, total_declarado, avisos=avisos)
+
+
+def unidade_deslocada(itens):
+    """Relatório que preenche a coluna de unidade com o fim da descrição ("1 CORINTIOS" -> "OS",
+    "PAPEL A4" -> "A4"): a coluna não serve, e uma sigla que caia nela por acaso ("M" de uma
+    descrição terminada em M) viraria metro. Na maioria das linhas assim, todos os itens saem com UN."""
+    com_unidade = [i for i in itens if texto(i.unidade) and texto(i.descricao)]
+    if len(com_unidade) < 10:
+        return None
+    fim = [i for i in com_unidade if texto(i.descricao).upper().endswith(texto(i.unidade).upper()) and len(texto(i.unidade)) <= 2]
+    if len(fim) < 0.8 * len(com_unidade):
+        return None
+    exemplo = f"\"{texto(fim[0].descricao)}\" com unidade \"{texto(fim[0].unidade)}\""
+    for i in itens:
+        i.unidade = "UN"
+    return (f"a coluna de unidade repete o fim da descrição em {len(fim)} de {len(com_unidade)} itens "
+            f"(ex.: {exemplo}): a coluna foi ignorada e "
+            "todos os itens saem com UN; confira com o cliente")
 
 
 def ler_arquivo(caminho):
@@ -1236,7 +1256,9 @@ def conferir_cadastro(itens, emp, args, pendencias, unidades_desc=None):
     usadas = {it.unidade for it in itens}
     desconhecidas = sorted(u for u in usadas if u not in UNIDADES and u not in (unidades_desc or {}))
     if desconhecidas:
-        pendencias.append(("arquivo", "0190", f"unidade(s) {', '.join(desconhecidas)} fora da tabela conhecida: o 0190 sai com a "
+        # Lista longa vira as 10 primeiras e "e mais N": o aviso tem de caber na tela
+        lista = ", ".join(desconhecidas[:10]) + (f" e mais {len(desconhecidas) - 10}" if len(desconhecidas) > 10 else "")
+        pendencias.append(("arquivo", "0190", f"unidade(s) {lista} fora da tabela conhecida: o 0190 sai com a "
                            "própria sigla como descrição; confira com o cliente"))
     for grupo in SINONIMOS:
         if len(iguais := sorted(usadas & grupo)) > 1:

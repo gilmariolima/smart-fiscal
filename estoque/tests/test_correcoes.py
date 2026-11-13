@@ -866,5 +866,38 @@ class ArquivosDeExemplo(Base):
                     self.assertEqual(res.total, res.principal.total_declarado)
 
 
+class UnidadeDeslocada(Base):
+    """Relatório com a coluna de unidade deslocada: ela traz o fim da descrição ("1 CORINTIOS" -> "OS")."""
+
+    def test_coluna_de_unidade_com_o_fim_da_descricao_vira_un(self):
+        descricoes = ["1 CORINTIOS", "1 GUERRA", "1,2,3 VAMOS CONTAR?", "LIVRO DO METRO", "AMOR EM TEMPO", "CASA DA ARVORE",
+                      "O PEQUENO PRINCIPE", "DOM CASMURRO", "MEMORIAS POSTUMAS", "VIDAS SECAS", "IRACEMA", "SENHORA"]
+        linhas = ["Codigo;Descricao;Unidade;Qtd;Valor Unit"]
+        for i, d in enumerate(descricoes):
+            linhas.append(f"{100 + i};{d};{d[-2:].strip() or d[-1]};1;10,00")
+        linhas.append("200;CANETA AZUL KIT;KIT;1;5,00")  # unidade de verdade numa linha só não muda a regra
+        res = self.gerar(arquivo("deslocada.csv", "\n".join(linhas) + "\n"))
+        unidades = {r.split("|")[2] for r in res.registros if r.startswith("|0190|")}
+        self.assertEqual(unidades, {"UN"})
+        avisos = self.pend(res, "a coluna de unidade repete o fim da descrição", "arquivo")
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("todos os itens saem com UN", avisos[0][2])
+        self.assertFalse(self.pend(res, "fora da tabela"))
+
+    def test_unidade_de_verdade_nao_e_trocada(self):
+        p = arquivo("normal.csv", "Codigo;Descricao;Unidade;Qtd;Valor Unit\nA1;FIO DE COBRE;M;1;1,00\nA2;CABO;M;2;1,00\nA3;TINTA;L;1;1,00\n")
+        res = self.gerar(p)
+        self.assertEqual({r.split("|")[2] for r in res.registros if r.startswith("|0190|")}, {"M", "L"})
+        self.assertFalse(self.pend(res, "a coluna de unidade repete"))
+
+    def test_lista_de_unidades_desconhecidas_fica_curta(self):
+        linhas = ["Codigo;Descricao;Unidade;Qtd;Valor Unit"] + [f"{i};PRODUTO {i};Q{i:02d};1;1,00" for i in range(25)]
+        res = self.gerar(arquivo("muitas.csv", "\n".join(linhas) + "\n"))
+        [aviso] = self.pend(res, "fora da tabela", "arquivo")
+        self.assertIn("Q00, Q01", aviso[2])
+        self.assertIn("e mais 15", aviso[2])
+        self.assertNotIn("Q24", aviso[2])
+
+
 if __name__ == "__main__":
     unittest.main()
