@@ -3225,6 +3225,79 @@ a.botao-icone {
   overflow-wrap: anywhere;
 }
 
+/* ---------- Notas antigas ---------- */
+
+.antigas-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.antigas-form select {
+  max-width: 420px;
+}
+
+.antigas-chaves {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.antigas-acoes {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.antigas-aviso {
+  color: var(--apagado);
+}
+
+.antigas-barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 10px;
+}
+
+.antigas-andamento {
+  margin: 0;
+}
+
+.antigas-botoes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.antigas-chave {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.antigas-mensagem {
+  overflow-wrap: anywhere;
+  color: var(--apagado);
+}
+
+.antigas-baixada {
+  color: var(--verde, #15803d);
+}
+
+.antigas-erro,
+.antigas-nao-envolvido {
+  color: var(--vermelho, #b91c1c);
+}
+
 /* ---------- Certificado procurador ---------- */
 
 .cartao-procurador {
