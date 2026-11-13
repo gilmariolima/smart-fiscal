@@ -278,7 +278,7 @@ function ListaDeClientes({ modelo }) {
                   </td>
                   <td className="mono sem-quebra">{formatarCnpj(c.cnpj)}</td>
                   <td className="sem-quebra">
-                    <SeloCertificado c={c} procurador={temProcurador} />
+                    <SeloCertificado c={c} procurador={modelo === 'nfse' && temProcurador} />
                   </td>
                   <td>
                     <UltimaCaptura c={c} modelo={modelo} capturandoAgora={capturandoAgora} fila={fila} />

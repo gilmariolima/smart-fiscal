@@ -104,7 +104,7 @@ let mockCompartilhado = null
 
 /**
  * Fábrica usada pelos serviços: linha de `clientes` → cliente do ADN (ou o simulado, com SEFAZ_MOCK=1).
- * Cliente com A1 próprio usa o dele. Sem A1, usa os procuradores (`obterProcuradores()` → [{ id, pfx, passphrase, vencido }]):
+ * Cliente com A1 próprio no prazo usa o dele. Sem A1, ou com o A1 vencido e algum procurador, usa os procuradores (`obterProcuradores()` → [{ id, pfx, passphrase, vencido }]):
  * o guardado no cliente (`procurador_id`) primeiro, depois os outros válidos; quem responder sem E2245 (sem procuração)
  * fica para os lotes seguintes e é guardado com `lembrar(clienteId, procuradorId)`.
  */
@@ -147,7 +147,9 @@ function criarFabricaAdn(config, obterProcuradores = () => [], { lembrar = () =>
   return (cliente) => {
     try {
       const comArquivo = cliente.cert_arquivo
-      if (!comArquivo) return pelosProcuradores(cliente)
+      // Certificado próprio vencido não puxa nada: com procurador cadastrado, a NFS-e vai por ele.
+      const vencido = !!cliente.cert_validade && new Date(cliente.cert_validade) < new Date()
+      if (!comArquivo || (vencido && (obterProcuradores() || []).length)) return pelosProcuradores(cliente)
       return criarCliente({
         cnpj: cliente.cnpj,
         pfx: fs.readFileSync(path.join(config.pastaCerts, comArquivo)),

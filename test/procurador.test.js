@@ -165,3 +165,16 @@ test('cliente com certificado próprio não usa procurador', (t) => {
   fabrica({ cnpj: CNPJ_MOCK_OK, cert_arquivo: `${CNPJ_MOCK_OK}.pfx`, cert_senha_enc: criptografar('c', config.masterKey) })
   assert.equal(chamado, 0)
 })
+
+test('cliente com certificado vencido usa o procurador; sem procurador, fica com o dele', async (t) => {
+  const { config } = montar(t)
+  const vencido = { id: 9, cnpj: '10539120001430', cert_arquivo: 'velho.pfx', cert_senha_enc: 'x', cert_validade: '2020-01-01T00:00:00.000Z' }
+  const { fabrica, usados, lembrados } = fabricaFalsa(config, [proc(1, 'ana')], { ana: ok })
+  assert.deepEqual(await fabrica(vencido).consultarLote('0'), ok)
+  assert.deepEqual(usados, ['ana'])
+  assert.deepEqual(lembrados, [[9, 1]])
+  // Sem procurador: segue o certificado do cliente (o arquivo não existe aqui, então fica indisponível, sem tentar procurador).
+  const r = await criarFabricaAdn(config, () => [])(vencido).consultarLote('0')
+  assert.equal(r.ok, false)
+  assert.doesNotMatch(r.erro, /procurador/)
+})
