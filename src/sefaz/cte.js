@@ -10,7 +10,7 @@ const https = require('node:https')
 const path = require('node:path')
 const tls = require('node:tls')
 const zlib = require('node:zlib')
-const forge = require('node-forge')
+const { agenteDoCertificado: agenteComCertificado } = require('./certificado')
 const { descriptografar } = require('../crypto')
 const { decodificarXml } = require('../services/extracaoNfse')
 const { dadosUf } = require('./uf')
@@ -22,22 +22,7 @@ const ACAO = 'http://www.portalfiscal.inf.br/cte/wsdl/CTeDistribuicaoDFe/cteDist
 const TIMEOUT_MS = 60e3
 const UF_PADRAO = '23'
 
-function agenteDoCertificado(pfx, passphrase) {
-  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(Buffer.from(pfx).toString('binary')), true, passphrase)
-  const chaves = [
-    ...(p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || []),
-    ...(p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || []),
-  ].map((b) => b.key).filter(Boolean)
-  const certs = (p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || []).map((b) => b.cert).filter(Boolean)
-  if (!chaves.length || !certs.length) throw new Error('o arquivo não tem a chave e o certificado')
-  const cert = certs.find((c) => c.publicKey?.n && c.publicKey.n.equals(chaves[0].n)) || certs[0]
-  return new https.Agent({
-    key: forge.pki.privateKeyToPem(chaves[0]),
-    cert: forge.pki.certificateToPem(cert),
-    ca: [...tls.rootCertificates, ...require('node-mde/lib/env').CA],
-    keepAlive: false,
-  })
-}
+const agenteDoCertificado = (pfx, passphrase) => agenteComCertificado(pfx, passphrase, { ca: [...tls.rootCertificates, ...require('node-mde/lib/env').CA] })
 
 function requisitarHttps(agent) {
   return (url, corpo, cabecalhos) =>
