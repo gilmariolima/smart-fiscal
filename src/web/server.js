@@ -648,7 +648,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
       if (e.codigo === 404) throw new ErroHttp(404, e.message)
       throw e
     }
-    if (!r.adicionadas && !r.repetidas && !r.naoNfe) throw new ErroHttp(400, 'Cole ao menos uma chave de 44 dígitos.')
+    if (!r.adicionadas && !r.repetidas && !r.naoNfe && !r.outroEstado) throw new ErroHttp(400, 'Cole ao menos uma chave de 44 dígitos.')
     res.json(r)
   })
 

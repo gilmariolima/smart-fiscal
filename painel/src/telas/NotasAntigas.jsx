@@ -10,6 +10,7 @@ const SITUACOES = {
   'ja-existia': 'Já estava no Smart Fiscal',
   'nao-envolvido': 'Certificado não é de envolvido',
   'nao-nfe': 'Não é NF-e',
+  'outro-estado': 'Outro estado',
   erro: 'Erro',
 }
 
@@ -79,7 +80,7 @@ export default function NotasAntigas() {
     setEnviando(true)
     try {
       const r = await api.post('/api/busca-antiga', { cnpj, texto })
-      const partes = [r.repetidas > 0 && plural(r.repetidas, 'repetida ignorada', 'repetidas ignoradas'), r.naoNfe > 0 && plural(r.naoNfe, 'não é NF-e', 'não são NF-e')].filter(Boolean)
+      const partes = [r.repetidas > 0 && plural(r.repetidas, 'repetida ignorada', 'repetidas ignoradas'), r.naoNfe > 0 && plural(r.naoNfe, 'não é NF-e', 'não são NF-e'), r.outroEstado > 0 && plural(r.outroEstado, 'de estado com SEFAZ própria', 'de estados com SEFAZ própria')].filter(Boolean)
       setAviso(`${plural(r.adicionadas, 'chave na fila', 'chaves na fila')}${partes.length ? ` (${partes.join(', ')})` : ''}`)
       setTexto('')
       recarregar()

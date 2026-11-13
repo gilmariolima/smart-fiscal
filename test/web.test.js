@@ -2351,7 +2351,7 @@ test('notas antigas: adicionar, listar, pausar, continuar e limpar', async (t) =
   const chave = chaveNfe('66777888000199', 31)
   const r = await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, texto: `chave: ${chave}` } })
   assert.equal(r.status, 200)
-  assert.deepEqual(r.corpo, { adicionadas: 1, repetidas: 0, naoNfe: 0 })
+  assert.deepEqual(r.corpo, { adicionadas: 1, repetidas: 0, naoNfe: 0, outroEstado: 0 })
   const lista = await pedir('/api/busca-antiga')
   assert.equal(lista.status, 200)
   assert.deepEqual(lista.corpo.linhas.map((l) => [l.chave, l.situacao, l.cnpj]), [[chave, 'fila', CNPJ_MOCK_OK]])
@@ -2386,4 +2386,13 @@ test('notas antigas: excluir marcadas', async (t) => {
   assert.deepEqual([r.status, r.corpo.removidas], [200, 1])
   assert.equal(ctx.buscaAntiga.listar().length, 1)
   assert.equal((await pedir('/api/busca-antiga/excluir', { method: 'POST', body: {} })).status, 400)
+})
+
+test('notas antigas: só chaves de estado com SEFAZ própria não dá erro', async (t) => {
+  const { pedir } = await montar(t)
+  const { chaveNfe } = require('./apoio/nfe-importada')
+  const sp = '35' + chaveNfe('66777888000199', 61).slice(2)
+  const r = await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, texto: sp } })
+  assert.deepEqual([r.status, r.corpo.outroEstado], [200, 1])
+  assert.equal((await pedir('/api/busca-antiga?situacao=outro-estado')).corpo.linhas.length, 1)
 })

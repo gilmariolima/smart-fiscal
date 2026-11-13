@@ -16,6 +16,10 @@ const INTERVALO_MAXIMO_MS = 180e3
 const CONSULTAS_PARA_DESCER = 20
 const TENTATIVAS = 3
 const FALHAS_PARA_PAUSAR = 3
+// UFs com SEFAZ própria: a SVRS não tem as NF-e autorizadas por elas (testado 13/11: SP responde "difere do CNPJ base").
+const SEFAZ_PROPRIA = { 13: 'AM', 29: 'BA', 31: 'MG', 35: 'SP', 41: 'PR', 43: 'RS', 50: 'MS', 51: 'MT', 52: 'GO', 26: 'PE' }
+const ufPropria = (chave) => SEFAZ_PROPRIA[chave.slice(0, 2)] || null
+const mensagemOutroEstado = (uf) => `Estado com SEFAZ própria (${uf}): a SVRS não tem essa nota; peça o XML ao fornecedor ou ao cliente`
 const CONCLUIDAS = ['baixada', 'ja-existia', 'nao-nfe']
 const MOTIVOS_IMPORTAR = {
   'sem-protocolo': 'nota sem autorização da SEFAZ',
@@ -120,7 +124,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
   function adicionar(clienteId, texto) {
     const cliente = sql.cliente.get(clienteId)
     if (!cliente) throw Object.assign(new Error('Cliente sem certificado: escolha um cliente com certificado A1.'), { codigo: 404 })
-    const r = { adicionadas: 0, repetidas: 0, naoNfe: 0 }
+    const r = { adicionadas: 0, repetidas: 0, naoNfe: 0, outroEstado: 0 }
     const vistas = new Set()
     db.transaction(() => {
       for (const chave of chavesDoTexto(texto)) {
@@ -139,8 +143,12 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
         }
         // Só NF-e (modelo 55, posições 21-22 da chave).
         const nfe = chave.slice(20, 22) === '55'
-        sql.inserir.run(cliente.id, chave, nfe ? 'fila' : 'nao-nfe', iso(), iso())
-        if (nfe) r.adicionadas++
+        const uf = nfe ? ufPropria(chave) : null
+        sql.inserir.run(cliente.id, chave, !nfe ? 'nao-nfe' : uf ? 'outro-estado' : 'fila', iso(), iso())
+        if (uf) {
+          sql.marcar.run('outro-estado', mensagemOutroEstado(uf), 0, iso(), sql.linha.get(cliente.id, chave).id)
+          r.outroEstado++
+        } else if (nfe) r.adicionadas++
         else r.naoNfe++
       }
     })()
@@ -188,6 +196,9 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     const l = sql.proxima.get()
     if (!l) return null
     st.consultou = false
+    // Chave de estado com SEFAZ própria (colada antes desta regra): marcada sem gastar consulta.
+    const uf = ufPropria(l.chave)
+    if (uf) return marcar(l, 'outro-estado', mensagemOutroEstado(uf))
     const cliente = sql.clienteDaLinha.get(l.cliente_id)
     if (!cliente?.cert_arquivo) return marcar(l, 'erro', 'Certificado do cliente indisponível')
     if (cliente.cert_validade && new Date(cliente.cert_validade) < agora()) return marcar(l, 'erro', 'Certificado vencido')

@@ -57,7 +57,7 @@ test('adicionar pega chaves no meio do texto, em blocos e ignora repetidas', (t)
   const c2 = chaveNfe(FORNECEDOR, 2)
   const nfce = c1.slice(0, 20) + '65' + c1.slice(22)
   const r = servico.adicionar(id, `a ${blocos(c1)}, b;${c2}\n${c2} ${'1'.repeat(45)} ${nfce}`)
-  assert.deepEqual(r, { adicionadas: 2, repetidas: 1, naoNfe: 1 })
+  assert.deepEqual(r, { adicionadas: 2, repetidas: 1, naoNfe: 1, outroEstado: 0 })
   assert.equal(linha(db, c1).situacao, 'fila')
   assert.equal(linha(db, nfce).situacao, 'nao-nfe')
   assert.equal(db.prepare('SELECT COUNT(*) FROM busca_antiga').pluck().get(), 3)
@@ -69,7 +69,7 @@ test('chave em erro volta para a fila ao colar de novo; cliente sem certificado 
   const c = chaveNfe(FORNECEDOR, 3)
   servico.adicionar(id, c)
   db.prepare("UPDATE busca_antiga SET situacao = 'erro', tentativas = 3, mensagem = 'x'").run()
-  assert.deepEqual(servico.adicionar(id, c), { adicionadas: 1, repetidas: 0, naoNfe: 0 })
+  assert.deepEqual(servico.adicionar(id, c), { adicionadas: 1, repetidas: 0, naoNfe: 0, outroEstado: 0 })
   assert.deepEqual([linha(db, c).situacao, linha(db, c).tentativas, linha(db, c).mensagem], ['fila', 0, null])
   assert.throws(() => servico.adicionar(semCert, c), (e) => e.codigo === 404)
   assert.throws(() => servico.adicionar(999, c), (e) => e.codigo === 404)
@@ -300,4 +300,30 @@ test('excluir linhas marcadas', (t) => {
   assert.equal(servico.excluir([...ids, 9999, 'x']), 2)
   assert.deepEqual(servico.listar().map((l) => l.chave), [cs[1]])
   assert.equal(servico.excluir([]), 0)
+})
+
+// ---------- estados com SEFAZ própria ----------
+
+test('chave de estado com SEFAZ própria fica marcada sem consultar a SVRS', async (t) => {
+  const { db, id, servico, chamadas, limpar } = montar()
+  t.after(limpar)
+  const ce = chaveNfe(FORNECEDOR, 51)
+  const sp = '35' + ce.slice(2)
+  const mg = '31' + ce.slice(2, 43) + '0'
+  const r = servico.adicionar(id, `${ce} ${sp} ${mg}`)
+  assert.deepEqual(r, { adicionadas: 1, repetidas: 0, naoNfe: 0, outroEstado: 2 })
+  assert.equal(linha(db, sp).situacao, 'outro-estado')
+  assert.equal(linha(db, sp).mensagem, 'Estado com SEFAZ própria (SP): a SVRS não tem essa nota; peça o XML ao fornecedor ou ao cliente')
+  assert.match(linha(db, mg).mensagem, /\(MG\)/)
+  assert.equal(chamadas.length, 0)
+})
+
+test('chave de outro estado que já estava na fila é marcada sem consultar', async (t) => {
+  const { db, id, servico, chamadas, limpar } = montar()
+  t.after(limpar)
+  const sp = '35' + chaveNfe(FORNECEDOR, 52).slice(2)
+  db.prepare("INSERT INTO busca_antiga (cliente_id, chave, situacao, criado_em) VALUES (?, ?, 'fila', 'x')").run(id, sp)
+  assert.equal(await servico.processarProxima(), 'outro-estado')
+  assert.equal(linha(db, sp).situacao, 'outro-estado')
+  assert.equal(chamadas.length, 0)
 })
