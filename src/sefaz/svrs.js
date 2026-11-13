@@ -13,7 +13,16 @@ const { agenteDoCertificado } = require('./certificado')
 
 const ENDERECO = 'https://dfe-portal.svrs.rs.gov.br/NfeSSL/DownloadXmlDfe'
 const TIMEOUT_MS = 60e3
-const semTags = (html) => String(html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+// Entidades HTML que a SVRS usa nos acentos (a página mistura UTF-8 direto e &#244;, &atilde;...).
+const ENTIDADES = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', atilde: 'ã', otilde: 'õ', aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú', acirc: 'â', ecirc: 'ê', ocirc: 'ô', ccedil: 'ç', agrave: 'à' }
+const decodificar = (t) =>
+  t
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&([a-z]+);/gi, (m, n) => ENTIDADES[n.toLowerCase()] ?? m)
+const semTags = (html) => decodificar(String(html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
+// Sem depender do acento: "IP não autorizado devido múltiplas consultas".
+const BLOQUEIO = /IP n\S{1,8}o autorizado|m\S{1,8}ltiplas consultas/i
 
 /** Lê a página de resposta: o XML do stringJson ou o motivo da recusa. */
 function lerRespostaSvrs(html) {
@@ -26,7 +35,7 @@ function lerRespostaSvrs(html) {
   }
   const texto = semTags(html)
   if (/difere do CNPJ base dos envolvidos/i.test(texto)) return { motivo: 'nao-envolvido', mensagem: mensagemDe(texto) }
-  if (/m[uú]ltiplas consultas/i.test(texto)) return { motivo: 'bloqueado', mensagem: mensagemDe(texto) }
+  if (BLOQUEIO.test(texto)) return { motivo: 'bloqueado', mensagem: mensagemDe(texto) }
   return { motivo: 'erro', mensagem: mensagemDe(texto) || 'Resposta inesperada da SVRS', repetir: true }
 }
 
@@ -64,9 +73,9 @@ function criarClienteSvrs({ pfx, passphrase, requisitar } = {}) {
     try {
       r = await enviar(corpo)
     } catch (e) {
-      return { motivo: 'erro', mensagem: `Sem resposta da SVRS: ${e.message}`, repetir: true }
+      return { motivo: 'erro', mensagem: `Sem resposta da SVRS: ${e.message}`, repetir: true, semResposta: true }
     }
-    if (r.status >= 500) return { motivo: 'erro', mensagem: `A SVRS respondeu ${r.status}`, repetir: true }
+    if (r.status >= 500) return { motivo: 'erro', mensagem: `A SVRS respondeu ${r.status}`, repetir: true, semResposta: true }
     return lerRespostaSvrs(r.html)
   }
   return { baixarNfe }

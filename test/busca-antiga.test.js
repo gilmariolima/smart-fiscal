@@ -239,3 +239,54 @@ test('limpar concluídas e cliente excluído', async (t) => {
   assert.equal(await servico.processarProxima(), null)
   assert.equal(servico.estado().total, 0)
 })
+
+// ---------- correções da revisão final ----------
+
+test('reabrir o app respeita o intervalo desde a última consulta', async (t) => {
+  const c1 = chaveNfe(FORNECEDOR, 21)
+  const c2 = chaveNfe(FORNECEDOR, 22)
+  const { id, servico, tempo, criar, limpar } = montar({ respostas: { [c1]: { motivo: 'nao-envolvido', mensagem: 'x' } } })
+  t.after(limpar)
+  servico.adicionar(id, `${c1} ${c2}`)
+  await servico.processarProxima()
+  servico.pausar()
+  const reaberto = criar()
+  reaberto.iniciar()
+  reaberto.continuar()
+  assert.equal(tempo.ultimo().ms, 60000)
+})
+
+test('bloqueio e intervalo sobrevivem a reabrir o app', async (t) => {
+  const c = chaveNfe(FORNECEDOR, 23)
+  const { id, servico, criar, limpar } = montar({ respostas: { [c]: { motivo: 'bloqueado', mensagem: 'y' } } })
+  t.after(limpar)
+  servico.adicionar(id, c)
+  await servico.processarProxima()
+  const e = criar().estado()
+  assert.equal(e.intervaloS, 90)
+  assert.equal(e.voltaAs, new Date(AGORA.getTime() + 5 * 60e3).toISOString())
+})
+
+test('SVRS sem resposta 3 vezes seguidas pausa a fila sem gastar tentativas', async (t) => {
+  const c = chaveNfe(FORNECEDOR, 24)
+  const fora = { motivo: 'erro', mensagem: 'Sem resposta da SVRS: ENOTFOUND', repetir: true, semResposta: true }
+  const { db, id, servico, limpar } = montar({ respostas: { [c]: [fora, fora, fora] } })
+  t.after(limpar)
+  servico.adicionar(id, c)
+  assert.equal(await servico.processarProxima(), 'fila')
+  assert.equal(await servico.processarProxima(), 'fila')
+  assert.equal(await servico.processarProxima(), 'bloqueado')
+  assert.deepEqual([linha(db, c).situacao, linha(db, c).tentativas], ['fila', 0])
+  const e = servico.estado()
+  assert.equal(e.voltaAs, new Date(AGORA.getTime() + 5 * 60e3).toISOString())
+  assert.equal(e.pausaPor, 'sem-resposta')
+})
+
+test('intervalo de demonstração só vale com a SEFAZ simulada', (t) => {
+  const real = montar({ config: { buscaAntigaIntervaloMs: 3000 } })
+  t.after(real.limpar)
+  assert.equal(real.servico.estado().intervaloS, 60)
+  const demo = montar({ config: { buscaAntigaIntervaloMs: 3000, sefazMock: true } })
+  t.after(demo.limpar)
+  assert.equal(demo.servico.estado().intervaloS, 3)
+})

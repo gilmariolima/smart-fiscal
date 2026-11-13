@@ -35,7 +35,7 @@ test('envia o formulário da SVRS', async () => {
 
 test('HTTP 5xx e erro de rede repetem', async () => {
   const fora = criarClienteSvrs({ requisitar: async () => ({ status: 503, html: 'manutenção' }) })
-  assert.deepEqual({ ...(await fora.baixarNfe(CHAVE)), mensagem: undefined }, { motivo: 'erro', repetir: true, mensagem: undefined })
+  assert.deepEqual({ ...(await fora.baixarNfe(CHAVE)), mensagem: undefined }, { motivo: 'erro', repetir: true, semResposta: true, mensagem: undefined })
   const caiu = criarClienteSvrs({ requisitar: async () => { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) } })
   const r = await caiu.baixarNfe(CHAVE)
   assert.deepEqual([r.motivo, r.repetir], ['erro', true])
@@ -49,4 +49,18 @@ test('SVRS simulada: entrega a nota do emitente e recusa as outras', async () =>
   assert.match(r.xml, /<nfeProc/)
   assert.match(r.xml, new RegExp(`<chNFe>${CHAVE}</chNFe>`))
   assert.equal((await svrs.baixarNfe(chaveNfe('66777888000199', 3))).motivo, 'nao-envolvido')
+})
+
+test('bloqueio reconhecido com acento em código HTML ou sem acento', () => {
+  assert.equal(lerRespostaSvrs(pagina('IP n&#227;o autorizado devido m&#250;ltiplas consultas')).motivo, 'bloqueado')
+  assert.equal(lerRespostaSvrs(pagina('IP nao autorizado devido multiplas consultas')).motivo, 'bloqueado')
+  assert.equal(lerRespostaSvrs(pagina('IP n&atilde;o autorizado devido m&uacute;ltiplas consultas')).motivo, 'bloqueado')
+})
+
+test('sem resposta da SVRS é marcado como tal', async () => {
+  const fora = criarClienteSvrs({ requisitar: async () => ({ status: 503, html: '' }) })
+  assert.equal((await fora.baixarNfe(CHAVE)).semResposta, true)
+  const caiu = criarClienteSvrs({ requisitar: async () => { throw new Error('getaddrinfo ENOTFOUND') } })
+  assert.equal((await caiu.baixarNfe(CHAVE)).semResposta, true)
+  assert.equal(lerRespostaSvrs(pagina('NF-e inexistente na base')).semResposta, undefined)
 })

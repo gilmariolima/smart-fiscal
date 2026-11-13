@@ -15,6 +15,7 @@ const PASSO_DESCE_MS = 15e3
 const INTERVALO_MAXIMO_MS = 180e3
 const CONSULTAS_PARA_DESCER = 20
 const TENTATIVAS = 3
+const FALHAS_PARA_PAUSAR = 3
 const CONCLUIDAS = ['baixada', 'ja-existia', 'nao-nfe']
 const MOTIVOS_IMPORTAR = {
   'sem-protocolo': 'nota sem autorização da SEFAZ',
@@ -49,7 +50,8 @@ function chavesDoTexto(texto) {
 
 function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRodar = () => null, aoImportar = () => {}, agora = () => new Date(), temporizador = { setTimeout, clearTimeout } }) {
   const armazenamento = criarArmazenamento({ config, db })
-  const base = () => config.buscaAntigaIntervaloMs || UM_MINUTO
+  // Abaixo de 1 min só na demonstração (SEFAZ simulada): na SVRS de verdade, 30 s já bloqueia o IP.
+  const base = () => (config.sefazMock ? config.buscaAntigaIntervaloMs || UM_MINUTO : Math.max(UM_MINUTO, config.buscaAntigaIntervaloMs || UM_MINUTO))
   const iso = () => agora().toISOString()
   const sql = {
     cliente: db.prepare("SELECT * FROM clientes WHERE id = ? AND cert_arquivo <> '' AND (papel = 'cliente' OR tambem_cliente = 1)"),
@@ -65,20 +67,34 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     pausada: db.prepare("SELECT valor FROM sistema WHERE chave = 'busca_antiga_pausada'").pluck(),
     pausar: db.prepare("INSERT INTO sistema (chave, valor) VALUES ('busca_antiga_pausada', '1') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor"),
     continuar: db.prepare("DELETE FROM sistema WHERE chave = 'busca_antiga_pausada'"),
+    lerSistema: db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck(),
+    gravarSistema: db.prepare('INSERT INTO sistema (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor'),
     limpar: db.prepare(`DELETE FROM busca_antiga WHERE situacao IN (${CONCLUIDAS.map((s) => `'${s}'`).join(',')})`),
   }
 
+  // O ritmo sobrevive a fechar e abrir o app: sem isso, a primeira consulta depois de abrir ignoraria o intervalo.
+  const lido = (chave) => sql.lerSistema.get(`busca_antiga_${chave}`) || null
+  const intervaloLido = Number(lido('intervalo')) || 0
   const st = {
     pausada: sql.pausada.get() === '1',
     iniciado: false,
     ocupado: false,
     timer: null,
     proximaEm: null,
-    voltaAs: null,
+    voltaAs: lido('volta') ? new Date(lido('volta')) : null,
+    pausaPor: lido('pausa_por'),
     motivo: null,
-    intervaloMs: base(),
+    intervaloMs: Math.min(INTERVALO_MAXIMO_MS, Math.max(base(), intervaloLido)),
     semBloqueio: 0,
-    ultimaConsulta: null,
+    falhasSeguidas: 0,
+    ultimaConsulta: Number(lido('ultima')) || null,
+  }
+
+  function gravarRitmo() {
+    sql.gravarSistema.run('busca_antiga_ultima', String(st.ultimaConsulta || ''))
+    sql.gravarSistema.run('busca_antiga_volta', st.voltaAs ? st.voltaAs.toISOString() : '')
+    sql.gravarSistema.run('busca_antiga_pausa_por', st.pausaPor || '')
+    sql.gravarSistema.run('busca_antiga_intervalo', String(st.intervaloMs))
   }
 
   function cancelar() {
@@ -147,19 +163,24 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     return situacao
   }
 
-  function aposConsulta(bloqueado) {
+  // tipo: 'ok' | 'bloqueio' (múltiplas consultas: pausa e alonga o intervalo) | 'sem-resposta' (SVRS fora do ar: só pausa).
+  function aposConsulta(tipo) {
     st.ultimaConsulta = agora().getTime()
-    if (bloqueado) {
+    if (tipo === 'ok') {
+      if (++st.semBloqueio >= CONSULTAS_PARA_DESCER) {
+        st.intervaloMs = Math.max(base(), st.intervaloMs - PASSO_DESCE_MS)
+        st.semBloqueio = 0
+      }
+    } else {
       st.voltaAs = new Date(st.ultimaConsulta + PAUSA_BLOQUEIO_MS)
-      st.intervaloMs = Math.min(INTERVALO_MAXIMO_MS, st.intervaloMs + PASSO_SOBE_MS)
-      st.semBloqueio = 0
-      logger.warn('SVRS pediu pausa (múltiplas consultas)', { intervaloS: st.intervaloMs / 1000 })
-      return
+      st.pausaPor = tipo
+      if (tipo === 'bloqueio') {
+        st.intervaloMs = Math.min(INTERVALO_MAXIMO_MS, st.intervaloMs + PASSO_SOBE_MS)
+        st.semBloqueio = 0
+        logger.warn('SVRS pediu pausa (múltiplas consultas)', { intervaloS: st.intervaloMs / 1000 })
+      } else logger.warn('SVRS sem resposta: busca de notas antigas pausada por 5 min')
     }
-    if (++st.semBloqueio >= CONSULTAS_PARA_DESCER) {
-      st.intervaloMs = Math.max(base(), st.intervaloMs - PASSO_DESCE_MS)
-      st.semBloqueio = 0
-    }
+    gravarRitmo()
   }
 
   /** Processa a primeira chave da fila. Devolve a situação final, 'bloqueado' ou null (fila vazia). */
@@ -180,7 +201,18 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     } catch (e) {
       r = st.consultou ? { motivo: 'erro', mensagem: e.message, repetir: true } : { motivo: 'erro', mensagem: `Certificado do cliente indisponível: ${e.message}` }
     }
-    if (st.consultou) aposConsulta(r.motivo === 'bloqueado')
+    // SVRS fora do ar (rede ou HTTP 5xx) não gasta tentativa da chave; 3 seguidas pausam a fila como no bloqueio.
+    if (st.consultou && r.semResposta) {
+      if (++st.falhasSeguidas >= FALHAS_PARA_PAUSAR) {
+        st.falhasSeguidas = 0
+        aposConsulta('sem-resposta')
+        return 'bloqueado'
+      }
+      aposConsulta('ok')
+      return marcar(l, 'fila', r.mensagem)
+    }
+    st.falhasSeguidas = 0
+    if (st.consultou) aposConsulta(r.motivo === 'bloqueado' ? 'bloqueio' : 'ok')
 
     if (r.xml) {
       let ri
@@ -233,7 +265,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
 
   function iniciar() {
     st.iniciado = true
-    if (!st.pausada && sql.pendentes.get()) agendar(base())
+    if (!st.pausada && sql.pendentes.get()) agendar(Math.max(base(), restante()))
   }
 
   /** Para de agendar; devolve a promessa da consulta em curso (o banco só fecha depois dela). */
@@ -264,6 +296,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       intervaloS: st.intervaloMs / 1000,
       proximaEm: st.proximaEm ? st.proximaEm.toISOString() : null,
       voltaAs: volta,
+      pausaPor: volta ? st.pausaPor : null,
       total: sql.total.get(),
       pendentes: sql.pendentes.get(),
     }

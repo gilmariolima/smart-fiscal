@@ -20,7 +20,8 @@ function Andamento({ estado, agora }) {
   if (!estado.total) return <p className="antigas-andamento">Nenhuma chave na fila.</p>
   let texto
   if (estado.pausada) texto = 'Pausado'
-  else if (estado.voltaAs) texto = `SVRS pediu pausa: volta às ${horaMinuto(estado.voltaAs)}`
+  else if (estado.voltaAs)
+    texto = estado.pausaPor === 'sem-resposta' ? `SVRS sem resposta: tenta de novo às ${horaMinuto(estado.voltaAs)}` : `SVRS pediu pausa: volta às ${horaMinuto(estado.voltaAs)}`
   else if (estado.motivo) texto = estado.motivo
   else if (!estado.pendentes) texto = 'Fila concluída'
   else if (estado.rodando) texto = 'Consultando a SVRS…'
