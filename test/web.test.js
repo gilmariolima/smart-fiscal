@@ -2277,7 +2277,7 @@ test('importar sem a pasta principal escolhida dá 409', async (t) => {
 
 test('procurador: cadastrar, consultar e remover; só no PC local', async (t) => {
   const { pedir } = await montar(t)
-  assert.deepEqual((await pedir('/api/procurador')).corpo, { procurador: null })
+  assert.deepEqual((await pedir('/api/procurador')).corpo, { procurador: null, procuradores: [] })
 
   const cert = gerarPfx({ comSan: false, comCnpjNoCn: false, razao: 'MARCOS AURELIO', senha: 'p' })
   const ok = await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'p' } })
@@ -2289,8 +2289,13 @@ test('procurador: cadastrar, consultar e remover; só no PC local', async (t) =>
   const senhaErrada = await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: cert.pfx.toString('base64'), senha: 'errada' } })
   assert.equal(senhaErrada.status, 400)
 
-  assert.equal((await pedir('/api/procurador/remover', { method: 'POST', body: {} })).status, 200)
-  assert.deepEqual((await pedir('/api/procurador')).corpo, { procurador: null })
+  const outro = gerarPfx({ comSan: false, comCnpjNoCn: false, razao: 'JOANA SILVA', senha: 'q' })
+  assert.equal((await pedir('/api/procurador/certificado', { method: 'POST', body: { pfx: outro.pfx.toString('base64'), senha: 'q' } })).status, 200)
+  const lista = (await pedir('/api/procurador')).corpo.procuradores
+  assert.equal(lista.length, 2)
+  assert.equal((await pedir('/api/procurador/remover', { method: 'POST', body: {} })).status, 400)
+  for (const p of lista) assert.equal((await pedir('/api/procurador/remover', { method: 'POST', body: { id: p.id } })).status, 200)
+  assert.deepEqual((await pedir('/api/procurador')).corpo, { procurador: null, procuradores: [] })
 })
 
 test('procurador: rotas de escrita recusadas fora do PC', async (t) => {
@@ -2395,4 +2400,15 @@ test('notas antigas: só chaves de estado com SEFAZ própria não dá erro', asy
   const r = await pedir('/api/busca-antiga', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, texto: sp } })
   assert.deepEqual([r.status, r.corpo.outroEstado], [200, 1])
   assert.equal((await pedir('/api/busca-antiga?situacao=outro-estado')).corpo.linhas.length, 1)
+})
+
+test('clientes: sem A1 mostra o procurador que tem procuração para ele', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  const semA1 = '27865757000102'
+  await pedir('/api/clientes', { method: 'POST', body: { cnpj: semA1, razao: 'Sem Cert Ltda', uf: 'CE', semCertificado: true } })
+  const id = ctx.db.prepare("INSERT INTO procuradores (arquivo, senha_enc, titular) VALUES ('p.pfx', 'x', 'JOANA SILVA:12345678901')").run().lastInsertRowid
+  ctx.db.prepare('UPDATE clientes SET procurador_id = ? WHERE cnpj = ?').run(id, semA1)
+  const c = (await pedir('/api/clientes')).corpo.clientes.find((x) => x.cnpj === semA1)
+  assert.equal(c.procurador, 'JOANA SILVA:12345678901')
+  assert.equal((await pedir('/api/clientes')).corpo.clientes.find((x) => x.cnpj === CNPJ_MOCK_OK).procurador, null)
 })

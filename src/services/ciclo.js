@@ -36,7 +36,7 @@ function criarServicoCiclo(deps) {
     ativos: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo <> '' ORDER BY id"),
     // Com procurador cadastrado, os sem certificado entram só para a NFS-e (via procuração no ADN).
     ativosSemCert: db.prepare("SELECT * FROM clientes WHERE ativo = 1 AND papel = 'cliente' AND cert_arquivo = '' ORDER BY id"),
-    temProcurador: db.prepare("SELECT 1 FROM sistema WHERE chave = 'procurador_senha_enc'").pluck(),
+    temProcurador: db.prepare('SELECT 1 FROM procuradores LIMIT 1').pluck(),
     escritorio: db.prepare("SELECT * FROM clientes WHERE papel = 'escritorio' AND ativo = 1 LIMIT 1"),
     porCnpj: db.prepare('SELECT * FROM clientes WHERE cnpj = ?'),
   }

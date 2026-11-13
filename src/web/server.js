@@ -227,6 +227,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
 
   const futuro = (iso) => (iso && new Date(iso).getTime() > agora().getTime() ? iso : null)
 
+  const titularDoProcurador = db.prepare('SELECT titular FROM procuradores WHERE id = ?').pluck()
+
   app.get('/api/clientes', (req, res) => {
     const contagens = new Map(sql.contagemPorCliente.all({ maxTentativas: config.maxTentativasDownload, competencia: competenciaAtual() }).map((c) => [c.cliente_id, c]))
     const capturas = new Map(sql.ultimaCapturaPorCliente.all().map((e) => [e.cliente_id, e]))
@@ -273,6 +275,8 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
           automatica: { nfe: c.auto_nfe !== 0, nfse: c.auto_nfse !== 0, cte: c.auto_cte !== 0 },
           notasTotal: n.total || 0,
           temCertificado: !!c.cert_arquivo,
+          // Sem A1: o procurador que já mostrou ter procuração para o cliente (descoberto na captura de NFS-e).
+          procurador: !c.cert_arquivo && c.procurador_id ? titularDoProcurador.get(c.procurador_id) || null : null,
           certValidade: c.cert_validade,
           certDias: c.cert_validade ? diasParaVencer(c.cert_validade, agora()) : null,
           notas: {
@@ -975,20 +979,24 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
 
   // ---------- certificado procurador (só no próprio computador) ----------
 
+  // `procurador`: o primeiro (para quem só quer saber se há algum); `procuradores`: todos.
   app.get('/api/procurador', (req, res) => {
-    res.json({ procurador: ctx.clientes.obterProcurador() })
+    const procuradores = ctx.clientes.listarProcuradores()
+    res.json({ procurador: procuradores[0] || null, procuradores })
   })
 
   app.post('/api/procurador/certificado', (req, res) => {
     exigirLocal(req)
     const pfx = lerPfx(req.body)
-    const r = comoErroHttp(() => ctx.clientes.salvarProcurador({ pfx, senha: req.body.senha }))
+    const r = comoErroHttp(() => ctx.clientes.adicionarProcurador({ pfx, senha: req.body.senha }))
     res.json({ procurador: r })
   })
 
   app.post('/api/procurador/remover', (req, res) => {
     exigirLocal(req)
-    ctx.clientes.removerProcurador()
+    const id = Number(req.body?.id)
+    if (!Number.isInteger(id) || id <= 0) throw new ErroHttp(400, 'Escolha o procurador a remover.')
+    if (!ctx.clientes.removerProcurador(id)) throw new ErroHttp(404, 'Procurador não encontrado.')
     res.json({ ok: true })
   })
 

@@ -258,51 +258,59 @@ function FormTroca({ alvo, escritorio, aoSalvar, aoExcluir }) {
   )
 }
 
-// Certificado procurador: e-CPF (ou e-CNPJ) com procuração no portal nacional, para puxar a NFS-e de
-// clientes sem certificado próprio. Fica na tela Escritório, mas é um certificado à parte.
+// Certificados procuradores: e-CPF (ou e-CNPJ) com procuração no portal nacional, para puxar a NFS-e de
+// clientes sem certificado. Pode haver vários: na captura, o app descobre qual tem procuração de cada cliente.
 function Procurador() {
   const { dados, recarregar } = useApi('/api/procurador')
   const envio = useEnvioDeCertificado()
-  const [removendo, setRemovendo] = useState(false)
-  const proc = dados?.procurador
+  const [removendo, setRemovendo] = useState(null)
+  const [erro, setErro] = useState(null)
+  const lista = dados?.procuradores || []
   const salvar = (e) =>
     envio.enviar(e, async (cert) => {
       const r = await api.post('/api/procurador/certificado', cert)
       recarregar()
       return r.procurador
     })
-  async function remover() {
-    setRemovendo(true)
+  async function remover(id) {
+    setRemovendo(id)
+    setErro(null)
     try {
-      await api.post('/api/procurador/remover')
+      await api.post('/api/procurador/remover', { id })
       recarregar()
+    } catch (e) {
+      setErro(e.message)
     } finally {
-      setRemovendo(false)
+      setRemovendo(null)
     }
   }
-  const aviso = proc && (proc.diasParaVencer < 0 ? ' (vencido)' : proc.diasParaVencer < 30 ? ` (vence em ${plural(proc.diasParaVencer, 'dia', 'dias')})` : '')
+  const aviso = (p) => (p.diasParaVencer < 0 ? ' (vencido)' : p.diasParaVencer < 30 ? ` (vence em ${plural(p.diasParaVencer, 'dia', 'dias')})` : '')
   return (
-    <section className="cartao cartao-procurador" aria-label="Certificado procurador">
-      <h2>Certificado procurador</h2>
-      <p className="apagado">Para puxar a NFS-e de clientes sem certificado, cadastre aqui o certificado com procuração no portal nacional. Ele vale só para a NFS-e desses clientes.</p>
-      {proc && (
-        <p>
-          Titular: <strong>{proc.titular || '—'}</strong> · válido até {data(proc.validade)}
-          {aviso}
-        </p>
+    <section className="cartao cartao-procurador" aria-label="Certificados procuradores">
+      <h2>Certificados procuradores</h2>
+      <p className="apagado">Para puxar a NFS-e de clientes sem certificado, cadastre aqui os certificados com procuração no portal nacional. Na captura, o app descobre qual deles tem procuração de cada cliente.</p>
+      {lista.length > 0 && (
+        <ul className="lista-procuradores">
+          {lista.map((p) => (
+            <li key={p.id}>
+              <span>
+                <strong>{String(p.titular || '—').split(':')[0]}</strong> · válido até {data(p.validade)}
+                {aviso(p)}
+              </span>
+              <button type="button" className="botao botao-claro" onClick={() => remover(p.id)} disabled={removendo === p.id}>
+                {removendo === p.id ? 'Removendo…' : 'Remover'}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
-      {envio.erro && <div className="faixa faixa-erro" role="alert">{envio.erro}</div>}
+      {(envio.erro || erro) && <div className="faixa faixa-erro" role="alert">{envio.erro || erro}</div>}
       <form className="formulario" onSubmit={salvar}>
         <CamposCertificado arquivo={envio.arquivo} senha={envio.senha} />
         <div className="formulario-acoes">
           <button type="submit" className="botao botao-azul" disabled={envio.enviando}>
-            {envio.enviando ? 'Conferindo o certificado…' : proc ? 'Trocar certificado' : 'Cadastrar procurador'}
+            {envio.enviando ? 'Conferindo o certificado…' : lista.length ? 'Adicionar procurador' : 'Cadastrar procurador'}
           </button>
-          {proc && (
-            <button type="button" className="botao botao-claro" onClick={remover} disabled={removendo}>
-              Remover
-            </button>
-          )}
         </div>
       </form>
     </section>

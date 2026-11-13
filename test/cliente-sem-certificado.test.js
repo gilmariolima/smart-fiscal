@@ -118,7 +118,7 @@ function comProcurador(t, { procurador = true } = {}) {
   r.clientes.cadastrar({ cnpj: SEM, razao: 'Sem Cert Ltda', uf: 'CE' })
   r.amb.db.prepare('UPDATE clientes SET auto_nfe = 1, auto_nfse = 1, auto_cte = 1 WHERE cnpj = ?').run(SEM)
   r.amb.adn.adicionar(SEM, [nfseDoc({ chave: chaveNfseProc(PRESTADOR_PROC, 1), prestador: PRESTADOR_PROC, tomador: SEM })])
-  if (procurador) r.amb.db.prepare("INSERT INTO sistema (chave, valor) VALUES ('procurador_senha_enc', 'x') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run()
+  if (procurador) r.amb.db.prepare("INSERT INTO procuradores (arquivo, senha_enc, titular) VALUES ('p.pfx', 'x', 'PROCURADOR')").run()
   return r
 }
 const linhaDe = (res, cnpj) => res.clientes.find((c) => c.cnpj === cnpj)

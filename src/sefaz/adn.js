@@ -102,26 +102,57 @@ function criarClienteAdn({ cnpj, pfx, passphrase, producao = true, requisitar, d
 
 let mockCompartilhado = null
 
-/** Fábrica usada pelos serviços: linha de `clientes` → cliente do ADN (ou o simulado, com SEFAZ_MOCK=1). */
-// `obterProcurador()` devolve { pfx, passphrase } do certificado procurador (ou null): usado só para
-// clientes sem certificado próprio, com `cnpjConsulta` = CNPJ do cliente.
-function criarFabricaAdn(config, obterProcurador = () => null) {
+/**
+ * Fábrica usada pelos serviços: linha de `clientes` → cliente do ADN (ou o simulado, com SEFAZ_MOCK=1).
+ * Cliente com A1 próprio usa o dele. Sem A1, usa os procuradores (`obterProcuradores()` → [{ id, pfx, passphrase, vencido }]):
+ * o guardado no cliente (`procurador_id`) primeiro, depois os outros válidos; quem responder sem E2245 (sem procuração)
+ * fica para os lotes seguintes e é guardado com `lembrar(clienteId, procuradorId)`.
+ */
+function criarFabricaAdn(config, obterProcuradores = () => [], { lembrar = () => {}, criarCliente = criarClienteAdn } = {}) {
   if (config.sefazMock) {
     if (!mockCompartilhado) mockCompartilhado = require('./adn-mock').criarAdnMock()
     return (cliente) => mockCompartilhado.cliente(cliente.cnpj)
   }
+  const producao = config.tpAmb === '1'
   const indisponivel = (cnpj, e) => ({ cnpj, consultarLote: async () => ({ ok: false, status: null, documentos: [], erro: `Certificado indisponível: ${e.message}` }) })
+
+  function pelosProcuradores(cliente) {
+    const todos = obterProcuradores() || []
+    if (!todos.length) throw new Error('cliente sem certificado e sem procurador')
+    const validos = todos.filter((p) => !p.vencido)
+    if (!validos.length) throw new Error('certificado procurador vencido; cadastre um novo')
+    const ordem = [...validos.filter((p) => p.id === cliente.procurador_id), ...validos.filter((p) => p.id !== cliente.procurador_id)]
+    let escolhido = null
+    return {
+      cnpj: cliente.cnpj,
+      async consultarLote(nsu) {
+        if (escolhido) return escolhido.adn.consultarLote(nsu)
+        let ultimo = null
+        for (const p of ordem) {
+          const adn = criarCliente({ cnpj: cliente.cnpj, pfx: p.pfx, passphrase: p.passphrase, producao })
+          const r = await adn.consultarLote(nsu)
+          if (!r.ok && /E2245/.test(r.erro || '')) {
+            ultimo = r
+            continue
+          }
+          escolhido = { adn, id: p.id }
+          if (p.id !== cliente.procurador_id && cliente.id) lembrar(cliente.id, p.id)
+          return r
+        }
+        return { ...ultimo, erro: `E2245 Nenhum procurador cadastrado tem procuração para este CNPJ (${ultimo?.erro || ''})` }
+      },
+    }
+  }
+
   return (cliente) => {
     try {
       const comArquivo = cliente.cert_arquivo
-      const proc = comArquivo ? null : obterProcurador()
-      if (!comArquivo && !proc) throw new Error('cliente sem certificado e sem procurador')
-      if (proc?.vencido) throw new Error('certificado procurador vencido; cadastre um novo')
-      return criarClienteAdn({
+      if (!comArquivo) return pelosProcuradores(cliente)
+      return criarCliente({
         cnpj: cliente.cnpj,
-        pfx: comArquivo ? fs.readFileSync(path.join(config.pastaCerts, comArquivo)) : proc.pfx,
-        passphrase: comArquivo ? descriptografar(cliente.cert_senha_enc, config.masterKey) : proc.passphrase,
-        producao: config.tpAmb === '1',
+        pfx: fs.readFileSync(path.join(config.pastaCerts, comArquivo)),
+        passphrase: descriptografar(cliente.cert_senha_enc, config.masterKey),
+        producao,
       })
     } catch (e) {
       return indisponivel(cliente.cnpj, e)

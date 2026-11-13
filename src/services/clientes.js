@@ -18,7 +18,7 @@ const TRAVAMENTO = new Set(['EBUSY', 'EPERM', 'EACCES'])
 const COLUNAS_PUBLICAS = `id, cnpj, razao_social, apelido, uf, cert_arquivo, cert_validade, ativo, papel, ult_nsu, max_nsu,
   proxima_consulta, bloqueado_ate, ultima_consulta, ultimo_erro, criado_em,
   nfse_ult_nsu, nfse_proxima_consulta, nfse_ultima_consulta, nfse_ultimo_erro, tambem_cliente, auto_nfe, auto_nfse,
-  cte_ult_nsu, cte_proxima_consulta, cte_ultima_consulta, cte_ultimo_erro, cte_bloqueado_ate, auto_cte`
+  cte_ult_nsu, cte_proxima_consulta, cte_ultima_consulta, cte_ultimo_erro, cte_bloqueado_ate, auto_cte, procurador_id`
 
 // Linhas que têm notas próprias: os clientes e o escritório quando ele também é cliente.
 const DA_CARTEIRA = "(papel = 'cliente' OR tambem_cliente = 1)"
@@ -122,34 +122,48 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
     lerSistema: db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck(),
   }
 
-  // Certificado procurador: um e-CPF (ou e-CNPJ) com procuração no portal nacional, para puxar a NFS-e de
-  // clientes sem certificado próprio. Guardado em certs/procurador.pfx + linhas em `sistema`. Não é cliente.
-  function salvarProcurador({ pfx, senha }) {
+  // Certificados procuradores: e-CPF (ou e-CNPJ) com procuração no portal nacional, para puxar a NFS-e de
+  // clientes sem certificado próprio. Cada um em certs/procurador-<n>.pfx + uma linha em `procuradores`. Não são clientes.
+  const sqlProc = {
+    lista: db.prepare('SELECT * FROM procuradores ORDER BY id'),
+    um: db.prepare('SELECT * FROM procuradores WHERE id = ?'),
+    mesmo: db.prepare('SELECT 1 FROM procuradores WHERE titular IS ? AND validade IS ?'),
+    inserir: db.prepare('INSERT INTO procuradores (arquivo, senha_enc, titular, validade) VALUES (?, ?, ?, ?)'),
+    apagar: db.prepare('DELETE FROM procuradores WHERE id = ?'),
+    soltarClientes: db.prepare('UPDATE clientes SET procurador_id = NULL WHERE procurador_id = ?'),
+  }
+  const publico = (p) => ({ id: p.id, titular: p.titular || null, validade: p.validade, diasParaVencer: p.validade ? diasParaVencer(p.validade, agora()) : null })
+
+  function adicionarProcurador({ pfx, senha }) {
     const cert = lerCertificado(pfx, senha)
     if (diasParaVencer(cert.validade, agora()) < 0) throw new Error(`Certificado vencido em ${cert.validade.slice(0, 10)}.`)
+    if (sqlProc.mesmo.get(cert.titular || null, cert.validade)) throw new Error('Este procurador já está cadastrado.')
     fs.mkdirSync(config.pastaCerts, { recursive: true })
-    const destino = path.join(config.pastaCerts, 'procurador.pfx')
+    const arquivo = `procurador-${agora().getTime()}.pfx`
+    const destino = path.join(config.pastaCerts, arquivo)
     const tmp = `${destino}.${process.pid}.tmp`
     fs.writeFileSync(tmp, pfx, { mode: 0o600 })
     fs.renameSync(tmp, destino)
-    sql.gravarSistema.run('procurador_senha_enc', criptografar(senha, config.masterKey))
-    sql.gravarSistema.run('procurador_titular', cert.titular || '')
-    sql.gravarSistema.run('procurador_validade', cert.validade)
+    const id = sqlProc.inserir.run(arquivo, criptografar(senha, config.masterKey), cert.titular || null, cert.validade).lastInsertRowid
     logger.info('Certificado procurador salvo', { titular: cert.titular, validade: cert.validade })
-    return { titular: cert.titular, validade: cert.validade }
+    return publico(sqlProc.um.get(id))
   }
 
-  function removerProcurador() {
-    fs.rmSync(path.join(config.pastaCerts, 'procurador.pfx'), { force: true })
-    for (const c of ['procurador_senha_enc', 'procurador_titular', 'procurador_validade']) sql.apagarSistema.run(c)
-    logger.info('Certificado procurador removido')
+  function removerProcurador(id) {
+    const p = sqlProc.um.get(Number(id))
+    if (!p) return false
+    db.transaction(() => {
+      sqlProc.soltarClientes.run(p.id)
+      sqlProc.apagar.run(p.id)
+    })()
+    fs.rmSync(path.join(config.pastaCerts, p.arquivo), { force: true })
+    logger.info('Certificado procurador removido', { titular: p.titular })
+    return true
   }
 
-  function obterProcurador() {
-    if (!sql.lerSistema.get('procurador_senha_enc')) return null
-    const validade = sql.lerSistema.get('procurador_validade')
-    return { titular: sql.lerSistema.get('procurador_titular') || null, validade, diasParaVencer: validade ? diasParaVencer(validade, agora()) : null }
-  }
+  const listarProcuradores = () => sqlProc.lista.all().map(publico)
+  // O primeiro da lista (ou null): para quem só quer saber se há procurador.
+  const obterProcurador = () => listarProcuradores()[0] || null
 
   /** Abre o .pfx e confere senha, validade e raiz do CNPJ. Lança Error com a mensagem para o usuário. */
   function validarCertificado(cnpj, pfx, senha) {
@@ -682,17 +696,22 @@ function criarServicoClientes({ db, config, logger, agora = () => new Date() }) 
 
   const obterEscritorio = () => sql.escritorio.get() || null
 
-  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado, reconciliarPasta, salvarProcurador, removerProcurador, obterProcurador }
+  return { cadastrar, cadastrarEscritorio, editarEscritorio, excluirEscritorio, obterEscritorio, trocarCertificado, definirAtivo, definirAutomatica, definirAutomaticaDeVarios, editar, excluir, listar, obter, validarCertificado, reconciliarPasta, adicionarProcurador, removerProcurador, listarProcuradores, obterProcurador }
 }
 
-// Certificado procurador para a captura: o .pfx no disco, a senha descriptografada e se já venceu, ou null.
-function lerProcuradorCert({ db, config, agora = new Date() }) {
-  const ler = (chave) => db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get(chave)
-  const enc = ler('procurador_senha_enc')
-  const arquivo = path.join(config.pastaCerts, 'procurador.pfx')
-  if (!enc || !fs.existsSync(arquivo)) return null
-  const validade = ler('procurador_validade')
-  return { pfx: fs.readFileSync(arquivo), passphrase: descriptografar(enc, config.masterKey), vencido: !!validade && diasParaVencer(validade, agora) < 0 }
+// Procuradores para a captura: o .pfx de cada um, a senha descriptografada e se já venceu (arquivo sumido fica de fora).
+function lerProcuradores({ db, config, agora = new Date() }) {
+  return db
+    .prepare('SELECT * FROM procuradores ORDER BY id')
+    .all()
+    .filter((p) => fs.existsSync(path.join(config.pastaCerts, p.arquivo)))
+    .map((p) => ({
+      id: p.id,
+      titular: p.titular,
+      pfx: fs.readFileSync(path.join(config.pastaCerts, p.arquivo)),
+      passphrase: descriptografar(p.senha_enc, config.masterKey),
+      vencido: !!p.validade && diasParaVencer(p.validade, agora) < 0,
+    }))
 }
 
-module.exports = { criarServicoClientes, lerProcuradorCert, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }
+module.exports = { criarServicoClientes, lerProcuradores, cnpjValido, somenteDigitos, DIAS_ALERTA_CERT, COLUNAS_PUBLICAS, DA_CARTEIRA }

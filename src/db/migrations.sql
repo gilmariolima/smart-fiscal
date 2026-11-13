@@ -124,3 +124,14 @@ CREATE TABLE IF NOT EXISTS busca_antiga (
   atualizado_em TEXT,
   UNIQUE(cliente_id, chave)
 );
+
+-- Certificados procuradores (e-CPF/e-CNPJ com procuração no portal nacional): puxam a NFS-e de clientes sem A1.
+-- clientes.procurador_id guarda qual deles tem procuração para o cliente (descoberto na captura).
+CREATE TABLE IF NOT EXISTS procuradores (
+  id INTEGER PRIMARY KEY,
+  arquivo TEXT NOT NULL,              -- nome do .pfx dentro de certs/
+  senha_enc TEXT NOT NULL,            -- AES-256-GCM
+  titular TEXT,
+  validade TEXT,
+  criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+);

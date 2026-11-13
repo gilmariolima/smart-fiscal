@@ -3300,6 +3300,21 @@ a.botao-icone {
 
 /* ---------- Certificado procurador ---------- */
 
+.lista-procuradores {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.lista-procuradores li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borda);
+}
+
 .cartao-procurador {
   margin-top: 20px;
   padding: 16px 18px;

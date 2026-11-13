@@ -97,7 +97,8 @@ const COLUNAS_NOVAS = [
   ['clientes', 'cte_ultima_consulta', 'TEXT'],
   ['clientes', 'cte_ultimo_erro', 'TEXT'],
   ['clientes', 'cte_bloqueado_ate', 'TEXT'],
-  ['clientes', 'auto_cte', 'INTEGER NOT NULL DEFAULT 0'], // cliente de antes do CT-e não começa a buscar sozinho; o cadastro grava 1
+  ['clientes', 'auto_cte', 'INTEGER NOT NULL DEFAULT 0'],
+  ['clientes', 'procurador_id', 'INTEGER'], // procurador que tem procuração para o cliente (NFS-e sem A1) // cliente de antes do CT-e não começa a buscar sozinho; o cadastro grava 1
   ['notas', 'origem', "TEXT NOT NULL DEFAULT 'captura'"], // captura | importada (tela Importar XMLs)
 ]
 
@@ -143,6 +144,17 @@ function abrirBanco(caminho) {
     if (!db.prepare("SELECT 1 FROM sistema WHERE chave = 'sem_certificado_ativos'").get()) {
       db.exec("UPDATE clientes SET ativo = 1 WHERE cert_arquivo = '' AND papel = 'cliente'")
       db.prepare("INSERT INTO sistema (chave, valor) VALUES ('sem_certificado_ativos', '1')").run()
+    }
+    // O procurador único de antes (linhas em `sistema` + certs/procurador.pfx) vira o primeiro da lista.
+    const ler = db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck()
+    const enc = ler.get('procurador_senha_enc')
+    if (enc) {
+      db.transaction(() => {
+        if (!db.prepare('SELECT 1 FROM procuradores LIMIT 1').get()) {
+          db.prepare("INSERT INTO procuradores (arquivo, senha_enc, titular, validade) VALUES ('procurador.pfx', ?, ?, ?)").run(enc, ler.get('procurador_titular') || null, ler.get('procurador_validade') || null)
+        }
+        db.exec("DELETE FROM sistema WHERE chave IN ('procurador_senha_enc', 'procurador_titular', 'procurador_validade')")
+      })()
     }
     db.pragma('user_version = 1')
   } catch (e) {

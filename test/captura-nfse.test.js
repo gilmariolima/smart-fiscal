@@ -169,5 +169,5 @@ test('erro E2245 do ADN vira aviso de sem procuração e não trava o ciclo', as
   mock.falhar(CNPJ_MOCK_OK, 'HTTP 400: E2245 Não há procuração da inscrição 32314230310 para a inscrição 11222333000181.')
   const r = await servico.capturarCliente(id)
   assert.equal(r.ok, false)
-  assert.equal(cliente(db, id).nfse_ultimo_erro, 'Sem procuração para este cliente no certificado procurador.')
+  assert.equal(cliente(db, id).nfse_ultimo_erro, 'Nenhum procurador cadastrado tem procuração para este cliente.')
 })
