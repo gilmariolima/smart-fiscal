@@ -12,6 +12,8 @@ const archiver = require('archiver')
 const express = require('express')
 const { COLUNAS_PUBLICAS, DA_CARTEIRA } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
+const { consultarCadastro } = require('../sefaz/consultaCadastro')
+const { descriptografar } = require('../crypto')
 const { detalharNfe, detalharNfse, detalharCte } = require('../services/detalheNota')
 const { montarPlanilhaDoMes } = require('../services/planilhaMes')
 const { gerarDanfse, situacaoDanfse } = require('../services/danfse/gerar')
@@ -628,6 +630,27 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     const r = ctx.importacao.importar(arquivos)
     if (r.clientesAfetados.length) ctx.organizador.agendar({ conferirArquivos: true })
     res.json(r)
+  })
+
+  // Inscrição estadual pela consulta cadastro da SEFAZ (botão "Preencher pelo CNPJ" do Converter inventário).
+  // Qualquer A1 no prazo serve: o da própria empresa, se ela é cliente; senão o do escritório; senão o de outro cliente.
+  const certificadosParaConsulta = db.prepare(`SELECT cnpj, cert_arquivo, cert_senha_enc, cert_validade FROM clientes WHERE cert_arquivo <> ''
+    ORDER BY (cnpj = ?) DESC, (papel = 'escritorio') DESC, id`)
+  app.get('/api/consulta-ie', async (req, res) => {
+    if (!ehLocal(req)) throw new ErroHttp(403, 'A consulta da inscrição estadual só pode ser feita no próprio computador do sistema.')
+    const cnpj = String(req.query.cnpj || '').replace(/D/g, '')
+    const uf = String(req.query.uf || '').trim().toUpperCase()
+    if (cnpj.length !== 14) throw new ErroHttp(400, 'Preencha o CNPJ para consultar a inscrição estadual.')
+    if (!/^[A-Z]{2}$/.test(uf)) throw new ErroHttp(400, 'Preencha a UF para consultar a inscrição estadual.')
+    const cert = certificadosParaConsulta.all(cnpj).find((c) => !c.cert_validade || diasParaVencer(c.cert_validade, new Date()) >= 0)
+    if (!cert) throw new ErroHttp(400, 'Cadastre um certificado A1 no prazo (do escritório ou de um cliente) para consultar a inscrição estadual.')
+    if (config.sefazMock) return res.json({ ie: '0' + cnpj.slice(0, 8), situacao: '1', nome: null })
+    try {
+      const pfx = fs.readFileSync(path.join(config.pastaCerts, cert.cert_arquivo))
+      res.json(await consultarCadastro({ cnpj, uf, pfx, passphrase: descriptografar(cert.cert_senha_enc, config.masterKey) }))
+    } catch (e) {
+      throw new ErroHttp(400, e.message)
+    }
   })
 
   // Buscar notas antigas: fila de chaves de NF-e baixadas pela SVRS com o certificado do cliente, uma por minuto.

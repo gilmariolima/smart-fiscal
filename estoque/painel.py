@@ -537,6 +537,11 @@ class Painel(BaseHTTPRequestHandler):
                 return self.responder(info_pasta())
             if rota == "/api/escritorio":
                 return self.responder(gs.carregar_json(gs.ESCRITORIO))
+            if rota.startswith("/api/cnpj/"):  # botão "Preencher pelo CNPJ" (dados da Receita)
+                try:
+                    return self.responder({"campos": gs.campos_pelo_cnpj(unquote(rota[10:]))})
+                except ValueError as e:
+                    return self.responder({"erro": str(e)}, status=400)
             if rota.startswith("/baixar/"):
                 arq = gerado(rota[8:])
                 if arq.is_file():

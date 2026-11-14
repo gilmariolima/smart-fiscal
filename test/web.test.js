@@ -2412,3 +2412,21 @@ test('clientes: sem A1 mostra o procurador que tem procuração para ele', async
   assert.equal(c.procurador, 'JOANA SILVA:12345678901')
   assert.equal((await pedir('/api/clientes')).corpo.clientes.find((x) => x.cnpj === CNPJ_MOCK_OK).procurador, null)
 })
+
+// ---------- inscrição estadual pela consulta cadastro ----------
+
+test('consulta da IE usa o certificado da empresa e devolve a IE', async (t) => {
+  const { pedir } = await montar(t)
+  const r = await pedir(`/api/consulta-ie?cnpj=${CNPJ_MOCK_OK}&uf=CE`)
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.match(r.corpo.ie, /^\d{9}$/)
+  assert.equal((await pedir(`/api/consulta-ie?cnpj=${CNPJ_MOCK_OK}`)).status, 400)
+})
+
+test('consulta da IE sem certificado nenhum para usar dá 400', async (t) => {
+  const { ctx, pedir } = await montar(t)
+  ctx.db.prepare("UPDATE clientes SET cert_arquivo = ''").run()
+  const r = await pedir('/api/consulta-ie?cnpj=27865757000102&uf=CE')
+  assert.equal(r.status, 400)
+  assert.match(r.corpo.erro, /certificado/i)
+})

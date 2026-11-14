@@ -806,6 +806,19 @@ def consultar_cnpj(cnpj):
     }
 
 
+def campos_pelo_cnpj(cnpj):
+    """Dados da Receita para o formulário do Converter inventário (botão "Preencher pelo CNPJ").
+    A inscrição estadual não vem da Receita. Lança ValueError com a mensagem para a pessoa."""
+    cnpj = so_cnpj(cnpj)
+    if not cnpj_valido(cnpj):
+        raise ValueError("CNPJ inválido: confira o número")
+    try:
+        d = consultar_cnpj(cnpj)
+    except Exception as e:
+        raise ValueError(erro_consulta(cnpj, e)) from e
+    return {k: texto(d.get(k)) for k in ("nome", "uf", "cod_mun", "cep", "end", "num", "compl", "bairro")}
+
+
 def erro_consulta(cnpj, e):
     """Motivo da consulta do CNPJ que falhou, em português."""
     if isinstance(e, urllib.error.HTTPError) and e.code == 404:

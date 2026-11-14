@@ -1099,6 +1099,12 @@ select.entrada {
   grid-column: span 2;
 }
 
+/* Botão "Preencher pelo CNPJ": na linha do CNPJ, alinhado com as caixas */
+.grupo .preencher-cnpj {
+  align-self: end;
+  justify-self: start;
+}
+
 .grupo .larga3 {
   grid-column: span 3;
 }

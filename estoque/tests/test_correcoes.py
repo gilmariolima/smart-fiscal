@@ -899,5 +899,28 @@ class UnidadeDeslocada(Base):
         self.assertNotIn("Q24", aviso[2])
 
 
+class PreencherPeloCnpj(unittest.TestCase):
+    """Botão "Preencher pelo CNPJ" do Converter inventário: os dados da Receita no formulário."""
+
+    CONSULTA = {"nome": "LEITURA KENNEDY LIVRARIA E PAPELARIA LTDA", "fantasia": "LEITURA", "uf": "CE", "cod_mun": "2304400",
+                "cep": "60355512", "end": "AVENIDA SARGENTO HERMINIO SAMPAIO", "num": "3100", "compl": "LOJA 2051",
+                "bairro": "PRESIDENTE KENNEDY", "fone": "8521389784", "email": "kennedy@x.com", "cnae": "4761001"}
+
+    def test_campos_do_formulario(self):
+        with mock.patch.object(gs, "consultar_cnpj", return_value=dict(self.CONSULTA)) as c:
+            r = gs.campos_pelo_cnpj("43.563.363/0001-48")
+        c.assert_called_once_with("43563363000148")
+        self.assertEqual(r, {"nome": "LEITURA KENNEDY LIVRARIA E PAPELARIA LTDA", "uf": "CE", "cod_mun": "2304400", "cep": "60355512",
+                             "end": "AVENIDA SARGENTO HERMINIO SAMPAIO", "num": "3100", "compl": "LOJA 2051", "bairro": "PRESIDENTE KENNEDY"})
+
+    def test_cnpj_invalido_e_consulta_que_falha(self):
+        with self.assertRaisesRegex(ValueError, "CNPJ inválido"):
+            gs.campos_pelo_cnpj("123")
+        import urllib.error
+        with mock.patch.object(gs, "consultar_cnpj", side_effect=urllib.error.URLError("x")):
+            with self.assertRaisesRegex(ValueError, "sem acesso à internet"):
+                gs.campos_pelo_cnpj("43563363000148")
+
+
 if __name__ == "__main__":
     unittest.main()

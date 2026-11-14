@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Pagina from '../layout/Pagina.jsx'
 import Segmentado from '../componentes/Segmentado.jsx'
-import { baixar, milhar, TIPOS_ITEM } from './api.js'
+import { baixar, milhar, sped, TIPOS_ITEM } from './api.js'
+import { api } from '../api.js'
 import EditorItem from './EditorItem.jsx'
 import { useSped } from './SpedProvider.jsx'
 
@@ -90,6 +91,36 @@ function Kpi({ icone, rotulo, valor, classe = '' }) {
   )
 }
 
+// Dados da Receita (os mesmos do comprovante do CNPJ) e a inscrição estadual pela consulta cadastro da SEFAZ.
+function PreencherPeloCnpj() {
+  const { campos, digitar, aviso } = useSped()
+  const [buscando, setBuscando] = useState(false)
+  async function preencher() {
+    setBuscando(true)
+    try {
+      const r = await sped(`/api/cnpj/${encodeURIComponent(campos.cnpj || '')}`)
+      if (r.erro) return aviso(r.erro, 'erro')
+      for (const [k, v] of Object.entries(r.campos || {})) if (v) digitar(k, v)
+      const cnpj = String(campos.cnpj || '').replace(/D/g, '')
+      const uf = r.campos?.uf || campos.uf
+      try {
+        const cad = await api.get(`/api/consulta-ie?cnpj=${cnpj}&uf=${encodeURIComponent(uf || '')}`)
+        if (cad.ie) digitar('ie', cad.ie)
+        aviso(cad.situacao && cad.situacao !== '1' ? 'Dados preenchidos; a inscrição estadual não está habilitada na SEFAZ' : 'Dados da Receita e inscrição estadual preenchidos')
+      } catch (e) {
+        aviso(`Dados da Receita preenchidos; inscrição estadual: ${e.message}`, 'erro')
+      }
+    } finally {
+      setBuscando(false)
+    }
+  }
+  return (
+    <button type="button" className="botao botao-claro preencher-cnpj" onClick={preencher} disabled={buscando || !campos.cnpj?.trim()}>
+      {buscando ? 'Consultando…' : 'Preencher pelo CNPJ'}
+    </button>
+  )
+}
+
 function DadosEmpresa() {
   const { focar, limparFoco, converter } = useSped()
   const form = useRef(null)
@@ -109,6 +140,7 @@ function DadosEmpresa() {
           <legend>Identificação</legend>
           <Campo nome="nome" rotulo="Nome empresarial" larga />
           <Campo nome="cnpj" rotulo="CNPJ" spellCheck={false} />
+          <PreencherPeloCnpj />
           <Campo nome="ie" rotulo="Inscrição estadual" />
           <Campo nome="uf" rotulo="UF" maxLength={2} />
           <Campo nome="cod_mun" rotulo="Município (IBGE)" dica="Código IBGE do município, 7 dígitos" inputMode="numeric" maxLength={7} />
