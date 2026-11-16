@@ -16,23 +16,21 @@ export default function SeloCertificado({ c, procurador = false }) {
     )
   }
   if (c.certDias === null || c.certDias === undefined) return '—'
-  if (c.certDias < 0)
-    return (
-      <>
-        <Etiqueta cor="vermelha" titulo={`Venceu em ${data(c.certValidade)}`}>
-          Vencido
-        </Etiqueta>
-        {/* A1 vencido não puxa nada: a NFS-e vai pelo procurador */}
-        {procurador && (
-          <>
-            {' '}
-            <Etiqueta cor="verde" titulo="NFS-e pelo certificado procurador">
-              NFS-e pelo procurador
-            </Etiqueta>
-          </>
-        )}
-      </>
+  if (c.certDias < 0) {
+    const vencido = (
+      <Etiqueta cor="vermelha" titulo={`Venceu em ${data(c.certValidade)}`}>
+        Vencido
+      </Etiqueta>
     )
+    if (!procurador) return vencido
+    // A1 vencido não puxa nada: a NFS-e vai pelo procurador (linha de baixo, menor).
+    return (
+      <span className="selo-empilhado">
+        {vencido}
+        <span className="selo-nota">NFS-e pelo procurador</span>
+      </span>
+    )
+  }
   if (c.certDias < 30)
     return (
       <Etiqueta cor="ambar" titulo={`Válido até ${data(c.certValidade)}`}>
