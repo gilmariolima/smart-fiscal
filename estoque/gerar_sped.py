@@ -9,7 +9,7 @@ Entradas aceitas (o tipo é detectado pelo conteúdo):
 O primeiro arquivo com valores é o inventário; os demais só completam
 descrição, NCM, unidade, tipo do item, conta contábil e custo unitário.
 
-Leiaute: Guia Prático EFD ICMS/IPI 3.2.2 (leiaute 019 em 2025, 020 em 2026).
+Leiaute: Guia Prático EFD ICMS/IPI 3.2.3 (leiaute 019 em 2025, 020 em 2026, 021 em 2027).
 """
 
 import argparse
@@ -41,7 +41,7 @@ ESCRITORIO = DADOS / "escritorio.json"
 
 # Código da versão do leiaute por ano do DT_FIN (Ato COTEPE/ICMS 44/2018 e alterações)
 VERSAO_LEIAUTE = {2018: "012", 2019: "013", 2020: "014", 2021: "015", 2022: "016", 2023: "017", 2024: "018",
-                  2025: "019", 2026: "020"}
+                  2025: "019", 2026: "020", 2027: "021"}  # 021: Ato COTEPE/ICMS 69/2026, NT 2026.001
 
 # TIPO_ITEM do 0200 (Guia Prático, tabela do campo 07)
 TIPOS_ITEM = {"00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "99"}

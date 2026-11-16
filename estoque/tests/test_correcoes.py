@@ -529,8 +529,12 @@ class Fiscal(Base):
 
     def test_versao_do_leiaute(self):
         self.assertEqual(self.reg(self.gerar(arquivo("p4.csv", self.CSV), data_inv="31/12/2018"), "0000")[0][1], "013")
+        # Inventário de 31/12/2026 vai na EFD de 02/2027: leiaute 021 (Ato COTEPE/ICMS 69/2026, NT 2026.001)
+        res = self.gerar(arquivo("p8.csv", self.CSV), data_inv="31/12/2026")
+        self.assertEqual(self.reg(res, "0000")[0][1:5], ["021", "0", "01022027", "28022027"])
+        self.assertFalse(self.pend(res, "não conhece o leiaute"))
         res = self.gerar(arquivo("p5.csv", self.CSV), data_inv="31/12/2027")
-        self.assertEqual(self.reg(res, "0000")[0][1], "020")
+        self.assertEqual(self.reg(res, "0000")[0][1], "021")
         self.assertTrue(self.pend(res, "não conhece o leiaute de 2028"))
         with self.assertRaisesRegex(gs.ErroConversao, "cod-ver"):
             self.gerar(arquivo("p6.csv", self.CSV), data_inv="31/12/2015")
