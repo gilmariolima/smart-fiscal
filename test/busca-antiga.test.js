@@ -390,11 +390,14 @@ test('estado traz contagens e o resumo por empresa e direção', (t) => {
   assert.equal(e.contagens.fila, 2)
   const cli = e.clientes.find((c) => c.cnpj === CLIENTE)
   assert.deepEqual([cli.total, cli.baixadas, cli.problemas, cli.pendentes, cli.pausada], [3, 1, 1, 1, false])
-  assert.deepEqual(cli.direcoes.saida, { total: 1, baixadas: 1, problemas: 0, pendentes: 0 })
-  assert.deepEqual(cli.direcoes.entrada, { total: 2, baixadas: 0, problemas: 1, pendentes: 1 })
+  assert.deepEqual(cli.direcoes.saida, { total: 1, baixadas: 1, problemas: 0, pendentes: 0, outroEstado: 0 })
+  assert.deepEqual(cli.direcoes.entrada, { total: 2, baixadas: 0, problemas: 1, pendentes: 1, outroEstado: 0 })
   assert.equal(e.clientes.find((c) => c.cnpj === OUTRO_CLIENTE).pausada, true)
   assert.equal(cli.daVez, true)
   assert.equal(e.estimativaS, 60)
+  // A fila do outro cliente está pausada: só a do cliente conta como ativa.
+  assert.equal(e.pendentes, 2)
+  assert.equal(e.pendentesAtivos, 1)
 })
 
 test('listar filtra por empresa, direção e situação e traz os dados da nota baixada', async (t) => {

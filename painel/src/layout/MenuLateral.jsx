@@ -16,7 +16,7 @@ const GRUPOS = [
     itens: [
       { para: '/notas', rotulo: 'Notas', icone: 'fa-folder-open' },
       { para: '/importar', rotulo: 'Importar XMLs', icone: 'fa-file-arrow-up' },
-      { para: '/notas-antigas', rotulo: 'Notas antigas', icone: 'fa-hourglass-half' },
+      { para: '/busca-por-chave', rotulo: 'Busca por chave', icone: 'fa-magnifying-glass' },
       { para: '/exportar', rotulo: 'Exportar', icone: 'fa-file-zipper' },
     ],
   },

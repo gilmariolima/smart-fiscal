@@ -3250,6 +3250,239 @@ a.botao-icone {
   overflow-wrap: anywhere;
 }
 
+/* ---------- Busca por chave ---------- */
+
+.busca-andamento {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+
+.busca-ponto {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.busca-ponto-verde {
+  background: var(--ok);
+}
+
+.busca-ponto-ambar {
+  background: var(--pend);
+}
+
+.busca-ponto-cinza {
+  background: var(--apagado);
+}
+
+.busca-adicionar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+.busca-colar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.busca-colar select {
+  max-width: 420px;
+}
+
+.busca-sped-resumo ul,
+.busca-saidas-lista {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.busca-sped-resumo li,
+.busca-saidas-lista li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borda);
+}
+
+.busca-saidas-series {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  color: var(--apagado);
+}
+
+.busca-inicio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.busca-inicio .entrada {
+  width: 380px;
+  max-width: 100%;
+}
+
+.busca-erro {
+  color: var(--erro);
+}
+
+.busca-progresso {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 18px 0 6px;
+}
+
+.busca-progresso .busca-barra {
+  flex: 1;
+  max-width: 520px;
+}
+
+.busca-barra {
+  display: inline-block;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--borda);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.busca-barra > span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.busca-titulo {
+  margin: 22px 0 10px;
+  font-size: 17px;
+}
+
+.busca-empresas td {
+  vertical-align: middle;
+}
+
+.busca-empresas {
+  table-layout: fixed;
+}
+
+.busca-col-barra {
+  width: 220px;
+}
+
+.busca-col-conta {
+  width: 190px;
+}
+
+.busca-col-estado {
+  width: 110px;
+}
+
+.busca-col-acao {
+  width: 130px;
+  text-align: right;
+}
+
+.busca-estado-baixando {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.busca-estado-pausado {
+  color: var(--pend);
+  font-weight: 600;
+}
+
+.busca-estado-concluído {
+  color: var(--apagado);
+}
+
+.busca-empresa-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 12px;
+}
+
+.busca-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 12px;
+}
+
+.busca-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--fundo-cartao, #fff);
+}
+
+.busca-lista li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px 104px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.busca-lista li:last-child {
+  border-bottom: 0;
+}
+
+.busca-lista-marcar li {
+  grid-template-columns: 20px minmax(0, 1fr) 260px 104px;
+}
+
+.busca-nota {
+  min-width: 0;
+}
+
+.busca-nota-linha1 {
+  overflow-wrap: anywhere;
+}
+
+.busca-nota-chave {
+  font-size: 12px;
+  color: var(--apagado);
+}
+
+.busca-situacao {
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+}
+
+.busca-situacao small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--apagado);
+}
+
+.busca-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 /* ---------- Notas antigas ---------- */
 
 .antigas-form {

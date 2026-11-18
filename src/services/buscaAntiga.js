@@ -68,7 +68,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     pausarCliente: db.prepare('UPDATE clientes SET busca_pausada = ? WHERE id = ?'),
     contagens: db.prepare('SELECT situacao, COUNT(*) n FROM busca_antiga GROUP BY situacao'),
     porCliente: db.prepare(`SELECT c.id, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome, c.busca_pausada, COALESCE(b.direcao, 'entrada') AS direcao,
-        COUNT(*) total, SUM(b.situacao IN ('baixada', 'ja-existia')) baixadas, SUM(b.situacao IN ('erro', 'nao-envolvido')) problemas, SUM(b.situacao = 'fila') pendentes
+        COUNT(*) total, SUM(b.situacao IN ('baixada', 'ja-existia')) baixadas, SUM(b.situacao IN ('erro', 'nao-envolvido')) problemas, SUM(b.situacao = 'fila') pendentes, SUM(b.situacao = 'outro-estado') outroEstado
       FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id GROUP BY c.id, COALESCE(b.direcao, 'entrada') ORDER BY nome`),
     voltarProblemas: db.prepare("UPDATE busca_antiga SET situacao = 'fila', tentativas = 0, mensagem = NULL, atualizado_em = ? WHERE id = ? AND situacao IN ('erro', 'nao-envolvido')"),
     clienteDaLinha: db.prepare('SELECT * FROM clientes WHERE id = ?'),
@@ -328,6 +328,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       total: sql.total.get(),
       pendentes: sql.pendentes.get(),
       contagens: Object.fromEntries(sql.contagens.all().map((c) => [c.situacao, c.n])),
+      pendentesAtivos: sql.pendentesAtivos.get(),
       estimativaS: sql.pendentesAtivos.get() * (st.intervaloMs / 1000),
       clientes: resumoPorCliente(),
     }
@@ -336,11 +337,11 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
   // Uma linha por cliente (a "pasta"), com o total e o de cada direção.
   function resumoPorCliente() {
     const daVez = sql.proxima.get()?.cliente_id
-    const vazio = () => ({ total: 0, baixadas: 0, problemas: 0, pendentes: 0 })
+    const vazio = () => ({ total: 0, baixadas: 0, problemas: 0, pendentes: 0, outroEstado: 0 })
     const porId = new Map()
     for (const l of sql.porCliente.all()) {
-      const c = porId.get(l.id) || { cnpj: l.cnpj, nome: l.nome, total: 0, baixadas: 0, problemas: 0, pendentes: 0, pausada: !!l.busca_pausada, daVez: l.id === daVez, direcoes: { entrada: vazio(), saida: vazio() } }
-      for (const k of ['total', 'baixadas', 'problemas', 'pendentes']) {
+      const c = porId.get(l.id) || { cnpj: l.cnpj, nome: l.nome, total: 0, baixadas: 0, problemas: 0, pendentes: 0, outroEstado: 0, pausada: !!l.busca_pausada, daVez: l.id === daVez, direcoes: { entrada: vazio(), saida: vazio() } }
+      for (const k of ['total', 'baixadas', 'problemas', 'pendentes', 'outroEstado']) {
         c[k] += l[k] || 0
         c.direcoes[l.direcao === 'saida' ? 'saida' : 'entrada'][k] += l[k] || 0
       }
