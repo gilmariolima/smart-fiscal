@@ -642,7 +642,11 @@ h2 {
   font-size: 12px;
   font-weight: 500;
   color: var(--ok);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+
+.selo-nota-apagada {
+  color: var(--apagado);
 }
 
 .com-dica {

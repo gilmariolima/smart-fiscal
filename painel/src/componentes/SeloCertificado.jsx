@@ -9,10 +9,18 @@ const nomeCurto = (titular) => String(titular || '').split(':')[0].trim().split(
 export default function SeloCertificado({ c, procurador = false }) {
   if (c.temCertificado === false) {
     if (!procurador) return <Etiqueta cor="cinza">Sem certificado</Etiqueta>
-    return (
+    const selo = (
       <Etiqueta cor="verde" titulo={c.procurador ? `Procurador: ${String(c.procurador).split(':')[0]}` : 'NFS-e pelo certificado procurador'}>
-        {c.procurador ? `pelo procurador: ${nomeCurto(c.procurador)}` : 'pelo procurador'}
+        pelo procurador
       </Etiqueta>
+    )
+    if (!c.procurador) return selo
+    // O nome do procurador vai embaixo, menor: na mesma linha invadia a coluna ao lado.
+    return (
+      <span className="selo-empilhado">
+        {selo}
+        <span className="selo-nota selo-nota-apagada">{nomeCurto(c.procurador)}</span>
+      </span>
     )
   }
   if (c.certDias === null || c.certDias === undefined) return '—'
