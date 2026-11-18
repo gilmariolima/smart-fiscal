@@ -111,6 +111,8 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
     parando ||= (async () => {
       logger.info('Encerrando o servidor')
       // Pede a parada antes de tudo; a captura pelo painel não passa pelo agendador e também precisa terminar antes de o banco fechar.
+      // As saídas param primeiro: o fim do ciclo chamaria aoTerminarCiclo e começaria uma procura nova.
+      const fimDasSaidas = ctx.saidas?.parar()
       const fimDoCiclo = ctx.ciclo.parar()
       const fimDaTroca = ctx.pastas?.pararTroca?.()
       const fimDaBusca = ctx.buscaAntiga?.parar()
@@ -120,6 +122,7 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
       await fimDoCiclo
       await comLimite(fimDaTroca, 'A troca de pasta')
       await comLimite(fimDaBusca, 'A busca de notas antigas')
+      await comLimite(fimDasSaidas, 'A procura das saídas')
       await ctx.conferenciaXmls?.parar()
       await comLimite(ctx.organizador?.parar(), 'A organização da pasta')
       if (ctx.backup) await ctx.backup.aguardar()

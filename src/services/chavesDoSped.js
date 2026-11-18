@@ -15,7 +15,9 @@ function lerChavesDoSped(bytes) {
   for (const linha of texto.split(/\r?\n/)) {
     if (linha.startsWith('|0000|')) {
       const c = linha.split('|')
-      cnpj = String(c[7] || '').replace(/\D/g, '') || null
+      const deste = String(c[7] || '').replace(/\D/g, '') || null
+      if (cnpj && deste !== cnpj) throw new Error('O arquivo junta SPEDs de mais de um CNPJ: solte um arquivo por empresa')
+      cnpj = deste
       const ini = String(c[4] || '')
       periodo = /^\d{8}$/.test(ini) ? `${ini.slice(4)}-${ini.slice(2, 4)}` : null
       continue
@@ -23,7 +25,8 @@ function lerChavesDoSped(bytes) {
     if (!linha.startsWith('|C100|')) continue
     const c = linha.split('|')
     const chave = String(c[9] || '').trim()
-    if (c[5] !== '55' || !/^\d{44}$/.test(chave) || vistas.has(chave)) continue
+    // Denegada (04) e inutilizada (05) não têm XML autorizado para baixar.
+    if (c[5] !== '55' || ['04', '05'].includes(c[6]) || !/^\d{44}$/.test(chave) || vistas.has(chave)) continue
     vistas.add(chave)
     chaves.push({ chave, direcao: c[2] === '1' ? 'saida' : 'entrada' })
   }

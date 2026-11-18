@@ -413,3 +413,14 @@ test('listar filtra por empresa, direção e situação e traz os dados da nota 
   assert.equal(servico.listar({ cnpj: CLIENTE, situacao: 'baixada' }).length, 1)
   assert.equal(servico.listar({ cnpj: CLIENTE, de: 1 }).length, 1)
 })
+
+test('listar respeita o limite pedido e a fila pausada não tem empresa da vez', (t) => {
+  const { id, servico, limpar } = montar()
+  t.after(limpar)
+  servico.adicionar(id, [91, 92, 93].map((n) => chaveNfe(FORNECEDOR, n)).join(' '))
+  assert.equal(servico.listar({ limite: 2 }).length, 2)
+  assert.equal(servico.listar({ limite: 'x' }).length, 3)
+  assert.equal(servico.estado().clientes[0].daVez, true)
+  servico.pausar()
+  assert.equal(servico.estado().clientes[0].daVez, false)
+})

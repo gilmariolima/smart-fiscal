@@ -663,7 +663,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     exigirLocalBusca(req)
     const texto = (k) => (typeof req.query[k] === 'string' && req.query[k] ? req.query[k] : undefined)
     const direcao = ['entrada', 'saida'].includes(texto('direcao')) ? texto('direcao') : undefined
-    const filtros = { cnpj: texto('cnpj')?.replace(/\D/g, ''), direcao, situacao: texto('situacao'), de: Number(texto('de')) || 0 }
+    const filtros = { cnpj: texto('cnpj')?.replace(/\D/g, ''), direcao, situacao: texto('situacao'), de: Number(texto('de')) || 0, limite: Number(texto('limite')) || undefined }
     res.json({ estado: ctx.buscaAntiga.estado(), linhas: ctx.buscaAntiga.listar(filtros) })
   })
 

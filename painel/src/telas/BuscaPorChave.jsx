@@ -228,7 +228,7 @@ function ArquivoSped({ aoAdicionar }) {
   )
 }
 
-function InicioDaSerie({ cnpj, aoSalvar }) {
+function InicioDaSerie({ cnpj, aoSalvar, novo }) {
   const [chave, setChave] = useState('')
   const [erro, setErro] = useState('')
   async function salvar(e) {
@@ -244,7 +244,7 @@ function InicioDaSerie({ cnpj, aoSalvar }) {
   }
   return (
     <form className="busca-inicio" onSubmit={salvar}>
-      <input className="entrada" value={chave} onChange={(e) => setChave(e.target.value)} placeholder="cole a chave de uma saída recente para começar" spellCheck={false} />
+      <input className="entrada" value={chave} onChange={(e) => setChave(e.target.value)} placeholder={novo ? 'cole a chave de uma saída recente para começar' : 'outra série ou recomeçar: cole a chave de uma saída recente'} spellCheck={false} />
       <button type="submit" className="botao botao-claro" disabled={!chave.trim()}>
         Usar
       </button>
@@ -253,7 +253,7 @@ function InicioDaSerie({ cnpj, aoSalvar }) {
   )
 }
 
-function SaidasPeloCertificado({ aoAdicionar }) {
+function SaidasPeloCertificado({ aoAdicionar, aoTerminar }) {
   const saidas = useApi('/api/saidas')
   const lista = saidas.dados?.clientes || []
   const rodando = !!saidas.dados?.rodando
@@ -263,6 +263,12 @@ function SaidasPeloCertificado({ aoAdicionar }) {
     const t = setInterval(recarregar, 3000)
     return () => clearInterval(t)
   }, [rodando, recarregar])
+  // A procura acabou: as chaves achadas já estão na fila, que precisa aparecer sem recarregar a página.
+  const rodavaAntes = useRef(false)
+  useEffect(() => {
+    if (rodavaAntes.current && !rodando) aoTerminar()
+    rodavaAntes.current = rodando
+  }, [rodando, aoTerminar])
   async function ligar(cnpj, ligado) {
     try {
       await api.post('/api/saidas/ligar', { cnpj, ligado })
@@ -290,13 +296,14 @@ function SaidasPeloCertificado({ aoAdicionar }) {
             <span className="busca-saidas-series">
               {c.series.length
                 ? c.series.map((s) => (
-                    <span key={s.serie} className={s.ultimo_erro ? 'busca-erro' : undefined} title={s.ultimo_erro || undefined}>
+                    <span key={s.serie}>
                       Série {s.serie}: último nº {inteiro(s.ultimo_numero)}
                       {s.achadas ? ` · ${plural(s.achadas, 'chave achada', 'chaves achadas')}` : ''}
-                      {s.ultimo_erro ? ' · com aviso' : ''}
+                      {s.ultimo_erro && <small className="busca-erro">{s.ultimo_erro}</small>}
                     </span>
                   ))
-                : c.ligado && <InicioDaSerie cnpj={c.cnpj} aoSalvar={recarregar} />}
+                : null}
+              {c.ligado && <InicioDaSerie cnpj={c.cnpj} aoSalvar={recarregar} novo={!c.series.length} />}
             </span>
           </li>
         ))}
@@ -321,8 +328,12 @@ function estadoDaEmpresa(c) {
 function BotaoPausaEmpresa({ c, aoMudar }) {
   if (!c.pendentes && !c.pausada) return null
   const mudar = async (pausada) => {
-    await api.post('/api/busca-antiga/cliente-pausa', { cnpj: c.cnpj, pausada })
-    aoMudar()
+    try {
+      await api.post('/api/busca-antiga/cliente-pausa', { cnpj: c.cnpj, pausada })
+      aoMudar()
+    } catch (e) {
+      aoMudar(e.message)
+    }
   }
   return c.pausada ? (
     <button type="button" className="botao botao-verde" onClick={() => mudar(false)}>
@@ -407,23 +418,35 @@ function Notas({ cnpj, direcao, pausada, d, recarregarEstado }) {
   const [marcadas, setMarcadas] = useState(() => new Set())
   const [erro, setErro] = useState('')
 
-  async function carregar(de = 0) {
+  // Troca de filtro ou de pasta muda a geração: a resposta de um pedido antigo é descartada.
+  const geracao = useRef(0)
+  const mostradas = useRef(0)
+  async function carregar(de = 0, quantas = 200) {
+    const minha = geracao.current
     try {
-      const r = await api.get(`/api/busca-antiga?cnpj=${cnpj}&direcao=${direcao}${filtro ? `&situacao=${filtro}` : ''}&de=${de}`)
-      setLinhas((atual) => (de ? [...atual, ...r.linhas] : r.linhas))
-      setAcabou(r.linhas.length < 200)
+      const r = await api.get(`/api/busca-antiga?cnpj=${cnpj}&direcao=${direcao}${filtro ? `&situacao=${filtro}` : ''}&de=${de}&limite=${quantas}`)
+      if (minha !== geracao.current) return
+      setErro('')
+      setLinhas((atual) => {
+        const vistas = new Set(atual.map((l) => l.id))
+        const nova = de ? [...atual, ...r.linhas.filter((l) => !vistas.has(l.id))] : r.linhas
+        mostradas.current = nova.length
+        return nova
+      })
+      setAcabou(r.linhas.length < quantas)
       setMaisDe(de + r.linhas.length)
     } catch (e) {
-      setErro(e.message)
+      if (minha === geracao.current) setErro(e.message)
     }
   }
   // Recarrega com o filtro e, enquanto houver fila, a cada 5 s (sem sair do lugar na lista).
   useEffect(() => {
+    geracao.current++
     carregar(0)
   }, [cnpj, direcao, filtro]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!d.pendentes) return undefined
-    const t = setInterval(() => carregar(0), 5000)
+    const t = setInterval(() => carregar(0, Math.max(200, mostradas.current)), 5000)
     return () => clearInterval(t)
   }, [d.pendentes, cnpj, direcao, filtro]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -435,7 +458,7 @@ function Notas({ cnpj, direcao, pausada, d, recarregarEstado }) {
     try {
       await api.post(caminho, corpo)
       setMarcadas(new Set())
-      await carregar(0)
+      await carregar(0, Math.max(200, mostradas.current))
       recarregarEstado()
     } catch (e) {
       setErro(e.message)
@@ -545,6 +568,7 @@ export default function BuscaPorChave() {
     setAviso(texto)
     recarregar()
   }
+  const aoMudarEmpresa = (mensagemDeErro) => (mensagemDeErro ? setErro(mensagemDeErro) : recarregar())
   const acaoGeral = async (caminho) => {
     try {
       await api.post(`/api/busca-antiga/${caminho}`, {})
@@ -589,7 +613,7 @@ export default function BuscaPorChave() {
           />
           {aba === 'colar' && <ColarChaves clientes={comCertificado} aoAdicionar={aoAdicionar} />}
           {aba === 'sped' && <ArquivoSped aoAdicionar={aoAdicionar} />}
-          {aba === 'saidas' && <SaidasPeloCertificado aoAdicionar={aoAdicionar} />}
+          {aba === 'saidas' && <SaidasPeloCertificado aoAdicionar={aoAdicionar} aoTerminar={recarregar} />}
         </section>
       )}
 
@@ -598,7 +622,7 @@ export default function BuscaPorChave() {
       {!cnpj && (
         <>
           <h2 className="busca-titulo">Fila de downloads</h2>
-          <Empresas clientes={empresas} aoMudar={recarregar} />
+          <Empresas clientes={empresas} aoMudar={aoMudarEmpresa} />
         </>
       )}
       {cnpj && (
@@ -608,7 +632,7 @@ export default function BuscaPorChave() {
               <span>
                 {estadoDaEmpresa(empresa)} · {inteiro(empresa.total - empresa.pendentes)} de {inteiro(empresa.total)}
               </span>
-              <BotaoPausaEmpresa c={empresa} aoMudar={recarregar} />
+              <BotaoPausaEmpresa c={empresa} aoMudar={aoMudarEmpresa} />
             </div>
           )}
           {!empresa && <p className="apagado">Nenhuma chave desta empresa na fila.</p>}

@@ -266,3 +266,22 @@ test('fila de notas antigas some com o cliente', () => {
   db.prepare('DELETE FROM clientes WHERE id = ?').run(id)
   assert.equal(db.prepare('SELECT COUNT(*) FROM busca_antiga').pluck().get(), 0)
 })
+
+test('fila de antes da direção: saída e entrada acertadas pela chave ao abrir', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'db-direcao-'))
+  const arq = path.join(dir, 'nfe.db')
+  try {
+    let db = abrirBanco(arq)
+    const id = db.prepare("INSERT INTO clientes (cnpj, razao_social, uf, cert_arquivo, cert_senha_enc) VALUES ('11222333000181', 'X', 'CE', 'x.pfx', 'a:b:c')").run().lastInsertRowid
+    const saida = '23251011222333000181550010000007011000007010'
+    const entrada = '23251066777888000199550010000007031000007033'
+    for (const ch of [saida, entrada]) db.prepare("INSERT INTO busca_antiga (cliente_id, chave, criado_em) VALUES (?, ?, '2026-11-13')").run(id, ch)
+    db.exec('ALTER TABLE busca_antiga DROP COLUMN direcao')
+    db.close()
+    db = abrirBanco(arq)
+    assert.deepEqual(db.prepare('SELECT chave, direcao FROM busca_antiga ORDER BY chave').all().map((l) => [l.chave, l.direcao]), [[saida, 'saida'], [entrada, 'entrada']])
+    db.close()
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -3320,6 +3320,12 @@ a.botao-icone {
   color: var(--apagado);
 }
 
+.busca-saidas-series small {
+  display: block;
+  font-size: 12px;
+  text-align: right;
+}
+
 .busca-inicio {
   display: flex;
   align-items: center;

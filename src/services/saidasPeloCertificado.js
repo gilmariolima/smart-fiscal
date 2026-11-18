@@ -23,7 +23,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     seriesDasNotas: db.prepare(`SELECT serie, MAX(CAST(numero AS INTEGER)) AS ultimo FROM notas
       WHERE cliente_id = ? AND modelo = 'nfe' AND emitente_cnpj = ? AND serie IS NOT NULL AND numero IS NOT NULL GROUP BY serie`),
     gravarSerie: db.prepare(`INSERT INTO saidas_series (cliente_id, serie, ultimo_numero, achadas, ultima_consulta, ultimo_erro) VALUES (@cliente_id, @serie, @ultimo_numero, @achadas, @ultima_consulta, @ultimo_erro)
-      ON CONFLICT(cliente_id, serie) DO UPDATE SET ultimo_numero = excluded.ultimo_numero, achadas = saidas_series.achadas + excluded.achadas,
+      ON CONFLICT(cliente_id, serie) DO UPDATE SET ultimo_numero = MAX(saidas_series.ultimo_numero, excluded.ultimo_numero), achadas = saidas_series.achadas + excluded.achadas,
         ultima_consulta = excluded.ultima_consulta, ultimo_erro = excluded.ultimo_erro`),
     inicio: db.prepare(`INSERT INTO saidas_series (cliente_id, serie, ultimo_numero) VALUES (?, ?, ?)
       ON CONFLICT(cliente_id, serie) DO UPDATE SET ultimo_numero = MAX(saidas_series.ultimo_numero, excluded.ultimo_numero)`),
@@ -66,6 +66,17 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     buscaAntiga.adicionarChaves(cliente.id, [{ chave: ch, direcao: 'saida' }], { origem: 'saidas' })
   }
 
+  let emCurso = null
+  let parando = false
+  let jaConsultou = false
+  // Para no meio quando o app fecha, quando a empresa é pausada ou quando a fila inteira é pausada.
+  const interromper = (cliente) => parando || !!buscaAntiga.pausadaGeral?.() || !!sql.cliente.get(cliente.id)?.busca_pausada
+  // 2 s entre quaisquer duas consultas da mesma procura (dentro da série, entre séries e entre clientes).
+  async function esperarVez() {
+    if (jaConsultou) await dormir(intervalo())
+    jaConsultou = true
+  }
+
   // Uma série: consulta do número seguinte ao último conhecido até 20 inexistentes seguidos.
   async function procurarSerie(cliente, consulta, s, aamm) {
     const cUF = UFS[cliente.uf.toUpperCase()].codigo
@@ -76,7 +87,9 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     let erro = null
     let parar = false
     for (let i = 0; i < MAXIMO_POR_SERIE && inexistentes < INEXISTENTES_PARA_PARAR; i++, numero++) {
-      if (i) await dormir(intervalo())
+      if (interromper(cliente)) break
+      await esperarVez()
+      if (interromper(cliente)) break
       const r = await consulta.consultar(montarChave({ cUF, aamm, cnpj: cliente.cnpj, serie: s.serie, numero }))
       if (r.cStat === '613' && r.chaveVerdadeira) {
         achadas.push({ chave: r.chaveVerdadeira, direcao: 'saida' })
@@ -100,15 +113,17 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return { achadas: achadas.length, parar }
   }
 
-  let emCurso = null
   /** Procura as saídas dos clientes ligados (ou de um só). Uma busca por vez: chamada em dobro devolve a mesma. */
   function procurar({ clienteId } = {}) {
     if (emCurso) return emCurso
+    if (parando) return Promise.resolve({ clientes: 0, achadas: 0 })
+    jaConsultou = false
     emCurso = (async () => {
       const resumo = { clientes: 0, achadas: 0 }
       const d = agora()
       const aamm = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}`
       for (const cliente of sql.clientes.all()) {
+        if (parando || buscaAntiga.pausadaGeral?.()) break
         if (clienteId && cliente.id !== clienteId) continue
         if (!cliente.saidas_auto || cliente.busca_pausada || !noPrazo(cliente) || !atendido(cliente)) continue
         let consulta
@@ -120,6 +135,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         }
         resumo.clientes++
         for (const s of series(cliente)) {
+          if (interromper(cliente)) break
           const r = await procurarSerie(cliente, consulta, s, aamm)
           resumo.achadas += r.achadas
           if (r.parar) return resumo
@@ -133,7 +149,13 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return emCurso
   }
 
-  return { listar, ligar, definirInicio, procurar, rodando: () => !!emCurso }
+  /** Ao fechar o app: nenhuma consulta nova; devolve a procura em curso para esperar a gravação da série. */
+  function parar() {
+    parando = true
+    return emCurso || Promise.resolve()
+  }
+
+  return { listar, ligar, definirInicio, procurar, parar, rodando: () => !!emCurso }
 }
 
 module.exports = { criarSaidas }

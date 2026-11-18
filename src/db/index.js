@@ -142,6 +142,9 @@ function abrirBanco(caminho) {
       const existe = db.prepare(`SELECT 1 FROM pragma_table_info('${tabela}') WHERE name = ?`).get(coluna)
       if (!existe) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${definicao}`)
       if (!existe && coluna === 'captura_id') preencherCapturaId(db)
+      // Linhas da fila de antes da direção: emitente igual ao cliente é saída (pela chave).
+      if (!existe && tabela === 'busca_antiga' && coluna === 'direcao')
+        db.exec("UPDATE busca_antiga SET direcao = CASE WHEN substr(chave, 7, 14) = (SELECT cnpj FROM clientes WHERE id = busca_antiga.cliente_id) THEN 'saida' ELSE 'entrada' END WHERE direcao IS NULL")
     }
     db.exec('CREATE INDEX IF NOT EXISTS idx_notas_cliente_modelo_comp ON notas(cliente_id, modelo, competencia)')
     // Uma vez só (1.11.1): cliente sem certificado deixou de nascer desativado; os de antes voltam a ativos.

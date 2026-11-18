@@ -336,7 +336,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
 
   // Uma linha por cliente (a "pasta"), com o total e o de cada direção.
   function resumoPorCliente() {
-    const daVez = sql.proxima.get()?.cliente_id
+    const daVez = st.pausada ? null : sql.proxima.get()?.cliente_id
     const vazio = () => ({ total: 0, baixadas: 0, problemas: 0, pendentes: 0, outroEstado: 0 })
     const porId = new Map()
     for (const l of sql.porCliente.all()) {
@@ -365,7 +365,8 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
 
   const POR_PAGINA = 200
   /** Linhas da fila, com os dados da nota quando ela já está no app. Pendentes primeiro. */
-  function listar({ cnpj, direcao, situacao, de = 0 } = {}) {
+  // `limite` (até 2000) deixa a tela recarregar de uma vez tudo o que já mostra, sem perder o "Mostrar mais".
+  function listar({ cnpj, direcao, situacao, de = 0, limite = POR_PAGINA } = {}) {
     const onde = []
     const valores = []
     if (cnpj) {
@@ -391,8 +392,8 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
         FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id
         LEFT JOIN notas n ON n.cliente_id = b.cliente_id AND n.chave = b.chave
         ${onde.length ? 'WHERE ' + onde.join(' AND ') : ''}
-        ORDER BY (b.situacao = 'fila') DESC, b.id DESC LIMIT ${POR_PAGINA} OFFSET ?`)
-      .all(...valores, Math.max(0, Number(de) || 0))
+        ORDER BY (b.situacao = 'fila') DESC, b.id DESC LIMIT ? OFFSET ?`)
+      .all(...valores, Math.min(2000, Math.max(1, Math.floor(Number(limite)) || POR_PAGINA)), Math.max(0, Number(de) || 0))
   }
 
   const limparConcluidas = () => sql.limpar.run().changes
@@ -409,7 +410,9 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     if (ganchos.aoImportar) aoImportar = ganchos.aoImportar
   }
 
-  return { adicionar, adicionarChaves, pausarCliente, tentarDeNovo, processarProxima, iniciar, parar, pausar, continuar, estado, listar, limparConcluidas, excluir, configurar }
+  const pausadaGeral = () => st.pausada
+
+  return { adicionar, adicionarChaves, pausarCliente, tentarDeNovo, processarProxima, iniciar, parar, pausar, continuar, pausadaGeral, estado, listar, limparConcluidas, excluir, configurar }
 }
 
 module.exports = { criarBuscaAntiga, chavesDoTexto }

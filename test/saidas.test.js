@@ -44,7 +44,7 @@ test('cliente da consulta envia o consSitNFe e trata queda de rede', async () =>
 // ---------- descoberta das saídas ----------
 
 // SEFAZ falsa: `existe(numero)` diz se o número tem nota; o 613 devolve uma chave verdadeira inventada.
-function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, ligado = true } = {}) {
+function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, ligado = true, aoDormir = null } = {}) {
   const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'saidas-'))
   const db = abrirBanco(':memory:')
   const id = db.prepare("INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc, cert_validade, saidas_auto) VALUES (?, 'Leitura', 'Leitura', 'CE', 'c.pfx', 'a:b:c', '2027-08-28T00:00:00Z', ?)").run(CNPJ, ligado ? 1 : 0).lastInsertRowid
@@ -68,8 +68,15 @@ function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, liga
     },
   })
   const pausas = []
-  const saidas = criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir: async (ms) => pausas.push(ms), agora: () => new Date('2026-11-18T12:00:00Z') })
-  return { db, id, saidas, consultas, pausas, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
+  const ref = {}
+  const dormir = async (ms) => {
+    pausas.push(ms)
+    // Sem esperar o retorno: parar() devolve a própria procura, que está dentro deste dormir.
+    if (aoDormir) aoDormir({ db, id, consultas, saidas: ref.saidas, buscaAntiga })
+  }
+  const saidas = criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir, agora: () => new Date('2026-11-18T12:00:00Z') })
+  ref.saidas = saidas
+  return { db, id, saidas, consultas, pausas, buscaAntiga, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
 }
 
 const naFila = (db) => db.prepare("SELECT chave, direcao, origem FROM busca_antiga ORDER BY chave").all()
@@ -148,4 +155,42 @@ test('procurar duas vezes ao mesmo tempo faz uma só', async (t) => {
   const [a, b] = await Promise.all([saidas.procurar(), saidas.procurar()])
   assert.equal(a, b)
   assert.equal(consultas.filter((n) => n === 101).length, 1)
+})
+
+test('fechar o app no meio: para de consultar, grava a série e não começa outra procura', async (t) => {
+  const { db, saidas, consultas, limpar } = montar({ existe: () => true, aoDormir: ({ consultas: c, saidas: s }) => c.length === 3 && s.parar() })
+  t.after(limpar)
+  const r = await saidas.procurar()
+  assert.equal(consultas.length, 3)
+  assert.equal(r.achadas, 3)
+  assert.equal(db.prepare('SELECT ultimo_numero FROM saidas_series').pluck().get(), 103)
+  assert.deepEqual(await saidas.procurar(), { clientes: 0, achadas: 0 })
+  assert.equal(consultas.length, 3)
+})
+
+test('pausar a empresa ou a fila inteira no meio para a procura das saídas', async (t) => {
+  const empresa = montar({ existe: () => true, aoDormir: ({ db, consultas: c }) => c.length === 2 && db.prepare('UPDATE clientes SET busca_pausada = 1').run() })
+  t.after(empresa.limpar)
+  await empresa.saidas.procurar()
+  assert.equal(empresa.consultas.length, 2)
+  const geral = montar({ existe: () => true, aoDormir: ({ consultas: c, buscaAntiga }) => c.length === 2 && buscaAntiga.pausar() })
+  t.after(geral.limpar)
+  await geral.saidas.procurar()
+  assert.equal(geral.consultas.length, 2)
+})
+
+test('o intervalo vale também entre uma série e outra', async (t) => {
+  const { db, id, saidas, consultas, pausas, limpar } = montar({ existe: (n) => n === 101 })
+  t.after(limpar)
+  db.prepare("INSERT INTO saidas_series (cliente_id, serie, ultimo_numero) VALUES (?, '2', 500)").run(id)
+  await saidas.procurar()
+  assert.ok(consultas.includes(501))
+  assert.equal(pausas.length, consultas.length - 1)
+})
+
+test('início colado durante a procura não é desfeito pela gravação da série', async (t) => {
+  const { db, saidas, limpar } = montar({ existe: (n) => n <= 102, aoDormir: ({ db: d, id: cid, consultas: c }) => c.length === 1 && d.prepare("INSERT INTO saidas_series (cliente_id, serie, ultimo_numero) VALUES (?, '1', 900) ON CONFLICT(cliente_id, serie) DO UPDATE SET ultimo_numero = 900").run(cid) })
+  t.after(limpar)
+  await saidas.procurar()
+  assert.equal(db.prepare('SELECT ultimo_numero FROM saidas_series').pluck().get(), 900)
 })
