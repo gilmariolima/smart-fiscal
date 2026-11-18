@@ -2482,3 +2482,25 @@ test('saídas pelo certificado: listar, ligar, colar o início e procurar', asyn
   assert.equal(depois.series[0].ultimo_numero, 45)
   assert.equal(ctx.db.prepare("SELECT COUNT(*) FROM busca_antiga WHERE origem = 'saidas'").pluck().get(), 6)
 })
+
+test('saídas por período: pedir, confirmar, listar, validar e excluir', async (t) => {
+  const { pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
+  const hoje = new Date()
+  const mes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
+  const corpo = { cnpj: CNPJ_MOCK_OK, de: mes, ate: mes, serie: '1' }
+  const r = await pedir('/api/saidas/periodo', { method: 'POST', body: corpo })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  assert.deepEqual([r.corpo.primeiro, r.corpo.ultimo, r.corpo.estimadas], [1, 5, 5])
+  const ok = await pedir('/api/saidas/periodo/confirmar', { method: 'POST', body: { ...corpo, primeiro: r.corpo.primeiro, ultimo: r.corpo.ultimo } })
+  assert.equal(ok.status, 201)
+  const lista = (await pedir('/api/saidas')).corpo
+  assert.equal(lista.periodos.length, 1)
+  assert.equal(lista.janela.ate, mes)
+  assert.equal((await pedir('/api/saidas/periodo', { method: 'POST', body: { ...corpo, de: '2020-01' } })).status, 400)
+  assert.equal((await pedir('/api/saidas/periodo', { method: 'POST', body: { ...corpo, serie: 'abc' } })).status, 400)
+  assert.equal((await pedir('/api/saidas/periodo', { method: 'POST', body: { ...corpo, de: 'junho' } })).status, 400)
+  assert.equal((await pedir('/api/saidas/periodo', { method: 'POST', body: { ...corpo, cnpj: '99888777000166' } })).status, 404)
+  assert.equal((await pedir('/api/saidas/periodo/confirmar', { method: 'POST', body: { ...corpo, primeiro: 5, ultimo: 1 } })).status, 400)
+  assert.equal((await pedir(`/api/saidas/periodo/${ok.corpo.id}`, { method: 'DELETE' })).status, 204)
+  assert.equal((await pedir('/api/saidas/periodo/9999', { method: 'DELETE' })).status, 404)
+})

@@ -713,7 +713,44 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
   }
   app.get('/api/saidas', (req, res) => {
     exigirLocalBusca(req)
-    res.json({ clientes: ctx.saidas.listar(), rodando: ctx.saidas.rodando() })
+    const j = ctx.saidas.janela()
+    res.json({ clientes: ctx.saidas.listar(), rodando: ctx.saidas.rodando(), periodos: ctx.saidas.listarPeriodos().map(periodoDaApi), janela: { de: mesDaApi(j.de), ate: mesDaApi(j.ate) } })
+  })
+  // Saídas por período: o mês é 'AAAA-MM' na API e AAMM (o formato da chave) no serviço.
+  const mesDoServico = (v) => {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(v || ''))
+    if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) throw new ErroHttp(400, 'Escolha o mês no formato AAAA-MM.')
+    return m[1].slice(2) + m[2]
+  }
+  const mesDaApi = (aamm) => `20${aamm.slice(0, 2)}-${aamm.slice(2)}`
+  const periodoDaApi = (p) => ({ ...p, de: mesDaApi(p.de_aamm), ate: mesDaApi(p.ate_aamm) })
+  const pedidoDoCorpo = (req) => ({ clienteId: clienteDasSaidas(req).id, de: mesDoServico(req.body?.de), ate: mesDoServico(req.body?.ate), serie: String(req.body?.serie ?? '1') })
+  app.post('/api/saidas/periodo', async (req, res) => {
+    exigirLocalBusca(req)
+    const pedido = pedidoDoCorpo(req)
+    let r
+    try {
+      r = await ctx.saidas.pedirPeriodo(pedido)
+    } catch (e) {
+      throw new ErroHttp(e.codigo || 400, e.message)
+    }
+    res.status(r.naEspera ? 202 : 200).json(r)
+  })
+  app.post('/api/saidas/periodo/confirmar', (req, res) => {
+    exigirLocalBusca(req)
+    const pedido = pedidoDoCorpo(req)
+    let id
+    try {
+      id = ctx.saidas.confirmarPeriodo({ ...pedido, primeiro: req.body?.primeiro, ultimo: req.body?.ultimo })
+    } catch (e) {
+      throw new ErroHttp(e.codigo || 400, e.message)
+    }
+    res.status(201).json({ id })
+  })
+  app.delete('/api/saidas/periodo/:id', (req, res) => {
+    exigirLocalBusca(req)
+    if (!ctx.saidas.excluirPeriodo(Number(req.params.id) || 0)) throw new ErroHttp(404, 'Pedido não encontrado.')
+    res.status(204).end()
   })
   app.post('/api/saidas/ligar', (req, res) => {
     exigirLocalBusca(req)
