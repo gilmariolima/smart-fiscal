@@ -327,3 +327,86 @@ test('chave de outro estado que já estava na fila é marcada sem consultar', as
   assert.equal(linha(db, sp).situacao, 'outro-estado')
   assert.equal(chamadas.length, 0)
 })
+
+// ---------- Busca por chave: pastas por empresa, pausa por empresa, dados da nota ----------
+
+const OUTRO_CLIENTE = '22333444000181'
+const comOutroCliente = (db) =>
+  db.prepare("INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc, cert_validade) VALUES (?, 'Outro Ltda', 'Outro', 'CE', 'o.pfx', 'a:b:c', '2027-08-28T00:00:00Z')").run(OUTRO_CLIENTE).lastInsertRowid
+
+test('direção pela chave: emitente é o cliente vira saída', (t) => {
+  const { db, id, servico, limpar } = montar()
+  t.after(limpar)
+  const saida = chaveNfe(CLIENTE, 71)
+  const entrada = chaveNfe(FORNECEDOR, 72)
+  servico.adicionar(id, `${saida} ${entrada}`)
+  assert.deepEqual([linha(db, saida).direcao, linha(db, entrada).direcao, linha(db, saida).origem], ['saida', 'entrada', 'colada'])
+  servico.adicionarChaves(id, [{ chave: chaveNfe(FORNECEDOR, 73), direcao: 'saida' }], { origem: 'sped' })
+  assert.deepEqual([linha(db, chaveNfe(FORNECEDOR, 73)).direcao, linha(db, chaveNfe(FORNECEDOR, 73)).origem], ['saida', 'sped'])
+})
+
+test('pausa por empresa: a fila pula a empresa pausada', async (t) => {
+  const c1 = chaveNfe(FORNECEDOR, 74)
+  const c2 = chaveNfe(FORNECEDOR, 75)
+  const { db, id, servico, chamadas, limpar } = montar({ respostas: { [c1]: { motivo: 'nao-envolvido', mensagem: 'x' }, [c2]: { motivo: 'nao-envolvido', mensagem: 'x' } } })
+  t.after(limpar)
+  const outro = comOutroCliente(db)
+  servico.adicionar(id, c1)
+  servico.adicionar(outro, c2)
+  servico.pausarCliente(id, true)
+  assert.equal(await servico.processarProxima(), 'nao-envolvido')
+  assert.deepEqual(chamadas, [c2])
+  assert.equal(await servico.processarProxima(), null)
+  servico.pausarCliente(id, false)
+  await servico.processarProxima()
+  assert.deepEqual(chamadas, [c2, c1])
+})
+
+test('tentar de novo devolve para a fila só erro e não envolvido', (t) => {
+  const { db, id, servico, limpar } = montar()
+  t.after(limpar)
+  const cs = [76, 77, 78].map((n) => chaveNfe(FORNECEDOR, n))
+  servico.adicionar(id, cs.join(' '))
+  db.prepare("UPDATE busca_antiga SET situacao = 'erro', tentativas = 3 WHERE chave = ?").run(cs[0])
+  db.prepare("UPDATE busca_antiga SET situacao = 'nao-envolvido' WHERE chave = ?").run(cs[1])
+  db.prepare("UPDATE busca_antiga SET situacao = 'baixada' WHERE chave = ?").run(cs[2])
+  assert.equal(servico.tentarDeNovo([linha(db, cs[0]).id, linha(db, cs[1]).id, linha(db, cs[2]).id]), 2)
+  assert.deepEqual(cs.map((c) => linha(db, c).situacao), ['fila', 'fila', 'baixada'])
+  assert.equal(linha(db, cs[0]).tentativas, 0)
+})
+
+test('estado traz contagens e o resumo por empresa e direção', (t) => {
+  const { db, id, servico, limpar } = montar()
+  t.after(limpar)
+  const outro = comOutroCliente(db)
+  servico.adicionar(id, [chaveNfe(CLIENTE, 81), chaveNfe(FORNECEDOR, 82), chaveNfe(FORNECEDOR, 83)].join(' '))
+  servico.adicionar(outro, chaveNfe(FORNECEDOR, 84))
+  db.prepare("UPDATE busca_antiga SET situacao = 'baixada' WHERE chave = ?").run(chaveNfe(CLIENTE, 81))
+  db.prepare("UPDATE busca_antiga SET situacao = 'erro' WHERE chave = ?").run(chaveNfe(FORNECEDOR, 82))
+  servico.pausarCliente(outro, true)
+  const e = servico.estado()
+  assert.equal(e.contagens.baixada, 1)
+  assert.equal(e.contagens.erro, 1)
+  assert.equal(e.contagens.fila, 2)
+  const cli = e.clientes.find((c) => c.cnpj === CLIENTE)
+  assert.deepEqual([cli.total, cli.baixadas, cli.problemas, cli.pendentes, cli.pausada], [3, 1, 1, 1, false])
+  assert.deepEqual(cli.direcoes.saida, { total: 1, baixadas: 1, problemas: 0, pendentes: 0 })
+  assert.deepEqual(cli.direcoes.entrada, { total: 2, baixadas: 0, problemas: 1, pendentes: 1 })
+  assert.equal(e.clientes.find((c) => c.cnpj === OUTRO_CLIENTE).pausada, true)
+  assert.equal(cli.daVez, true)
+  assert.equal(e.estimativaS, 60)
+})
+
+test('listar filtra por empresa, direção e situação e traz os dados da nota baixada', async (t) => {
+  const c = chaveNfe(FORNECEDOR, 85)
+  const { db, id, servico, limpar } = montar({ respostas: { [c]: { xml: nfeProc({ chave: c, emit: FORNECEDOR, dest: CLIENTE, nNF: '85', vNF: '321.50' }) } } })
+  t.after(limpar)
+  servico.adicionar(id, `${c} ${chaveNfe(CLIENTE, 86)}`)
+  await servico.processarProxima()
+  const entradas = servico.listar({ cnpj: CLIENTE, direcao: 'entrada' })
+  assert.equal(entradas.length, 1)
+  assert.deepEqual([entradas[0].situacao, entradas[0].numero, entradas[0].valor_total, entradas[0].outra_cnpj], ['baixada', '85', 321.5, FORNECEDOR])
+  assert.equal(servico.listar({ cnpj: CLIENTE, direcao: 'saida' }).length, 1)
+  assert.equal(servico.listar({ cnpj: CLIENTE, situacao: 'baixada' }).length, 1)
+  assert.equal(servico.listar({ cnpj: CLIENTE, de: 1 }).length, 1)
+})

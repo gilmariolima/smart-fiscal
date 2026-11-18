@@ -135,3 +135,14 @@ CREATE TABLE IF NOT EXISTS procuradores (
   validade TEXT,
   criado_em TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Saídas pelo certificado: último número de NF-e de saída achado por série (consulta de protocolo, cStat 613).
+CREATE TABLE IF NOT EXISTS saidas_series (
+  cliente_id INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  serie TEXT NOT NULL,
+  ultimo_numero INTEGER NOT NULL,
+  achadas INTEGER NOT NULL DEFAULT 0,
+  ultima_consulta TEXT,
+  ultimo_erro TEXT,
+  PRIMARY KEY (cliente_id, serie)
+);

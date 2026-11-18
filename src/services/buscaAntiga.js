@@ -60,9 +60,17 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
   const sql = {
     cliente: db.prepare("SELECT * FROM clientes WHERE id = ? AND cert_arquivo <> '' AND (papel = 'cliente' OR tambem_cliente = 1)"),
     linha: db.prepare('SELECT * FROM busca_antiga WHERE cliente_id = ? AND chave = ?'),
-    inserir: db.prepare('INSERT INTO busca_antiga (cliente_id, chave, situacao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?)'),
+    inserir: db.prepare('INSERT INTO busca_antiga (cliente_id, chave, situacao, origem, direcao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?)'),
     voltarParaFila: db.prepare("UPDATE busca_antiga SET situacao = 'fila', tentativas = 0, mensagem = NULL, atualizado_em = ? WHERE id = ?"),
-    proxima: db.prepare("SELECT * FROM busca_antiga WHERE situacao = 'fila' ORDER BY id LIMIT 1"),
+    // A primeira da fila de um cliente que não está pausado.
+    proxima: db.prepare("SELECT b.* FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id WHERE b.situacao = 'fila' AND c.busca_pausada = 0 ORDER BY b.id LIMIT 1"),
+    pendentesAtivos: db.prepare("SELECT COUNT(*) FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id WHERE b.situacao = 'fila' AND c.busca_pausada = 0").pluck(),
+    pausarCliente: db.prepare('UPDATE clientes SET busca_pausada = ? WHERE id = ?'),
+    contagens: db.prepare('SELECT situacao, COUNT(*) n FROM busca_antiga GROUP BY situacao'),
+    porCliente: db.prepare(`SELECT c.id, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome, c.busca_pausada, COALESCE(b.direcao, 'entrada') AS direcao,
+        COUNT(*) total, SUM(b.situacao IN ('baixada', 'ja-existia')) baixadas, SUM(b.situacao IN ('erro', 'nao-envolvido')) problemas, SUM(b.situacao = 'fila') pendentes
+      FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id GROUP BY c.id, COALESCE(b.direcao, 'entrada') ORDER BY nome`),
+    voltarProblemas: db.prepare("UPDATE busca_antiga SET situacao = 'fila', tentativas = 0, mensagem = NULL, atualizado_em = ? WHERE id = ? AND situacao IN ('erro', 'nao-envolvido')"),
     clienteDaLinha: db.prepare('SELECT * FROM clientes WHERE id = ?'),
     marcar: db.prepare('UPDATE busca_antiga SET situacao = ?, mensagem = ?, tentativas = ?, atualizado_em = ? WHERE id = ?'),
     nota: db.prepare("SELECT caminho_xml FROM notas WHERE cliente_id = ? AND chave = ? AND status = 'completa'"),
@@ -121,13 +129,22 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     return Math.max(0, peloIntervalo, peloBloqueio)
   }
 
-  function adicionar(clienteId, texto) {
+  // Saída quando o CNPJ do emitente (posições 7 a 20 da chave) é o do cliente.
+  const direcaoDaChave = (chave, cliente) => (chave.slice(6, 20) === cliente.cnpj ? 'saida' : 'entrada')
+
+  /** Põe na fila as chaves do texto colado. */
+  function adicionar(clienteId, texto, { origem = 'colada' } = {}) {
+    return adicionarChaves(clienteId, chavesDoTexto(texto).map((chave) => ({ chave })), { origem })
+  }
+
+  /** Põe na fila [{ chave, direcao? }] (SPED, saídas pelo certificado). Sem direção, ela sai da chave. */
+  function adicionarChaves(clienteId, lista, { origem = 'colada' } = {}) {
     const cliente = sql.cliente.get(clienteId)
     if (!cliente) throw Object.assign(new Error('Cliente sem certificado: escolha um cliente com certificado A1.'), { codigo: 404 })
     const r = { adicionadas: 0, repetidas: 0, naoNfe: 0, outroEstado: 0 }
     const vistas = new Set()
     db.transaction(() => {
-      for (const chave of chavesDoTexto(texto)) {
+      for (const { chave, direcao } of lista) {
         if (vistas.has(chave)) {
           r.repetidas++
           continue
@@ -144,7 +161,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
         // Só NF-e (modelo 55, posições 21-22 da chave).
         const nfe = chave.slice(20, 22) === '55'
         const uf = nfe ? ufPropria(chave) : null
-        sql.inserir.run(cliente.id, chave, !nfe ? 'nao-nfe' : uf ? 'outro-estado' : 'fila', iso(), iso())
+        sql.inserir.run(cliente.id, chave, !nfe ? 'nao-nfe' : uf ? 'outro-estado' : 'fila', origem, direcao || direcaoDaChave(chave, cliente), iso(), iso())
         if (uf) {
           sql.marcar.run('outro-estado', mensagemOutroEstado(uf), 0, iso(), sql.linha.get(cliente.id, chave).id)
           r.outroEstado++
@@ -276,7 +293,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
 
   function iniciar() {
     st.iniciado = true
-    if (!st.pausada && sql.pendentes.get()) agendar(Math.max(base(), restante()))
+    if (!st.pausada && sql.pendentesAtivos.get()) agendar(Math.max(base(), restante()))
   }
 
   /** Para de agendar; devolve a promessa da consulta em curso (o banco só fecha depois dela). */
@@ -295,7 +312,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
   function continuar() {
     st.pausada = false
     sql.continuar.run()
-    if (st.iniciado && !st.ocupado && sql.pendentes.get()) agendar(restante())
+    if (st.iniciado && !st.ocupado && sql.pendentesAtivos.get()) agendar(restante())
   }
 
   function estado() {
@@ -310,15 +327,71 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       pausaPor: volta ? st.pausaPor : null,
       total: sql.total.get(),
       pendentes: sql.pendentes.get(),
+      contagens: Object.fromEntries(sql.contagens.all().map((c) => [c.situacao, c.n])),
+      estimativaS: sql.pendentesAtivos.get() * (st.intervaloMs / 1000),
+      clientes: resumoPorCliente(),
     }
   }
 
-  function listar({ situacao } = {}) {
-    const filtro = situacao ? 'WHERE b.situacao = ?' : ''
+  // Uma linha por cliente (a "pasta"), com o total e o de cada direção.
+  function resumoPorCliente() {
+    const daVez = sql.proxima.get()?.cliente_id
+    const vazio = () => ({ total: 0, baixadas: 0, problemas: 0, pendentes: 0 })
+    const porId = new Map()
+    for (const l of sql.porCliente.all()) {
+      const c = porId.get(l.id) || { cnpj: l.cnpj, nome: l.nome, total: 0, baixadas: 0, problemas: 0, pendentes: 0, pausada: !!l.busca_pausada, daVez: l.id === daVez, direcoes: { entrada: vazio(), saida: vazio() } }
+      for (const k of ['total', 'baixadas', 'problemas', 'pendentes']) {
+        c[k] += l[k] || 0
+        c.direcoes[l.direcao === 'saida' ? 'saida' : 'entrada'][k] += l[k] || 0
+      }
+      porId.set(l.id, c)
+    }
+    return [...porId.values()]
+  }
+
+  function pausarCliente(clienteId, pausada) {
+    sql.pausarCliente.run(pausada ? 1 : 0, clienteId)
+    if (!pausada && st.iniciado && !st.pausada && !st.ocupado && !st.timer && sql.pendentesAtivos.get()) agendar(restante())
+  }
+
+  /** Volta para a fila as linhas em erro ou "não é de envolvido". */
+  function tentarDeNovo(ids) {
+    const validos = [...new Set((ids || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))]
+    const n = db.transaction(() => validos.reduce((t, id) => t + sql.voltarProblemas.run(iso(), id).changes, 0))()
+    if (n && st.iniciado && !st.pausada && !st.ocupado && !st.timer) agendar(restante())
+    return n
+  }
+
+  const POR_PAGINA = 200
+  /** Linhas da fila, com os dados da nota quando ela já está no app. Pendentes primeiro. */
+  function listar({ cnpj, direcao, situacao, de = 0 } = {}) {
+    const onde = []
+    const valores = []
+    if (cnpj) {
+      onde.push('c.cnpj = ?')
+      valores.push(String(cnpj))
+    }
+    if (direcao) {
+      onde.push("COALESCE(b.direcao, 'entrada') = ?")
+      valores.push(direcao)
+    }
+    if (situacao === 'problemas') onde.push("b.situacao IN ('erro', 'nao-envolvido')")
+    else if (situacao === 'baixadas') onde.push("b.situacao IN ('baixada', 'ja-existia')")
+    else if (situacao) {
+      onde.push('b.situacao = ?')
+      valores.push(situacao)
+    }
     return db
-      .prepare(`SELECT b.id, b.chave, b.situacao, b.mensagem, b.tentativas, b.atualizado_em, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome
-        FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id ${filtro} ORDER BY b.id DESC LIMIT 500`)
-      .all(...(situacao ? [situacao] : []))
+      .prepare(`SELECT b.id, b.chave, b.situacao, b.mensagem, b.tentativas, b.atualizado_em, b.origem, COALESCE(b.direcao, 'entrada') AS direcao,
+          c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome,
+          n.id AS nota_id, n.numero, n.data_emissao, n.valor_total,
+          CASE WHEN COALESCE(b.direcao, 'entrada') = 'saida' THEN n.destinatario_cnpj ELSE n.emitente_cnpj END AS outra_cnpj,
+          CASE WHEN COALESCE(b.direcao, 'entrada') = 'saida' THEN n.destinatario_nome ELSE n.emitente_nome END AS outra_nome
+        FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id
+        LEFT JOIN notas n ON n.cliente_id = b.cliente_id AND n.chave = b.chave
+        ${onde.length ? 'WHERE ' + onde.join(' AND ') : ''}
+        ORDER BY (b.situacao = 'fila') DESC, b.id DESC LIMIT ${POR_PAGINA} OFFSET ?`)
+      .all(...valores, Math.max(0, Number(de) || 0))
   }
 
   const limparConcluidas = () => sql.limpar.run().changes
@@ -335,7 +408,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
     if (ganchos.aoImportar) aoImportar = ganchos.aoImportar
   }
 
-  return { adicionar, processarProxima, iniciar, parar, pausar, continuar, estado, listar, limparConcluidas, excluir, configurar }
+  return { adicionar, adicionarChaves, pausarCliente, tentarDeNovo, processarProxima, iniciar, parar, pausar, continuar, estado, listar, limparConcluidas, excluir, configurar }
 }
 
 module.exports = { criarBuscaAntiga, chavesDoTexto }

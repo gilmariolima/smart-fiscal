@@ -98,7 +98,11 @@ const COLUNAS_NOVAS = [
   ['clientes', 'cte_ultimo_erro', 'TEXT'],
   ['clientes', 'cte_bloqueado_ate', 'TEXT'],
   ['clientes', 'auto_cte', 'INTEGER NOT NULL DEFAULT 0'],
-  ['clientes', 'procurador_id', 'INTEGER'], // procurador que tem procuração para o cliente (NFS-e sem A1) // cliente de antes do CT-e não começa a buscar sozinho; o cadastro grava 1
+  ['clientes', 'procurador_id', 'INTEGER'], // procurador que tem procuração para o cliente (NFS-e sem A1)
+  ['clientes', 'busca_pausada', 'INTEGER NOT NULL DEFAULT 0'], // Busca por chave: fila parada só para este cliente
+  ['clientes', 'saidas_auto', 'INTEGER NOT NULL DEFAULT 0'], // Busca por chave: descobrir as saídas pelo número
+  ['busca_antiga', 'origem', "TEXT NOT NULL DEFAULT 'colada'"], // colada | sped | saidas
+  ['busca_antiga', 'direcao', 'TEXT'], // entrada | saida // cliente de antes do CT-e não começa a buscar sozinho; o cadastro grava 1
   ['notas', 'origem', "TEXT NOT NULL DEFAULT 'captura'"], // captura | importada (tela Importar XMLs)
 ]
 

@@ -660,8 +660,23 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
 
   app.get('/api/busca-antiga', (req, res) => {
     exigirLocalBusca(req)
-    const situacao = typeof req.query.situacao === 'string' && req.query.situacao ? req.query.situacao : undefined
-    res.json({ estado: ctx.buscaAntiga.estado(), linhas: ctx.buscaAntiga.listar({ situacao }) })
+    const texto = (k) => (typeof req.query[k] === 'string' && req.query[k] ? req.query[k] : undefined)
+    const direcao = ['entrada', 'saida'].includes(texto('direcao')) ? texto('direcao') : undefined
+    const filtros = { cnpj: texto('cnpj')?.replace(/\D/g, ''), direcao, situacao: texto('situacao'), de: Number(texto('de')) || 0 }
+    res.json({ estado: ctx.buscaAntiga.estado(), linhas: ctx.buscaAntiga.listar(filtros) })
+  })
+
+  app.post('/api/busca-antiga/cliente-pausa', (req, res) => {
+    exigirLocalBusca(req)
+    const cliente = sql.clientePorCnpj.get(String(req.body?.cnpj || '').replace(/\D/g, ''))
+    if (!cliente) throw new ErroHttp(404, 'Cliente não encontrado.')
+    ctx.buscaAntiga.pausarCliente(cliente.id, req.body?.pausada === true)
+    res.json({ ok: true })
+  })
+
+  app.post('/api/busca-antiga/tentar-de-novo', (req, res) => {
+    exigirLocalBusca(req)
+    res.json({ voltaram: ctx.buscaAntiga.tentarDeNovo(Array.isArray(req.body?.ids) ? req.body.ids : []) })
   })
 
   app.post('/api/busca-antiga', (req, res) => {
