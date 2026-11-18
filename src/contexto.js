@@ -15,6 +15,8 @@ const { criarServicoImportacao } = require('./services/importacao')
 const { criarNotasSemCliente } = require('./services/notasSemCliente')
 const { criarBuscaAntiga } = require('./services/buscaAntiga')
 const { criarFabricaSvrs } = require('./sefaz/svrs')
+const { criarFabricaConsulta } = require('./sefaz/consultaProtocolo')
+const { criarSaidas } = require('./services/saidasPeloCertificado')
 const { criarServicoResumo } = require('./services/resumo')
 const { criarServicoExportacao } = require('./services/exportacao')
 const { criarServicoSelecao } = require('./services/selecao')
@@ -55,6 +57,7 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
   // O servidor liga `deps.aoTerminarCiclo` ao organizador; a CLI fecha o banco logo após o ciclo e não gera nada.
   const organizador = criarOrganizador({ db: banco, config, logger: log, pastas, reconciliarPasta, capturaEmAndamento: () => ciclo.cicloEmAndamento() })
   const importacao = criarServicoImportacao(deps)
+  const buscaAntiga = criarBuscaAntiga({ ...deps, importacao, fabricaSvrs: fabricaSvrs || criarFabricaSvrs(config) })
   return {
     config,
     logger: log,
@@ -71,7 +74,8 @@ function criarContexto({ config = obterConfig(), logger, nivelConsole = 'info', 
     conferenciaXmls: criarConferenciaXmls(deps),
     importacao,
     notasSemCliente: criarNotasSemCliente({ ...deps, importacao }),
-    buscaAntiga: criarBuscaAntiga({ ...deps, importacao, fabricaSvrs: fabricaSvrs || criarFabricaSvrs(config) }),
+    buscaAntiga,
+    saidas: criarSaidas({ ...deps, buscaAntiga, fabricaConsulta: criarFabricaConsulta(config) }),
     pastas,
     organizador,
     fechar: () => banco.close(),

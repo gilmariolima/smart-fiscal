@@ -57,6 +57,8 @@ function carregarConfig(env = process.env) {
       painelPorta: inteiro(env.PAINEL_PORTA, 3030, 'PAINEL_PORTA'),
       // Só para demonstração: intervalo da busca de notas antigas (a SVRS bloqueia abaixo de ~60 s).
       buscaAntigaIntervaloMs: inteiro(env.BUSCA_ANTIGA_INTERVALO_MS, 60000, 'BUSCA_ANTIGA_INTERVALO_MS'),
+      // Saídas pelo certificado: pausa entre as consultas de protocolo (abaixo de 2 s só na simulação).
+      saidasIntervaloMs: inteiro(env.SAIDAS_INTERVALO_MS, 2000, 'SAIDAS_INTERVALO_MS'),
     }
   } catch (e) {
     erros.push(e.message)

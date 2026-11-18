@@ -45,7 +45,12 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   const podeCapturar = () => motivoPulo() === null
   const faltaPasta = () => !ctx.pastas?.movendoAgora() && exigirPasta && !ctx.pastas?.temPasta()
   // Depois de cada ciclo de captura, a pasta organizada é atualizada em segundo plano.
-  if (ctx.deps && ctx.organizador) ctx.deps.aoTerminarCiclo = () => ctx.organizador.agendar()
+  // Depois de cada ciclo também procura as saídas dos clientes ligados (as chaves vão para a Busca por chave).
+  if (ctx.deps && ctx.organizador)
+    ctx.deps.aoTerminarCiclo = () => {
+      ctx.organizador.agendar()
+      ctx.saidas?.procurar().catch((e) => logger.warn('Saídas pelo certificado falharam', { erro: e.message }))
+    }
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, podeCapturar, motivoPulo, faltaPasta, ...(aoPularSemPasta ? { aoPularSemPasta } : {}), ...(cron ? { cron } : {}) })
   // Uma vez, se existe escritório: antes de qualquer captura ou geração.
   await ctx.ciclo?.corrigirNotasDoEscritorio?.()

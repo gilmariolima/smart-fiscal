@@ -705,6 +705,38 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     res.json(confirmar ? { arquivos, ...total } : { arquivos })
   })
 
+  // Saídas pelo certificado: descoberta das chaves das NF-e de saída pelo número (consulta de protocolo, cStat 613).
+  const clienteDasSaidas = (req) => {
+    const cliente = sql.clientePorCnpj.get(String(req.body?.cnpj || '').replace(/\D/g, ''))
+    if (!cliente) throw new ErroHttp(404, 'Cliente não encontrado.')
+    return cliente
+  }
+  app.get('/api/saidas', (req, res) => {
+    exigirLocalBusca(req)
+    res.json({ clientes: ctx.saidas.listar(), rodando: ctx.saidas.rodando() })
+  })
+  app.post('/api/saidas/ligar', (req, res) => {
+    exigirLocalBusca(req)
+    ctx.saidas.ligar(clienteDasSaidas(req).id, req.body?.ligado === true)
+    res.json({ ok: true })
+  })
+  app.post('/api/saidas/inicio', (req, res) => {
+    exigirLocalBusca(req)
+    const cliente = clienteDasSaidas(req)
+    try {
+      ctx.saidas.definirInicio(cliente.id, String(req.body?.chave || ''))
+    } catch (e) {
+      throw new ErroHttp(e.codigo || 400, e.message)
+    }
+    res.json({ ok: true })
+  })
+  app.post('/api/saidas/procurar', (req, res) => {
+    exigirLocalBusca(req)
+    if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para procurar as saídas.')
+    ctx.saidas.procurar().catch((e) => logger.error('Saídas pelo certificado falharam', { erro: e.message }))
+    res.status(202).json({ ok: true })
+  })
+
   app.post('/api/busca-antiga/tentar-de-novo', (req, res) => {
     exigirLocalBusca(req)
     res.json({ voltaram: ctx.buscaAntiga.tentarDeNovo(Array.isArray(req.body?.ids) ? req.body.ids : []) })
