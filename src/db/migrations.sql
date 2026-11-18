@@ -146,3 +146,20 @@ CREATE TABLE IF NOT EXISTS saidas_series (
   ultimo_erro TEXT,
   PRIMARY KEY (cliente_id, serie)
 );
+
+-- Saídas por período: pedido de "NF-e de saída da série S de tal a tal mês" (AAMM), com o ponto em que parou.
+CREATE TABLE IF NOT EXISTS saidas_periodos (
+  id INTEGER PRIMARY KEY,
+  cliente_id INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  serie TEXT NOT NULL,
+  de_aamm TEXT NOT NULL,
+  ate_aamm TEXT NOT NULL,
+  primeiro INTEGER,
+  ultimo INTEGER,
+  proximo INTEGER,
+  achadas INTEGER NOT NULL DEFAULT 0,
+  situacao TEXT NOT NULL DEFAULT 'na-espera',
+  erro TEXT,
+  criado_em TEXT NOT NULL,
+  atualizado_em TEXT NOT NULL
+);

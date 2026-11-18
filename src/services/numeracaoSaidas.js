@@ -5,6 +5,7 @@
 // mês da nota cresce com o número e as buscas são binárias. Números inutilizados (217 no meio) têm 5 de folga.
 
 const FOLGA_FURO = 5
+const MAXIMO_NUMERO = 999999999 // nNF tem 9 dígitos
 
 class ErroDeConsulta extends Error {
   constructor(mensagem, parar = false) {
@@ -61,6 +62,10 @@ async function acharUltimo(consultar, { partida = 0 } = {}) {
     let baixo = base
     let alto
     for (let passo = 1; ; passo *= 2) {
+      if (baixo + passo > MAXIMO_NUMERO) {
+        alto = MAXIMO_NUMERO + 1
+        break
+      }
       if (existe(await c(baixo + passo))) baixo += passo
       else {
         alto = baixo + passo

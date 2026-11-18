@@ -6,6 +6,10 @@
 
 const { montarChave } = require('../sefaz/consultaProtocolo')
 const { UFS } = require('../sefaz/uf')
+const { classificar, acharUltimo, acharPeriodo, comMemoria, ErroDeConsulta } = require('./numeracaoSaidas')
+
+// A pausa (da empresa ou da fila) ou o fechamento do app chegou no meio de uma consulta.
+class Interrompido extends Error {}
 
 const INTERVALO_MS = 2000
 // Números inutilizados ou rejeitados dão 217 no meio da sequência: só conclui "fim" depois de vários seguidos.
@@ -113,28 +117,203 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return { achadas: achadas.length, parar }
   }
 
-  /** Procura as saídas dos clientes ligados (ou de um só). Uma busca por vez: chamada em dobro devolve a mesma. */
+  const aammDe = (d) => `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}`
+
+  // Consulta do número `n` da série, já classificada; respeita os 2 s e a pausa (Interrompido).
+  function consultorDe(cliente, consulta, serie) {
+    const cUF = UFS[cliente.uf.toUpperCase()].codigo
+    const aamm = aammDe(agora())
+    return async (n) => {
+      if (interromper(cliente)) throw new Interrompido()
+      await esperarVez()
+      if (interromper(cliente)) throw new Interrompido()
+      return classificar(await consulta.consultar(montarChave({ cUF, aamm, cnpj: cliente.cnpj, serie, numero: n })))
+    }
+  }
+
+  function abrirConsulta(cliente) {
+    try {
+      return fabricaConsulta(cliente)
+    } catch (e) {
+      logger.warn('Saídas pelo certificado: certificado indisponível', { cnpj: cliente.cnpj, erro: e.message })
+      return null
+    }
+  }
+
+  // Interruptor ligado sem nenhuma série conhecida: acha o último número da série 1 e segue dali nas próximas vezes.
+  async function comecarSemPartida(cliente, consulta) {
+    try {
+      const ultimo = await acharUltimo(consultorDe(cliente, consulta, '1'))
+      sql.gravarSerie.run({ cliente_id: cliente.id, serie: '1', ultimo_numero: ultimo, achadas: 0, ultima_consulta: agora().toISOString(), ultimo_erro: ultimo ? null : 'nenhuma nota nesta série' })
+      return false
+    } catch (e) {
+      if (e instanceof Interrompido) return false
+      if (!(e instanceof ErroDeConsulta)) throw e
+      logger.warn('Saídas pelo certificado: último número não achado', { cnpj: cliente.cnpj, erro: e.message })
+      return e.parar
+    }
+  }
+
+  // ---------- pedidos por período ----------
+
+  const pedidosSql = {
+    ativos: db.prepare("SELECT * FROM saidas_periodos WHERE situacao IN ('na-espera', 'procurando') ORDER BY id"),
+    um: db.prepare('SELECT * FROM saidas_periodos WHERE id = ?'),
+    criar: db.prepare(`INSERT INTO saidas_periodos (cliente_id, serie, de_aamm, ate_aamm, primeiro, ultimo, proximo, situacao, criado_em, atualizado_em)
+      VALUES (@cliente_id, @serie, @de, @ate, @primeiro, @ultimo, @primeiro, @situacao, @agora, @agora)`),
+    trecho: db.prepare("UPDATE saidas_periodos SET primeiro = ?, ultimo = ?, proximo = ?, situacao = 'procurando', atualizado_em = ? WHERE id = ?"),
+    andou: db.prepare('UPDATE saidas_periodos SET proximo = ?, achadas = achadas + ?, erro = NULL, atualizado_em = ? WHERE id = ?'),
+    fim: db.prepare('UPDATE saidas_periodos SET situacao = ?, erro = ?, atualizado_em = ? WHERE id = ?'),
+    erro: db.prepare('UPDATE saidas_periodos SET erro = ?, atualizado_em = ? WHERE id = ?'),
+    excluir: db.prepare('DELETE FROM saidas_periodos WHERE id = ?'),
+    noApp: db.prepare('SELECT 1 FROM notas WHERE cliente_id = ? AND chave = ?'),
+    listar: db.prepare(`SELECT p.*, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome FROM saidas_periodos p JOIN clientes c ON c.id = p.cliente_id
+      WHERE p.situacao <> 'concluido' OR p.atualizado_em >= ? ORDER BY p.id DESC`),
+  }
+
+  /** Meses que a consulta alcança: do mês atual menos 5 até o atual (AAMM). */
+  function janela() {
+    const d = agora()
+    return { de: aammDe(new Date(d.getFullYear(), d.getMonth() - 5, 1)), ate: aammDe(d) }
+  }
+
+  function validarPedido({ clienteId, de, ate, serie }) {
+    const j = janela()
+    if (!/^\d{4}$/.test(String(de)) || !/^\d{4}$/.test(String(ate)) || de < j.de || ate > j.ate) throw new Error('Escolha meses dos últimos 6 meses: antes disso, só pelo SPED.')
+    if (ate < de) throw new Error('O mês de Até precisa ser igual ou depois do mês de De.')
+    if (!/^\d{1,3}$/.test(String(serie ?? '').trim())) throw new Error('Série: use um número de 0 a 999.')
+    const cliente = sql.cliente.get(clienteId)
+    if (!cliente || !cliente.cert_arquivo || !noPrazo(cliente) || !atendido(cliente)) throw new Error('Esta empresa não pode usar: precisa de A1 no prazo e de estado atendido pela SVRS.')
+    return { cliente, serie: String(Number(serie)) }
+  }
+
+  const partidaDe = (cliente, serie) => series(cliente).find((s) => s.serie === serie)?.ultimo_numero || 0
+
+  async function trechoDoPeriodo(cliente, consulta, serie, de, ate) {
+    const consultar = comMemoria(consultorDe(cliente, consulta, serie))
+    const ultimo = await acharUltimo(consultar, { partida: partidaDe(cliente, serie) })
+    return ultimo ? acharPeriodo(consultar, { de, ate, ultimo }) : null
+  }
+
+  // Uma tarefa dentro da procura única do app.
+  function naVez(tarefa) {
+    jaConsultou = false
+    emCurso = (async () => tarefa())().finally(() => {
+      emCurso = null
+    })
+    return emCurso
+  }
+
+  /** Acha o trecho do período (antes de confirmar). Com outra procura rodando, o pedido entra na espera e roda depois. */
+  async function pedirPeriodo({ clienteId, de, ate, serie }) {
+    const v = validarPedido({ clienteId, de, ate, serie })
+    if (parando) throw new Error('O app está fechando.')
+    if (emCurso) {
+      const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro: null, ultimo: null, situacao: 'na-espera', agora: agora().toISOString() }).lastInsertRowid)
+      return { naEspera: true, id }
+    }
+    const consulta = abrirConsulta(v.cliente)
+    if (!consulta) throw new Error('O certificado desta empresa não abriu.')
+    return naVez(async () => {
+      try {
+        const t = await trechoDoPeriodo(v.cliente, consulta, v.serie, de, ate)
+        if (!t) return { nenhuma: true, motivo: 'nenhuma nota no período' }
+        return { serie: v.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }
+      } catch (e) {
+        if (e instanceof Interrompido) throw new Error('A busca foi pausada.')
+        throw e
+      }
+    })
+  }
+
+  /** Grava o pedido confirmado e começa a pôr as chaves na fila. */
+  function confirmarPeriodo({ clienteId, de, ate, serie, primeiro, ultimo }) {
+    const v = validarPedido({ clienteId, de, ate, serie })
+    if (!Number.isInteger(primeiro) || !Number.isInteger(ultimo) || primeiro < 1 || primeiro > ultimo) throw new Error('Trecho de números inválido.')
+    const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro, ultimo, situacao: 'procurando', agora: agora().toISOString() }).lastInsertRowid)
+    procurar().catch((e) => logger.warn('Saídas por período falharam', { erro: e.message }))
+    return id
+  }
+
+  const excluirPeriodo = (id) => pedidosSql.excluir.run(id).changes > 0
+
+  function listarPeriodos() {
+    const semana = new Date(agora().getTime() - 7 * 864e5).toISOString()
+    return pedidosSql.listar.all(semana).map((p) => ({
+      id: p.id, cnpj: p.cnpj, nome: p.nome, serie: p.serie, de_aamm: p.de_aamm, ate_aamm: p.ate_aamm,
+      primeiro: p.primeiro, ultimo: p.ultimo, proximo: p.proximo, achadas: p.achadas, situacao: p.situacao, erro: p.erro, atualizado_em: p.atualizado_em,
+    }))
+  }
+
+  // Um pedido: acha o trecho se ainda não tem e consulta de `proximo` até `ultimo`, gravando a cada número.
+  // Devolve true quando a procura inteira precisa parar (656, app fechando, fila pausada).
+  async function rodarPedido(p) {
+    const cliente = sql.cliente.get(p.cliente_id)
+    const iso = () => agora().toISOString()
+    if (!cliente || !noPrazo(cliente) || !atendido(cliente)) {
+      pedidosSql.fim.run('erro', 'Esta empresa não pode usar: precisa de A1 no prazo e de estado atendido pela SVRS.', iso(), p.id)
+      return false
+    }
+    if (cliente.busca_pausada) return false
+    const consulta = abrirConsulta(cliente)
+    if (!consulta) {
+      pedidosSql.erro.run('O certificado desta empresa não abriu.', iso(), p.id)
+      return false
+    }
+    try {
+      if (p.primeiro == null) {
+        const t = await trechoDoPeriodo(cliente, consulta, p.serie, p.de_aamm, p.ate_aamm)
+        if (!t) {
+          pedidosSql.fim.run('concluido', 'nenhuma nota no período', iso(), p.id)
+          return false
+        }
+        pedidosSql.trecho.run(t.primeiro, t.ultimo, t.primeiro, iso(), p.id)
+        p = pedidosSql.um.get(p.id)
+      }
+      const consultar = consultorDe(cliente, consulta, p.serie)
+      for (let n = p.proximo; n <= p.ultimo; n++) {
+        const r = await consultar(n)
+        if (r.tipo === 'parar') throw new ErroDeConsulta(`${r.mensagem} — continua no próximo horário`, true)
+        if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem)
+        const noPeriodo = r.tipo === 'existe' && r.aamm >= p.de_aamm && r.aamm <= p.ate_aamm
+        // A nota que já está no app não entra na fila (não gasta a vez de 1 minuto da SVRS).
+        if (noPeriodo && !pedidosSql.noApp.get(cliente.id, r.chave)) buscaAntiga.adicionarChaves(cliente.id, [{ chave: r.chave, direcao: 'saida' }], { origem: 'periodo' })
+        pedidosSql.andou.run(n + 1, noPeriodo ? 1 : 0, iso(), p.id)
+      }
+      pedidosSql.fim.run('concluido', null, iso(), p.id)
+      return false
+    } catch (e) {
+      if (e instanceof Interrompido) return parando || !!buscaAntiga.pausadaGeral?.()
+      if (!(e instanceof ErroDeConsulta)) throw e
+      if (e.parar) {
+        pedidosSql.erro.run(e.message, iso(), p.id)
+        return true
+      }
+      pedidosSql.fim.run('erro', e.message, iso(), p.id)
+      return false
+    }
+  }
+
+  /** Procura as saídas dos clientes ligados (ou de um só) e depois roda os pedidos por período. Uma busca por vez. */
   function procurar({ clienteId } = {}) {
     if (emCurso) return emCurso
     if (parando) return Promise.resolve({ clientes: 0, achadas: 0 })
-    jaConsultou = false
-    emCurso = (async () => {
+    return naVez(async () => {
       const resumo = { clientes: 0, achadas: 0 }
-      const d = agora()
-      const aamm = `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}`
+      const aamm = aammDe(agora())
       for (const cliente of sql.clientes.all()) {
         if (parando || buscaAntiga.pausadaGeral?.()) break
         if (clienteId && cliente.id !== clienteId) continue
         if (!cliente.saidas_auto || cliente.busca_pausada || !noPrazo(cliente) || !atendido(cliente)) continue
-        let consulta
-        try {
-          consulta = fabricaConsulta(cliente)
-        } catch (e) {
-          logger.warn('Saídas pelo certificado: certificado indisponível', { cnpj: cliente.cnpj, erro: e.message })
+        const consulta = abrirConsulta(cliente)
+        if (!consulta) continue
+        resumo.clientes++
+        const lista = series(cliente)
+        if (!lista.length) {
+          if (await comecarSemPartida(cliente, consulta)) return resumo
           continue
         }
-        resumo.clientes++
-        for (const s of series(cliente)) {
+        for (const s of lista) {
           if (interromper(cliente)) break
           const r = await procurarSerie(cliente, consulta, s, aamm)
           resumo.achadas += r.achadas
@@ -142,11 +321,14 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         }
       }
       if (resumo.achadas) logger.info('Saídas pelo certificado: chaves achadas', resumo)
+      // Os pedidos por período: inclusive os que entraram na espera durante esta procura.
+      for (let p = pedidosSql.ativos.get(); p; ) {
+        if (parando || buscaAntiga.pausadaGeral?.()) break
+        if (await rodarPedido(p)) break
+        p = pedidosSql.ativos.all().find((q) => q.id > p.id)
+      }
       return resumo
-    })().finally(() => {
-      emCurso = null
     })
-    return emCurso
   }
 
   /** Ao fechar o app: nenhuma consulta nova; devolve a procura em curso para esperar a gravação da série. */
@@ -155,7 +337,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return emCurso || Promise.resolve()
   }
 
-  return { listar, ligar, definirInicio, procurar, parar, rodando: () => !!emCurso }
+  return { listar, ligar, definirInicio, procurar, parar, rodando: () => !!emCurso, janela, pedirPeriodo, confirmarPeriodo, excluirPeriodo, listarPeriodos }
 }
 
 module.exports = { criarSaidas }
