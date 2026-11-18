@@ -83,10 +83,38 @@ NF-e pela SVRS, uma por minuto
 - A barra mostra "baixadas + já existiam + ... / total", sem animação.
 - O tempo que falta é calculado como pendentes × intervalo atual.
 
-**Filtros.** Botões com contagem no lugar do select: Todas, Na fila, Baixadas, Problemas (erro + não envolvido) e Outro estado.
+**Filtros (dentro da pasta da empresa e direção).** Botões com contagem no lugar do select: Todas, Na fila, Baixadas, Problemas (erro + não envolvido) e Outro estado.
 
-**Lista.**
-- A lista vem agrupada por cliente, com cabeçalho e contagem. Cada grupo abre e fecha, e começa aberto.
+**Fila em pastas** (pedido de 18/11, igual à navegação da tela Notas: a seta de voltar sobe uma pasta):
+
+```
+ Fila de downloads
+ ┌────────────────────────────────────────────────────────────────────────────────────┐
+ │ 📁 LIVRARIA LEITURA     ████████░░  40 de 86 · 3 problemas        Baixando  [Pausar] │
+ │ 📁 LEITURA FORTALEZA    ██░░░░░░░░   2 de 20                      Pausado [Continuar]│
+ │ 📁 INOX                 ██████████  12 de 12                      Concluído          │
+ └────────────────────────────────────────────────────────────────────────────────────┘
+ ← LIVRARIA LEITURA                                                            [Pausar]
+   📁 NF-e · Entradas   292 (250 baixadas · 2 problemas)
+   📁 NF-e · Saídas     120 (90 baixadas · 1 problema)
+ ← LIVRARIA LEITURA / NF-e · Saídas
+   (a lista de notas abaixo, com filtros por situação)
+```
+
+- **Primeiro nível, uma linha por empresa (pasta):**
+  - nome da empresa;
+  - barra com "baixadas de total" e a contagem de problemas;
+  - estado: Baixando (a vez dela agora), Na fila, Pausado ou Concluído;
+  - botão **Pausar/Continuar só daquela empresa**.
+- **Dentro da empresa:** uma pasta por tipo e direção, hoje **NF-e · Entradas** e **NF-e · Saídas**, com as contagens. Se um dia entrar outro tipo, ele vira mais uma pasta aqui.
+- **Dentro da pasta:** a lista de notas, com os filtros de situação.
+- **Pausa por empresa:** coluna nova `busca_pausada` em `clientes`, com padrão 0. A fila pula as linhas das empresas pausadas e segue com as outras. Pausar no meio de uma consulta deixa ela terminar.
+- **Pausar tudo:** o botão do topo da tela continua pausando a fila inteira.
+- **Rota:** `POST /api/busca-antiga/cliente-pausa { cnpj, pausada }`.
+- **`estado`** traz o resumo por cliente: `clientes: [{ cnpj, nome, total, baixadas, problemas, pendentes, pausada, daVez }]` e, por cliente, a contagem por direção.
+
+**Lista (dentro da pasta).**
+- A lista vem do cliente e da direção escolhidos.
 - Cada linha tem duas partes:
   - **Linha 1:** a direção e a situação. Para a nota baixada, também número, data, valor e "para"/"de" com o nome da outra parte.
   - **Linha 2:** a chave em blocos de 4, menor e apagada.
@@ -178,4 +206,8 @@ NF-e pela SVRS, uma por minuto
   - traz a direção;
   - as contagens por situação batem.
 - **`tentarDeNovo`.**
+- **Pausa por empresa:**
+  - a fila pula a empresa pausada e baixa a próxima;
+  - continuar volta a baixar;
+  - o resumo por cliente traz `pausada` e `daVez`.
 - **Tela:** conferida no navegador com a demonstração (`SEFAZ_MOCK`). A SVRS falsa também responde à consulta de protocolo: devolve 613 para os números até um limite e 217 depois dele.
