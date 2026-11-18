@@ -79,15 +79,17 @@ function criarClienteConsulta({ pfx, passphrase, requisitar } = {}) {
 }
 
 // SEFAZ simulada (SEFAZ_MOCK): os 5 números depois do primeiro consultado de cada série existem; depois, 217.
+// Demonstração: toda série tem as notas 1 a 120; de 20 em 20, do mês atual (101 a 120) para trás (1 a 20 = 5 meses antes).
+const ULTIMA_SIMULADA = 120
 function consultaSimulada() {
-  const primeiro = new Map()
   return {
     async consultar(chave) {
-      const serie = chave.slice(6, 25)
       const numero = Number(chave.slice(25, 34))
-      if (!primeiro.has(serie)) primeiro.set(serie, numero)
-      if (numero - primeiro.get(serie) >= 5) return { cStat: '217', xMotivo: 'Rejeicao: NF-e nao consta na base de dados da SEFAZ' }
-      const verdadeira = chave.slice(0, 35) + '7654321'.padStart(8, '0')
+      if (numero < 1 || numero > ULTIMA_SIMULADA) return { cStat: '217', xMotivo: 'Rejeicao: NF-e nao consta na base de dados da SEFAZ' }
+      const hoje = new Date()
+      const mes = new Date(hoje.getFullYear(), hoje.getMonth() - Math.floor((ULTIMA_SIMULADA - numero) / 20), 1)
+      const aamm = `${String(mes.getFullYear()).slice(2)}${String(mes.getMonth() + 1).padStart(2, '0')}`
+      const verdadeira = chave.slice(0, 2) + aamm + chave.slice(6, 35) + '7654321'.padStart(8, '0')
       const real = verdadeira.slice(0, 43) + digitoVerificador(verdadeira.slice(0, 43))
       return { cStat: '613', xMotivo: `Rejeicao: Codigo Numerico difere [${real}]`, chaveVerdadeira: real }
     },

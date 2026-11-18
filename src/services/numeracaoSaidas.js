@@ -54,7 +54,9 @@ async function acharUltimo(consultar, { partida = 0 } = {}) {
   let base = Math.max(partida, 1)
   if (!existe(await c(base))) {
     const vizinho = await primeiroQueExiste(c, base + 1, base + FOLGA_FURO)
-    if (vizinho === null) return partida
+    // Partida que a SEFAZ não conhece (nota de outro ambiente, número digitado errado): recomeça do 1.
+    if (vizinho === null && base > 1) return acharUltimo(c)
+    if (vizinho === null) return 0
     base = vizinho
   }
   for (;;) {

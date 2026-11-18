@@ -89,3 +89,9 @@ test('656 e erro viram ErroDeConsulta (o 656 com parar)', async () => {
   const caiu = async () => classificar({ erro: 'ECONNRESET' })
   await assert.rejects(acharUltimo(caiu), (e) => e instanceof ErroDeConsulta && e.parar === false && /ECONNRESET/.test(e.message))
 })
+
+test('acharUltimo com partida que a SEFAZ não conhece recomeça do 1', async () => {
+  // Nota importada com número que não está na SEFAZ (ex.: de outro ambiente): não pode virar o "último".
+  const { consultar } = sefaz([[1, 120, '2606']])
+  assert.equal(await acharUltimo(consultar, { partida: 705 }), 120)
+})

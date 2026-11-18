@@ -253,11 +253,182 @@ function InicioDaSerie({ cnpj, aoSalvar, novo }) {
   )
 }
 
-function SaidasPeloCertificado({ aoAdicionar, aoTerminar }) {
+// ---------- saídas por período ----------
+
+const mesRotulo = (m) => (m ? `${m.slice(5)}/${m.slice(0, 4)}` : '')
+const mesDoAamm = (aamm) => `20${aamm.slice(0, 2)}-${aamm.slice(2)}`
+function mesesDaJanela(j) {
+  if (!j) return []
+  const lista = []
+  let [a, m] = j.de.split('-').map(Number)
+  const [af, mf] = j.ate.split('-').map(Number)
+  while (a < af || (a === af && m <= mf)) {
+    lista.push(`${a}-${String(m).padStart(2, '0')}`)
+    m++
+    if (m > 12) {
+      m = 1
+      a++
+    }
+  }
+  return lista
+}
+const duracao = (min) => (min >= 60 ? `~${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}` : `~${Math.max(1, min)} min`)
+function intervaloDeMeses(de, ate) {
+  if (de === ate) return mesRotulo(de)
+  if (de.slice(0, 4) === ate.slice(0, 4)) return `${de.slice(5)} a ${mesRotulo(ate)}`
+  return `${mesRotulo(de)} a ${mesRotulo(ate)}`
+}
+
+function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) {
+  const meses = mesesDaJanela(janela)
+  const [cnpj, setCnpj] = useState('')
+  const [de, setDe] = useState('')
+  const [ate, setAte] = useState('')
+  const [serie, setSerie] = useState('1')
+  const [buscando, setBuscando] = useState(false)
+  const [resultado, setResultado] = useState(null)
+  const deEfetivo = de || meses[meses.length - 1] || ''
+  const ateEfetivo = ate || meses[meses.length - 1] || ''
+  const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo, serie }
+
+  async function buscar(e) {
+    e.preventDefault()
+    setResultado(null)
+    setBuscando(true)
+    try {
+      const r = await api.post('/api/saidas/periodo', pedido)
+      if (r.naEspera) aoMudar('O pedido entrou na espera: roda quando a procura atual terminar.')
+      else setResultado({ ...r, ...pedido })
+    } catch (e2) {
+      aoErro(e2.message)
+    } finally {
+      setBuscando(false)
+    }
+  }
+  async function confirmar() {
+    try {
+      await api.post('/api/saidas/periodo/confirmar', { cnpj: resultado.cnpj, de: resultado.de, ate: resultado.ate, serie: resultado.serie, primeiro: resultado.primeiro, ultimo: resultado.ultimo })
+      setResultado(null)
+      aoMudar()
+    } catch (e) {
+      aoErro(e.message)
+    }
+  }
+
+  return (
+    <form className="busca-periodo" onSubmit={buscar}>
+      <h3 className="busca-subtitulo">Buscar por período</h3>
+      <div className="busca-periodo-campos">
+        <label className="campo">
+          <span>Empresa</span>
+          <select value={cnpj} onChange={(e) => setCnpj(e.target.value)} required>
+            <option value="">Escolha a empresa</option>
+            {clientes.map((c) => (
+              <option key={c.cnpj} value={c.cnpj}>
+                {c.nome}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="campo">
+          <span>De</span>
+          <select value={deEfetivo} onChange={(e) => setDe(e.target.value)}>
+            {meses.map((m) => (
+              <option key={m} value={m}>
+                {mesRotulo(m)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="campo">
+          <span>Até</span>
+          <select value={ateEfetivo} onChange={(e) => setAte(e.target.value)}>
+            {meses
+              .filter((m) => m >= deEfetivo)
+              .map((m) => (
+                <option key={m} value={m}>
+                  {mesRotulo(m)}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="campo busca-periodo-serie">
+          <span>Série</span>
+          <input className="entrada" value={serie} onChange={(e) => setSerie(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" />
+        </label>
+        <button type="submit" className="botao botao-azul" disabled={buscando || !cnpj || !serie || ateEfetivo < deEfetivo}>
+          {buscando ? 'Procurando o período… (1–2 min)' : 'Buscar'}
+        </button>
+      </div>
+      {resultado &&
+        (resultado.nenhuma ? (
+          <p className="apagado">{resultado.motivo}</p>
+        ) : (
+          <div className="busca-periodo-resultado">
+            <span>
+              Série {resultado.serie}: nº {inteiro(resultado.primeiro)} a {inteiro(resultado.ultimo)} · ~{plural(resultado.estimadas, 'nota', 'notas')} · download {duracao(resultado.estimadas + (pendentesNaFila || 0))}
+              {resultado.foraDaJanela && <small className="busca-erro">parte de {mesRotulo(resultado.de)} ficou fora (mais de 6 meses)</small>}
+            </span>
+            <span className="busca-periodo-botoes">
+              <button type="button" className="botao botao-claro" onClick={() => setResultado(null)}>
+                Cancelar
+              </button>
+              <button type="button" className="botao botao-azul" onClick={confirmar}>
+                Colocar na fila
+              </button>
+            </span>
+          </div>
+        ))}
+    </form>
+  )
+}
+
+function situacaoDoPedido(p) {
+  if (p.situacao === 'na-espera') return 'na espera'
+  if (p.situacao === 'procurando') {
+    if (p.primeiro == null) return 'achando o trecho…'
+    const texto = `achando chaves · ${inteiro(p.proximo - p.primeiro)} de ${inteiro(p.ultimo - p.primeiro + 1)}`
+    return p.erro ? `${texto} · ${p.erro}` : texto
+  }
+  if (p.situacao === 'concluido') return p.erro || `concluído · ${plural(p.achadas, 'chave', 'chaves')}`
+  return p.erro || 'erro'
+}
+
+function Pedidos({ periodos, aoMudar, aoErro }) {
+  if (!periodos.length) return null
+  async function excluir(id) {
+    try {
+      await api.post('/api/saidas/periodo/excluir', { id })
+      aoMudar()
+    } catch (e) {
+      aoErro(e.message)
+    }
+  }
+  return (
+    <div className="busca-pedidos">
+      <h3 className="busca-subtitulo">Pedidos</h3>
+      <ul className="busca-saidas-lista">
+        {periodos.map((p) => (
+          <li key={p.id}>
+            <span>
+              {p.nome} · {intervaloDeMeses(p.de, p.ate)} · série {p.serie}
+            </span>
+            <span className={p.situacao === 'erro' ? 'busca-erro' : 'apagado'}>{situacaoDoPedido(p)}</span>
+            <BotaoIcone icone="fa-xmark" dica="Excluir pedido" perigo onClick={() => excluir(p.id)} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function SaidasPeloCertificado({ aoAdicionar, aoTerminar, pendentesNaFila }) {
   const saidas = useApi('/api/saidas')
   const lista = saidas.dados?.clientes || []
-  const rodando = !!saidas.dados?.rodando
+  const periodos = saidas.dados?.periodos || []
   const { recarregar } = saidas
+  // "Rodando" também enquanto algum pedido por período estiver na espera ou procurando.
+  const rodando = !!saidas.dados?.rodando || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
   useEffect(() => {
     if (!rodando) return undefined
     const t = setInterval(recarregar, 3000)
@@ -287,7 +458,21 @@ function SaidasPeloCertificado({ aoAdicionar, aoTerminar }) {
   }
   return (
     <div className="busca-saidas">
-      <p className="apagado">O app acha as NF-e de saída pelo número na SEFAZ (últimos 6 meses) e põe na fila. Roda depois de cada captura.</p>
+      <p className="apagado">O app acha as NF-e de saída pelo número na SEFAZ (últimos 6 meses) e põe na fila.</p>
+      {lista.length > 0 && (
+        <BuscarPorPeriodo
+          clientes={lista}
+          janela={saidas.dados?.janela}
+          pendentesNaFila={pendentesNaFila}
+          aoMudar={(texto) => {
+            recarregar()
+            if (texto) aoAdicionar(texto)
+          }}
+          aoErro={(m) => aoAdicionar(null, m)}
+        />
+      )}
+      <Pedidos periodos={periodos} aoMudar={recarregar} aoErro={(m) => aoAdicionar(null, m)} />
+      <h3 className="busca-subtitulo">Seguir as saídas novas depois de cada captura</h3>
       {!lista.length && <p>Nenhum cliente com certificado no prazo de estado atendido pela SVRS.</p>}
       <ul className="busca-saidas-lista">
         {lista.map((c) => (
@@ -613,7 +798,7 @@ export default function BuscaPorChave() {
           />
           {aba === 'colar' && <ColarChaves clientes={comCertificado} aoAdicionar={aoAdicionar} />}
           {aba === 'sped' && <ArquivoSped aoAdicionar={aoAdicionar} />}
-          {aba === 'saidas' && <SaidasPeloCertificado aoAdicionar={aoAdicionar} aoTerminar={recarregar} />}
+          {aba === 'saidas' && <SaidasPeloCertificado aoAdicionar={aoAdicionar} aoTerminar={recarregar} pendentesNaFila={pendentes} />}
         </section>
       )}
 

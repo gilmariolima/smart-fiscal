@@ -2479,8 +2479,9 @@ test('saídas pelo certificado: listar, ligar, colar o início e procurar', asyn
   assert.equal((await pedir('/api/saidas/procurar', { method: 'POST', body: {} })).status, 202)
   for (let i = 0; i < 100 && ctx.saidas.rodando(); i++) await new Promise((ok) => setTimeout(ok, 20))
   const depois = (await pedir('/api/saidas')).corpo.clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
-  assert.equal(depois.series[0].ultimo_numero, 45)
-  assert.equal(ctx.db.prepare("SELECT COUNT(*) FROM busca_antiga WHERE origem = 'saidas'").pluck().get(), 6)
+  // A SEFAZ simulada tem as notas 1 a 120: do 41 ao 120, mais a chave colada (40).
+  assert.equal(depois.series[0].ultimo_numero, 120)
+  assert.equal(ctx.db.prepare("SELECT COUNT(*) FROM busca_antiga WHERE origem = 'saidas'").pluck().get(), 81)
 })
 
 test('saídas por período: pedir, confirmar, listar, validar e excluir', async (t) => {
@@ -2490,7 +2491,8 @@ test('saídas por período: pedir, confirmar, listar, validar e excluir', async 
   const corpo = { cnpj: CNPJ_MOCK_OK, de: mes, ate: mes, serie: '1' }
   const r = await pedir('/api/saidas/periodo', { method: 'POST', body: corpo })
   assert.equal(r.status, 200, JSON.stringify(r.corpo))
-  assert.deepEqual([r.corpo.primeiro, r.corpo.ultimo, r.corpo.estimadas], [1, 5, 5])
+  // SEFAZ simulada: as notas 101 a 120 são do mês atual.
+  assert.deepEqual([r.corpo.primeiro, r.corpo.ultimo, r.corpo.estimadas], [101, 120, 20])
   const ok = await pedir('/api/saidas/periodo/confirmar', { method: 'POST', body: { ...corpo, primeiro: r.corpo.primeiro, ultimo: r.corpo.ultimo } })
   assert.equal(ok.status, 201)
   const lista = (await pedir('/api/saidas')).corpo
@@ -2501,6 +2503,6 @@ test('saídas por período: pedir, confirmar, listar, validar e excluir', async 
   assert.equal((await pedir('/api/saidas/periodo', { method: 'POST', body: { ...corpo, de: 'junho' } })).status, 400)
   assert.equal((await pedir('/api/saidas/periodo', { method: 'POST', body: { ...corpo, cnpj: '99888777000166' } })).status, 404)
   assert.equal((await pedir('/api/saidas/periodo/confirmar', { method: 'POST', body: { ...corpo, primeiro: 5, ultimo: 1 } })).status, 400)
-  assert.equal((await pedir(`/api/saidas/periodo/${ok.corpo.id}`, { method: 'DELETE' })).status, 204)
-  assert.equal((await pedir('/api/saidas/periodo/9999', { method: 'DELETE' })).status, 404)
+  assert.equal((await pedir('/api/saidas/periodo/excluir', { method: 'POST', body: { id: ok.corpo.id } })).status, 200)
+  assert.equal((await pedir('/api/saidas/periodo/excluir', { method: 'POST', body: { id: 9999 } })).status, 404)
 })

@@ -3326,6 +3326,51 @@ a.botao-icone {
   text-align: right;
 }
 
+.busca-subtitulo {
+  margin: 18px 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.busca-periodo {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.busca-periodo-campos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.busca-periodo-serie .entrada {
+  width: 72px;
+}
+
+.busca-periodo-resultado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.busca-periodo-resultado small {
+  display: block;
+  font-size: 12px;
+}
+
+.busca-periodo-botoes {
+  display: flex;
+  gap: 8px;
+}
+
+.busca-pedidos .busca-saidas-lista li > span:first-child {
+  flex: 1;
+}
+
 .busca-inicio {
   display: flex;
   align-items: center;

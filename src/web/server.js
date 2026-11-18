@@ -747,10 +747,10 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     }
     res.status(201).json({ id })
   })
-  app.delete('/api/saidas/periodo/:id', (req, res) => {
+  app.post('/api/saidas/periodo/excluir', (req, res) => {
     exigirLocalBusca(req)
-    if (!ctx.saidas.excluirPeriodo(Number(req.params.id) || 0)) throw new ErroHttp(404, 'Pedido não encontrado.')
-    res.status(204).end()
+    if (!ctx.saidas.excluirPeriodo(Number(req.body?.id) || 0)) throw new ErroHttp(404, 'Pedido não encontrado.')
+    res.json({ ok: true })
   })
   app.post('/api/saidas/ligar', (req, res) => {
     exigirLocalBusca(req)
