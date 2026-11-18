@@ -287,6 +287,7 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
   const [serie, setSerie] = useState('1')
   const [buscando, setBuscando] = useState(false)
   const [resultado, setResultado] = useState(null)
+  const [enviando, setEnviando] = useState(false)
   const deEfetivo = de || meses[meses.length - 1] || ''
   const ateEfetivo = ate || meses[meses.length - 1] || ''
   const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo, serie }
@@ -306,12 +307,15 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
     }
   }
   async function confirmar() {
+    setEnviando(true)
     try {
       await api.post('/api/saidas/periodo/confirmar', { cnpj: resultado.cnpj, de: resultado.de, ate: resultado.ate, serie: resultado.serie, primeiro: resultado.primeiro, ultimo: resultado.ultimo })
       setResultado(null)
       aoMudar()
     } catch (e) {
       aoErro(e.message)
+    } finally {
+      setEnviando(false)
     }
   }
 
@@ -373,7 +377,7 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
               <button type="button" className="botao botao-claro" onClick={() => setResultado(null)}>
                 Cancelar
               </button>
-              <button type="button" className="botao botao-azul" onClick={confirmar}>
+              <button type="button" className="botao botao-azul" onClick={confirmar} disabled={enviando}>
                 Colocar na fila
               </button>
             </span>

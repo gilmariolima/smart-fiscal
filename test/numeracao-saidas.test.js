@@ -95,3 +95,8 @@ test('acharUltimo com partida que a SEFAZ não conhece recomeça do 1', async ()
   const { consultar } = sefaz([[1, 120, '2606']])
   assert.equal(await acharUltimo(consultar, { partida: 705 }), 120)
 })
+
+test('acharUltimo atravessa furo de mais de 5 números', async () => {
+  const { consultar } = sefaz([[1, 1000, '2606']], { sem: Array.from({ length: 21 }, (_, i) => 760 + i) })
+  assert.equal(await acharUltimo(consultar), 1000)
+})

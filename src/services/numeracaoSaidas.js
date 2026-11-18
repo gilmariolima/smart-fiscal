@@ -6,6 +6,7 @@
 
 const FOLGA_FURO = 5
 const MAXIMO_NUMERO = 999999999 // nNF tem 9 dígitos
+const SONDAS_DE_FURO = 8
 
 class ErroDeConsulta extends Error {
   constructor(mensagem, parar = false) {
@@ -63,6 +64,7 @@ async function acharUltimo(consultar, { partida = 0 } = {}) {
     // Sobe dobrando o passo até um número que não existe; depois aperta entre os dois.
     let baixo = base
     let alto
+    let altoDaSubida
     for (let passo = 1; ; passo *= 2) {
       if (baixo + passo > MAXIMO_NUMERO) {
         alto = MAXIMO_NUMERO + 1
@@ -74,13 +76,24 @@ async function acharUltimo(consultar, { partida = 0 } = {}) {
         break
       }
     }
+    altoDaSubida = alto
     while (alto - baixo > 1) {
       const m = Math.floor((baixo + alto) / 2)
       if (existe(await c(m))) baixo = m
       else alto = m
     }
     // O 217 pode ser um furo: se um dos 5 seguintes existe, a numeração continua dali.
-    const depois = await primeiroQueExiste(c, baixo + 1, baixo + FOLGA_FURO)
+    let depois = await primeiroQueExiste(c, baixo + 1, baixo + FOLGA_FURO)
+    // Furo maior que a folga: a busca binária pode ter caído dentro dele. Sonda alguns pontos até o
+    // número em que a subida parou; se algum existe, a numeração continua depois do furo.
+    if (depois === null) {
+      const de = baixo + FOLGA_FURO + 1
+      const vao = altoDaSubida - de
+      for (let i = 1; i <= SONDAS_DE_FURO && vao > 0 && depois === null; i++) {
+        const n = de + Math.floor((vao * i) / (SONDAS_DE_FURO + 1))
+        if (n > baixo + FOLGA_FURO && n < altoDaSubida && existe(await c(n))) depois = n
+      }
+    }
     if (depois === null) return baixo
     base = depois
   }

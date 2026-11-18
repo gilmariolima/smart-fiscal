@@ -15,6 +15,7 @@ const INTERVALO_MS = 2000
 // Números inutilizados ou rejeitados dão 217 no meio da sequência: só conclui "fim" depois de vários seguidos.
 const INEXISTENTES_PARA_PARAR = 20
 const MAXIMO_POR_SERIE = 1000
+const MARGEM_DO_TRECHO = 20
 const SEFAZ_PROPRIA = ['AM', 'BA', 'GO', 'MG', 'MS', 'MT', 'PE', 'PR', 'RS', 'SP']
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
 const p2 = (n) => String(n).padStart(2, '0')
@@ -167,6 +168,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     erro: db.prepare('UPDATE saidas_periodos SET erro = ?, atualizado_em = ? WHERE id = ?'),
     excluir: db.prepare('DELETE FROM saidas_periodos WHERE id = ?'),
     noApp: db.prepare('SELECT 1 FROM notas WHERE cliente_id = ? AND chave = ?'),
+    ativoIgual: db.prepare("SELECT 1 FROM saidas_periodos WHERE cliente_id = ? AND serie = ? AND de_aamm = ? AND ate_aamm = ? AND situacao IN ('na-espera', 'procurando')"),
     listar: db.prepare(`SELECT p.*, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome FROM saidas_periodos p JOIN clientes c ON c.id = p.cliente_id
       WHERE p.situacao <> 'concluido' OR p.atualizado_em >= ? ORDER BY p.id DESC`),
   }
@@ -195,14 +197,27 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return ultimo ? acharPeriodo(consultar, { de, ate, ultimo }) : null
   }
 
-  // Uma tarefa dentro da procura única do app.
-  function naVez(tarefa) {
+  // Uma tarefa dentro da procura única do app. Quem chegou enquanto ela rodava (pedido na espera, confirmar,
+  // o horário da captura) ganha uma procura logo depois, sem esperar o próximo ciclo.
+  let procuraPendente = false
+  let tipoEmCurso = null
+  function naVez(tarefa, tipo) {
     jaConsultou = false
+    tipoEmCurso = tipo
     emCurso = (async () => tarefa())().finally(() => {
       emCurso = null
+      tipoEmCurso = null
+      if (procuraPendente && !parando) {
+        procuraPendente = false
+        setImmediate(() => procurar().catch((e) => logger.warn('Saídas pelo certificado falharam', { erro: e.message })))
+      }
     })
     return emCurso
   }
+
+  // Trechos achados por pedirPeriodo: confirmar só aceita um deles (nada de trecho inventado pelo pedido HTTP).
+  const trechosAchados = new Map()
+  const chaveDoTrecho = (clienteId, serie, de, ate) => `${clienteId}|${serie}|${de}|${ate}`
 
   /** Acha o trecho do período (antes de confirmar). Com outra procura rodando, o pedido entra na espera e roda depois. */
   async function pedirPeriodo({ clienteId, de, ate, serie }) {
@@ -210,6 +225,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     if (parando) throw new Error('O app está fechando.')
     if (emCurso) {
       const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro: null, ultimo: null, situacao: 'na-espera', agora: agora().toISOString() }).lastInsertRowid)
+      procuraPendente = true
       return { naEspera: true, id }
     }
     const consulta = abrirConsulta(v.cliente)
@@ -218,22 +234,33 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
       try {
         const t = await trechoDoPeriodo(v.cliente, consulta, v.serie, de, ate)
         if (!t) return { nenhuma: true, motivo: 'nenhuma nota no período' }
+        trechosAchados.set(chaveDoTrecho(v.cliente.id, v.serie, de, ate), { primeiro: t.primeiro, ultimo: t.ultimo })
         return { serie: v.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }
       } catch (e) {
         if (e instanceof Interrompido) throw new Error('A busca foi pausada.')
         throw e
       }
-    })
+    }, 'pedido')
   }
 
-  /** Grava o pedido confirmado e começa a pôr as chaves na fila. */
+  /** Grava o pedido confirmado (só o trecho que a busca achou, uma vez) e começa a pôr as chaves na fila. */
   function confirmarPeriodo({ clienteId, de, ate, serie, primeiro, ultimo }) {
     const v = validarPedido({ clienteId, de, ate, serie })
-    if (!Number.isInteger(primeiro) || !Number.isInteger(ultimo) || primeiro < 1 || primeiro > ultimo) throw new Error('Trecho de números inválido.')
-    const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro, ultimo, situacao: 'procurando', agora: agora().toISOString() }).lastInsertRowid)
+    const chave = chaveDoTrecho(v.cliente.id, v.serie, de, ate)
+    const achado = trechosAchados.get(chave)
+    if (!achado || achado.primeiro !== primeiro || achado.ultimo !== ultimo) throw new Error('Busque o período de novo antes de colocar na fila.')
+    if (pedidosSql.ativoIgual.get(v.cliente.id, v.serie, de, ate)) throw new Error('Já existe um pedido igual em andamento.')
+    trechosAchados.delete(chave)
+    const t = comMargem({ primeiro, ultimo })
+    const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro: t.primeiro, ultimo: t.ultimo, situacao: 'procurando', agora: agora().toISOString() }).lastInsertRowid)
+    if (emCurso) procuraPendente = true
     procurar().catch((e) => logger.warn('Saídas por período falharam', { erro: e.message }))
     return id
   }
+
+  // Nota com data fora de ordem (retroativa, contingência) pode cair na fronteira da busca binária: o pedido consulta
+  // também 20 números antes e depois do trecho; o filtro por mês deixa só as do período.
+  const comMargem = (t) => ({ primeiro: Math.max(1, t.primeiro - MARGEM_DO_TRECHO), ultimo: t.ultimo + MARGEM_DO_TRECHO })
 
   const excluirPeriodo = (id) => pedidosSql.excluir.run(id).changes > 0
 
@@ -267,18 +294,21 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
           pedidosSql.fim.run('concluido', 'nenhuma nota no período', iso(), p.id)
           return false
         }
-        pedidosSql.trecho.run(t.primeiro, t.ultimo, t.primeiro, iso(), p.id)
+        const m = comMargem(t)
+        pedidosSql.trecho.run(m.primeiro, m.ultimo, m.primeiro, iso(), p.id)
         p = pedidosSql.um.get(p.id)
       }
       const consultar = consultorDe(cliente, consulta, p.serie)
       for (let n = p.proximo; n <= p.ultimo; n++) {
+        // Pedido excluído no meio: para de consultar.
+        if (!pedidosSql.um.get(p.id)) return false
         const r = await consultar(n)
         if (r.tipo === 'parar') throw new ErroDeConsulta(`${r.mensagem} — continua no próximo horário`, true)
         if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem)
         const noPeriodo = r.tipo === 'existe' && r.aamm >= p.de_aamm && r.aamm <= p.ate_aamm
         // A nota que já está no app não entra na fila (não gasta a vez de 1 minuto da SVRS).
         if (noPeriodo && !pedidosSql.noApp.get(cliente.id, r.chave)) buscaAntiga.adicionarChaves(cliente.id, [{ chave: r.chave, direcao: 'saida' }], { origem: 'periodo' })
-        pedidosSql.andou.run(n + 1, noPeriodo ? 1 : 0, iso(), p.id)
+        if (!pedidosSql.andou.run(n + 1, noPeriodo ? 1 : 0, iso(), p.id).changes) return false
       }
       pedidosSql.fim.run('concluido', null, iso(), p.id)
       return false
@@ -296,7 +326,11 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
 
   /** Procura as saídas dos clientes ligados (ou de um só) e depois roda os pedidos por período. Uma busca por vez. */
   function procurar({ clienteId } = {}) {
-    if (emCurso) return emCurso
+    if (emCurso) {
+      // Chegou durante um Buscar: roda logo que ele terminar (senão só no próximo ciclo).
+      if (tipoEmCurso !== 'procura') procuraPendente = true
+      return emCurso
+    }
     if (parando) return Promise.resolve({ clientes: 0, achadas: 0 })
     return naVez(async () => {
       const resumo = { clientes: 0, achadas: 0 }
@@ -328,7 +362,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         p = pedidosSql.ativos.all().find((q) => q.id > p.id)
       }
       return resumo
-    })
+    }, 'procura')
   }
 
   /** Ao fechar o app: nenhuma consulta nova; devolve a procura em curso para esperar a gravação da série. */
