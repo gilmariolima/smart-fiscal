@@ -2454,22 +2454,14 @@ test('busca por chave: a leitura de SPED saiu da tela e da API', async (t) => {
   assert.equal((await pedir('/api/busca-antiga/sped', { method: 'POST', body: { arquivos: [] } })).status, 404)
 })
 
-test('saídas pelo certificado: ligar já procura e traz as saídas do mês atual', async (t) => {
-  const { ctx, pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
+test('saídas pelo certificado: lista as empresas que podem buscar; ligar, início e procurar saíram', async (t) => {
+  const { pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
   const lista = await pedir('/api/saidas')
   assert.equal(lista.status, 200)
   const eu = lista.corpo.clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
-  assert.deepEqual([eu.ligado, eu.series.length, eu.procurando], [false, 0, false])
-  assert.equal((await pedir('/api/saidas/ligar', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, ligado: true } })).status, 200)
-  await new Promise((ok) => setImmediate(ok))
-  for (let i = 0; i < 200 && ctx.saidas.rodando(); i++) await new Promise((ok) => setTimeout(ok, 20))
-  const depois = (await pedir('/api/saidas')).corpo.clientes.find((c) => c.cnpj === CNPJ_MOCK_OK)
-  // A SEFAZ simulada tem as notas 1 a 120; as do mês atual são 101 a 120.
-  assert.equal(depois.series[0].ultimo_numero, 120)
-  assert.equal(ctx.db.prepare("SELECT COUNT(*) FROM busca_antiga WHERE origem = 'periodo'").pluck().get(), 20)
-  assert.equal((await pedir('/api/saidas/inicio', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, chave: '123' } })).status, 400)
+  assert.equal(eu.procurando, false)
+  for (const rota of ['/api/saidas/ligar', '/api/saidas/inicio', '/api/saidas/procurar']) assert.equal((await pedir(rota, { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, ligado: true } })).status, 404, rota)
 })
-
 test('saídas por período: buscar, listar, validar e excluir', async (t) => {
   const { pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
   const hoje = new Date()

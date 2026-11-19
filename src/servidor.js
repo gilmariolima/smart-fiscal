@@ -45,7 +45,7 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   const podeCapturar = () => motivoPulo() === null
   const faltaPasta = () => !ctx.pastas?.movendoAgora() && exigirPasta && !ctx.pastas?.temPasta()
   // Depois de cada ciclo de captura, a pasta organizada é atualizada em segundo plano.
-  // Depois de cada ciclo também procura as saídas dos clientes ligados (as chaves vão para a Busca por chave).
+  // Depois de cada ciclo também retoma os pedidos de saídas por período que pararam (656, app fechado).
   if (ctx.deps && ctx.organizador)
     ctx.deps.aoTerminarCiclo = () => {
       ctx.organizador.agendar()

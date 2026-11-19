@@ -3,7 +3,6 @@ import { useParams } from 'react-router'
 import Pagina from '../layout/Pagina.jsx'
 import Pasta from '../componentes/Pasta.jsx'
 import Segmentado from '../componentes/Segmentado.jsx'
-import Interruptor from '../componentes/Interruptor.jsx'
 import BotaoIcone from '../componentes/BotaoIcone.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
@@ -302,23 +301,13 @@ function EmAndamento({ periodos, aoMudar, aoErro }) {
   )
 }
 
-// O que a empresa ligada está fazendo: procurando agora, quantas foram para a fila e quando procura de novo.
-function situacaoDaEmpresa(c) {
-  if (!c.ligado) return ''
-  if (c.procurando) return 'procurando…'
-  const achadas = c.series.reduce((soma, s) => soma + (s.achadas || 0), 0)
-  const ultimo = c.series.find((s) => s.serie === '1' && s.ultimo_numero > 0)
-  const partes = [ultimo && `última nº ${inteiro(ultimo.ultimo_numero)}`, achadas > 0 && `${plural(achadas, 'nota nova', 'notas novas')} na fila`, 'procura de novo após a próxima captura']
-  return partes.filter(Boolean).join(' · ')
-}
-
 function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
   const saidas = useApi('/api/saidas')
   const lista = saidas.dados?.clientes || []
   const periodos = saidas.dados?.periodos || []
   const { recarregar } = saidas
   // Atualiza enquanto há busca rodando ou pedido esperando a vez.
-  const rodando = !!saidas.dados?.rodando || lista.some((c) => c.procurando) || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
+  const rodando = !!saidas.dados?.rodando || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
   useEffect(() => {
     if (!rodando) return undefined
     const t = setInterval(recarregar, 3000)
@@ -330,52 +319,23 @@ function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
     if (rodavaAntes.current && !rodando) aoTerminar()
     rodavaAntes.current = rodando
   }, [rodando, aoTerminar])
-  async function ligar(cnpj, ligado) {
-    try {
-      await api.post('/api/saidas/ligar', { cnpj, ligado })
-      recarregar()
-    } catch (e) {
-      aoAdicionar(null, e.message)
-    }
-  }
   const aoErro = (m) => aoAdicionar(null, m)
 
   if (saidas.dados && !lista.length) return <p className="apagado">Nenhuma empresa com certificado no prazo de estado atendido pela SVRS.</p>
   return (
     <div className="busca-saidas">
-      <section className="busca-passo">
-        <h3 className="busca-subtitulo">1. Notas de um período</h3>
-        <NotasDoPeriodo
-          clientes={lista}
-          janela={saidas.dados?.janela}
-          pendentesNaFila={pendentesNaFila}
-          aoMudar={(texto) => {
-            recarregar()
-            if (texto) aoAdicionar(texto)
-          }}
-          aoErro={aoErro}
-        />
-        <EmAndamento periodos={periodos} aoMudar={recarregar} aoErro={aoErro} />
-      </section>
-      <section className="busca-passo">
-        <h3 className="busca-subtitulo">2. Notas novas, sozinho</h3>
-        <p className="apagado">Depois de cada captura, o app procura as saídas novas das empresas ligadas.</p>
-        <ul className="busca-saidas-lista">
-          {lista.map((c) => (
-            <li key={c.cnpj}>
-              <Interruptor ligado={c.ligado} onChange={(v) => ligar(c.cnpj, v)} rotulo={c.nome} />
-              <span className="busca-saidas-series">
-                {situacaoDaEmpresa(c)}
-                {c.series.filter((s) => s.ultimo_erro).map((s) => (
-                  <small key={s.serie} className="busca-erro">
-                    {s.ultimo_erro}
-                  </small>
-                ))}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <p className="apagado">Escolha a empresa e os meses: o app acha as NF-e de saída na SEFAZ e baixa uma por minuto.</p>
+      <NotasDoPeriodo
+        clientes={lista}
+        janela={saidas.dados?.janela}
+        pendentesNaFila={pendentesNaFila}
+        aoMudar={(texto) => {
+          recarregar()
+          if (texto) aoAdicionar(texto)
+        }}
+        aoErro={aoErro}
+      />
+      <EmAndamento periodos={periodos} aoMudar={recarregar} aoErro={aoErro} />
     </div>
   )
 }

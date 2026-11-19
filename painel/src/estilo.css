@@ -3310,20 +3310,6 @@ a.botao-icone {
   border-bottom: 1px solid var(--borda);
 }
 
-.busca-saidas-series {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  color: var(--apagado);
-}
-
-.busca-saidas-series small {
-  display: block;
-  font-size: 12px;
-  text-align: right;
-}
-
 .busca-subtitulo {
   margin: 18px 0 8px;
   font-size: 15px;
@@ -3332,12 +3318,6 @@ a.botao-icone {
 
 .busca-periodo {
   padding-bottom: 4px;
-}
-
-.busca-passo + .busca-passo {
-  margin-top: 8px;
-  padding-top: 4px;
-  border-top: 1px solid var(--borda);
 }
 
 .busca-subtitulo-menor {

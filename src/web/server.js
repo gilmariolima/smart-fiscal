@@ -710,31 +710,6 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     if (!ctx.saidas.excluirPeriodo(Number(req.body?.id) || 0)) throw new ErroHttp(404, 'Pedido não encontrado.')
     res.json({ ok: true })
   })
-  app.post('/api/saidas/ligar', (req, res) => {
-    exigirLocalBusca(req)
-    const cliente = clienteDasSaidas(req)
-    const ligado = req.body?.ligado === true
-    ctx.saidas.ligar(cliente.id, ligado)
-    // Ligou: já procura (na primeira vez traz as saídas do mês atual), sem esperar a próxima captura.
-    if (ligado) ctx.saidas.procurar({ clienteId: cliente.id }).catch((e) => logger.warn('Saídas pelo certificado falharam', { erro: e.message }))
-    res.json({ ok: true })
-  })
-  app.post('/api/saidas/inicio', (req, res) => {
-    exigirLocalBusca(req)
-    const cliente = clienteDasSaidas(req)
-    try {
-      ctx.saidas.definirInicio(cliente.id, String(req.body?.chave || ''))
-    } catch (e) {
-      throw new ErroHttp(e.codigo || 400, e.message)
-    }
-    res.json({ ok: true })
-  })
-  app.post('/api/saidas/procurar', (req, res) => {
-    exigirLocalBusca(req)
-    if (capturaOcupada()) throw new ErroHttp(409, 'Espere a captura terminar para procurar as saídas.')
-    ctx.saidas.procurar().catch((e) => logger.error('Saídas pelo certificado falharam', { erro: e.message }))
-    res.status(202).json({ ok: true })
-  })
 
   app.post('/api/busca-antiga/tentar-de-novo', (req, res) => {
     exigirLocalBusca(req)
