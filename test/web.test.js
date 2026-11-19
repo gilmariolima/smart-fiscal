@@ -2484,3 +2484,25 @@ test('saídas por período: buscar, listar, validar e excluir', async (t) => {
   assert.equal((await pedir('/api/saidas/periodo/excluir', { method: 'POST', body: { id: r.corpo.id } })).status, 200)
   assert.equal((await pedir('/api/saidas/periodo/excluir', { method: 'POST', body: { id: 9999 } })).status, 404)
 })
+
+test('fila de downloads: empresa com saídas sendo achadas aparece como "achando notas"', async (t) => {
+  const { ctx, pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
+  const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').pluck().get(CNPJ_MOCK_OK)
+  const agora = new Date().toISOString()
+  ctx.db.prepare("INSERT INTO busca_antiga (cliente_id, chave, situacao, origem, direcao, criado_em, atualizado_em) VALUES (?, ?, 'baixada', 'periodo', 'saida', ?, ?)").run(id, '2'.repeat(44), agora, agora)
+  const antes = (await pedir('/api/busca-antiga?de=999999999')).corpo.estado
+  assert.equal(antes.achandoNotas, false)
+  ctx.db.prepare("INSERT INTO saidas_periodos (cliente_id, serie, de_aamm, ate_aamm, primeiro, ultimo, proximo, situacao, criado_em, atualizado_em) VALUES (?, '1', '2611', '2611', 1, 50, 10, 'procurando', ?, ?)").run(id, agora, agora)
+  const durante = (await pedir('/api/busca-antiga?de=999999999')).corpo.estado
+  assert.equal(durante.achandoNotas, true)
+  assert.equal(durante.clientes.find((c) => c.cnpj === CNPJ_MOCK_OK).achandoNotas, true)
+})
+
+test('saídas por período: tentar de novo um pedido com erro', async (t) => {
+  const { ctx, pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
+  const id = ctx.db.prepare('SELECT id FROM clientes WHERE cnpj = ?').pluck().get(CNPJ_MOCK_OK)
+  const agora = new Date().toISOString()
+  const pid = ctx.db.prepare("INSERT INTO saidas_periodos (cliente_id, serie, de_aamm, ate_aamm, primeiro, ultimo, proximo, situacao, erro, criado_em, atualizado_em) VALUES (?, '1', '2611', '2611', 1, 5, 3, 'erro', 'Sem resposta da SEFAZ', ?, ?)").run(id, agora, agora).lastInsertRowid
+  assert.equal((await pedir('/api/saidas/periodo/retomar', { method: 'POST', body: { id: pid } })).status, 200)
+  assert.equal((await pedir('/api/saidas/periodo/retomar', { method: 'POST', body: { id: 9999 } })).status, 404)
+})

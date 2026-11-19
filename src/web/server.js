@@ -663,7 +663,12 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     const texto = (k) => (typeof req.query[k] === 'string' && req.query[k] ? req.query[k] : undefined)
     const direcao = ['entrada', 'saida'].includes(texto('direcao')) ? texto('direcao') : undefined
     const filtros = { cnpj: texto('cnpj')?.replace(/\D/g, ''), direcao, situacao: texto('situacao'), de: Number(texto('de')) || 0, limite: Number(texto('limite')) || undefined }
-    res.json({ estado: ctx.buscaAntiga.estado(), linhas: ctx.buscaAntiga.listar(filtros) })
+    // Empresas com saídas por período ainda sendo achadas: a fila delas não está concluída, ainda vem nota.
+    const achando = new Set((ctx.saidas?.listarPeriodos() || []).filter((p) => p.situacao === 'na-espera' || p.situacao === 'procurando').map((p) => p.cnpj))
+    const estado = ctx.buscaAntiga.estado()
+    estado.clientes = estado.clientes.map((c) => ({ ...c, achandoNotas: achando.has(c.cnpj) }))
+    estado.achandoNotas = achando.size > 0
+    res.json({ estado, linhas: ctx.buscaAntiga.listar(filtros) })
   })
 
   app.post('/api/busca-antiga/cliente-pausa', (req, res) => {
@@ -704,6 +709,11 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
       throw new ErroHttp(e.codigo || 400, e.message)
     }
     res.status(r.naEspera ? 202 : 200).json(r)
+  })
+  app.post('/api/saidas/periodo/retomar', (req, res) => {
+    exigirLocalBusca(req)
+    if (!ctx.saidas.retomarPeriodo(Number(req.body?.id) || 0)) throw new ErroHttp(404, 'Pedido com erro não encontrado.')
+    res.json({ ok: true })
   })
   app.post('/api/saidas/periodo/excluir', (req, res) => {
     exigirLocalBusca(req)

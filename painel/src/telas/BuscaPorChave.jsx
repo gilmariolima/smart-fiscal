@@ -33,6 +33,7 @@ function textoDoAndamento(e, agora) {
   if (e.pausada) return { cor: 'cinza', texto: 'Pausado' }
   if (e.voltaAs) return { cor: 'ambar', texto: e.pausaPor === 'sem-resposta' ? `SVRS sem resposta: tenta de novo às ${hora(e.voltaAs)}` : `SVRS pediu pausa: volta às ${hora(e.voltaAs)}` }
   if (e.motivo) return { cor: 'ambar', texto: e.motivo }
+  if (!e.pendentes && e.achandoNotas) return { cor: 'verde', texto: 'Achando notas de saída…' }
   if (!e.pendentes) return { cor: 'cinza', texto: e.total ? 'Fila concluída' : 'Fila vazia' }
   if (e.pendentesAtivos === 0) return { cor: 'cinza', texto: 'Empresas com fila pausadas' }
   if (e.rodando) return { cor: 'verde', texto: 'Baixando agora…' }
@@ -46,7 +47,7 @@ function Andamento({ estado, agora, aoPausar, aoContinuar }) {
     <div className="busca-andamento">
       <span className={`busca-ponto busca-ponto-${cor}`} aria-hidden="true" />
       <span>{texto}</span>
-      {(estado?.pendentes > 0 || estado?.pausada) &&
+      {(estado?.pendentes > 0 || estado?.achandoNotas || estado?.pausada) &&
         (estado.pausada ? (
           <button type="button" className="botao botao-verde" onClick={aoContinuar}>
             Continuar
@@ -243,7 +244,7 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
           </label>
         )}
         <button type="submit" className="botao botao-azul" disabled={buscando || !cnpj}>
-          {buscando ? 'Procurando… (1–2 min)' : 'Buscar'}
+          {buscando ? 'Procurando…' : 'Buscar'}
         </button>
       </div>
       <p className="busca-periodo-dica apagado">
@@ -274,9 +275,9 @@ function situacaoDoPedido(p) {
 
 function EmAndamento({ periodos, aoMudar, aoErro }) {
   if (!periodos.length) return null
-  async function excluir(id) {
+  async function acao(caminho, id) {
     try {
-      await api.post('/api/saidas/periodo/excluir', { id })
+      await api.post(caminho, { id })
       aoMudar()
     } catch (e) {
       aoErro(e.message)
@@ -293,7 +294,10 @@ function EmAndamento({ periodos, aoMudar, aoErro }) {
               {p.serie !== '1' ? ` · série ${p.serie}` : ''}
             </span>
             <span className={p.situacao === 'erro' ? 'busca-erro' : 'apagado'}>{situacaoDoPedido(p)}</span>
-            <BotaoIcone icone="fa-xmark" dica="Excluir" perigo onClick={() => excluir(p.id)} />
+            <span className="busca-acoes">
+              {p.situacao === 'erro' && <BotaoIcone icone="fa-rotate-right" dica="Tentar de novo" onClick={() => acao('/api/saidas/periodo/retomar', p.id)} />}
+              <BotaoIcone icone="fa-xmark" dica="Excluir" perigo onClick={() => acao('/api/saidas/periodo/excluir', p.id)} />
+            </span>
           </li>
         ))}
       </ul>
@@ -306,13 +310,17 @@ function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
   const lista = saidas.dados?.clientes || []
   const periodos = saidas.dados?.periodos || []
   const { recarregar } = saidas
-  // Atualiza enquanto há busca rodando ou pedido esperando a vez.
+  // Atualiza enquanto há busca rodando ou pedido esperando a vez. A fila de downloads também: as chaves achadas
+  // entram nela durante a busca, e com a fila parada ("Fila concluída") ela não se atualizaria sozinha.
   const rodando = !!saidas.dados?.rodando || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
   useEffect(() => {
     if (!rodando) return undefined
-    const t = setInterval(recarregar, 3000)
+    const t = setInterval(() => {
+      recarregar()
+      aoTerminar()
+    }, 3000)
     return () => clearInterval(t)
-  }, [rodando, recarregar])
+  }, [rodando, recarregar, aoTerminar])
   // A busca acabou: as chaves achadas já estão na fila, que precisa aparecer sem recarregar a página.
   const rodavaAntes = useRef(false)
   useEffect(() => {
@@ -344,12 +352,14 @@ function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
 
 function estadoDaEmpresa(c) {
   if (c.pausada) return 'Pausado'
+  // Ainda vem nota: as saídas do período estão sendo achadas.
+  if (!c.pendentes && c.achandoNotas) return 'Achando notas'
   if (!c.pendentes) return 'Concluído'
   return c.daVez ? 'Baixando' : 'Na fila'
 }
 
 function BotaoPausaEmpresa({ c, aoMudar }) {
-  if (!c.pendentes && !c.pausada) return null
+  if (!c.pendentes && !c.pausada && !c.achandoNotas) return null
   const mudar = async (pausada) => {
     try {
       await api.post('/api/busca-antiga/cliente-pausa', { cnpj: c.cnpj, pausada })
@@ -371,11 +381,13 @@ function BotaoPausaEmpresa({ c, aoMudar }) {
 
 function Empresas({ clientes, aoMudar }) {
   if (!clientes.length) return <p className="apagado">Nenhuma chave na fila.</p>
+  // Quem ainda tem nota para baixar fica em cima; as concluídas descem (a ordem do nome vem do servidor).
+  const ordem = [...clientes].sort((a, b) => (b.pendentes > 0) - (a.pendentes > 0))
   return (
     <div className="tabela-moldura">
       <table className="tabela busca-empresas">
         <tbody>
-          {clientes.map((c) => (
+          {ordem.map((c) => (
             <tr key={c.cnpj}>
               <td>
                 <Pasta para={`${BASE}/${c.cnpj}`}>{c.nome}</Pasta>
@@ -573,17 +585,19 @@ export default function BuscaPorChave() {
   const [agora, setAgora] = useState(() => new Date())
   const estado = fila.dados?.estado
   const pendentes = estado?.pendentes || 0
+  const achandoNotas = !!estado?.achandoNotas
   const { recarregar } = fila
 
+  // Atualiza enquanto há nota para baixar ou saídas sendo achadas (elas entram na fila durante a busca).
   useEffect(() => {
-    if (!pendentes) return undefined
+    if (!pendentes && !achandoNotas) return undefined
     const lista = setInterval(recarregar, 5000)
     const relogio = setInterval(() => setAgora(new Date()), 1000)
     return () => {
       clearInterval(lista)
       clearInterval(relogio)
     }
-  }, [pendentes, recarregar])
+  }, [pendentes, achandoNotas, recarregar])
 
   function aoAdicionar(texto, mensagemDeErro) {
     if (mensagemDeErro) return setErro(mensagemDeErro)

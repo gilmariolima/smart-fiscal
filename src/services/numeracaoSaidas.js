@@ -8,16 +8,18 @@ const FOLGA_FURO = 5
 const MAXIMO_NUMERO = 999999999 // nNF tem 9 dígitos
 const SONDAS_DE_FURO = 8
 
+// parar: 656 (para a procura inteira); rede: sem conexão com a SEFAZ (passageiro, tenta de novo depois).
 class ErroDeConsulta extends Error {
-  constructor(mensagem, parar = false) {
+  constructor(mensagem, parar = false, rede = false) {
     super(mensagem)
     this.parar = parar
+    this.rede = rede
   }
 }
 
 /** Retorno de `consulta.consultar(chave)` → existe (613, com o AAMM da chave verdadeira) | antiga (526) | nao-existe (217) | parar (656) | erro. */
 function classificar(r) {
-  if (!r || r.erro) return { tipo: 'erro', mensagem: r?.erro || 'sem resposta da SEFAZ' }
+  if (!r || r.erro) return { tipo: 'erro', mensagem: r?.erro || 'sem resposta da SEFAZ', rede: true }
   if (r.cStat === '613' && r.chaveVerdadeira) return { tipo: 'existe', aamm: r.chaveVerdadeira.slice(2, 6), chave: r.chaveVerdadeira }
   if (r.cStat === '526') return { tipo: 'antiga' }
   if (r.cStat === '217') return { tipo: 'nao-existe' }
@@ -35,7 +37,7 @@ function comMemoria(consultar) {
     if (!vistos.has(n)) {
       const r = await consultar(n)
       if (r.tipo === 'parar') throw new ErroDeConsulta(r.mensagem, true)
-      if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem, false)
+      if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem, false, !!r.rede)
       vistos.set(n, r)
     }
     return vistos.get(n)

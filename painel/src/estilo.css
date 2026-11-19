@@ -3428,7 +3428,8 @@ a.botao-icone {
   text-align: right;
 }
 
-.busca-estado-baixando {
+.busca-estado-baixando,
+.busca-estado-achando-notas {
   color: var(--ok);
   font-weight: 600;
 }

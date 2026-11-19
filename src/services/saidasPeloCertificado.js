@@ -13,11 +13,20 @@ class Interrompido extends Error {}
 
 const INTERVALO_MS = 2000
 const MARGEM_DO_TRECHO = 20
+// Sem conexão com a SEFAZ: o pedido continua em andamento e tenta de novo depois deste tempo.
+const RETOMAR_MS = 5 * 60 * 1000
+const SEM_CONEXAO = 'Sem conexão com a SEFAZ: tenta de novo em 5 min'
 const SEFAZ_PROPRIA = ['AM', 'BA', 'GO', 'MG', 'MS', 'MT', 'PE', 'PR', 'RS', 'SP']
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
 const p2 = (n) => String(n).padStart(2, '0')
 
-function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir = dormirPadrao, agora = () => new Date() }) {
+const depoisPadrao = (fn, ms) => {
+  const t = setTimeout(fn, ms)
+  t.unref?.()
+  return () => clearTimeout(t)
+}
+
+function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir = dormirPadrao, depois = depoisPadrao, agora = () => new Date() }) {
   const intervalo = () => (config.sefazMock && config.saidasIntervaloMs != null ? config.saidasIntervaloMs : Math.max(INTERVALO_MS, config.saidasIntervaloMs || INTERVALO_MS))
   const sql = {
     clientes: db.prepare(`SELECT * FROM clientes WHERE cert_arquivo <> '' AND (papel = 'cliente' OR tambem_cliente = 1) ORDER BY COALESCE(NULLIF(apelido, ''), razao_social)`),
@@ -92,6 +101,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     fim: db.prepare('UPDATE saidas_periodos SET situacao = ?, erro = ?, atualizado_em = ? WHERE id = ?'),
     erro: db.prepare('UPDATE saidas_periodos SET erro = ?, atualizado_em = ? WHERE id = ?'),
     excluir: db.prepare('DELETE FROM saidas_periodos WHERE id = ?'),
+    retomar: db.prepare("UPDATE saidas_periodos SET situacao = CASE WHEN primeiro IS NULL THEN 'na-espera' ELSE 'procurando' END, erro = NULL, atualizado_em = ? WHERE id = ? AND situacao = 'erro'"),
     noApp: db.prepare('SELECT 1 FROM notas WHERE cliente_id = ? AND chave = ?'),
     ativoIgual: db.prepare("SELECT 1 FROM saidas_periodos WHERE cliente_id = ? AND serie = ? AND de_aamm = ? AND ate_aamm = ? AND situacao IN ('na-espera', 'procurando')"),
     listar: db.prepare(`SELECT p.*, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome FROM saidas_periodos p JOIN clientes c ON c.id = p.cliente_id
@@ -171,6 +181,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         return { id, serie: v.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }
       } catch (e) {
         if (e instanceof Interrompido) throw new Error('A busca foi pausada.')
+        if (e instanceof ErroDeConsulta && e.rede) throw new Error('Sem conexão com a SEFAZ: confira a internet e busque de novo.')
         throw e
       }
     }, 'pedido')
@@ -218,7 +229,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         if (!pedidosSql.um.get(p.id)) return false
         const r = await consultar(n)
         if (r.tipo === 'parar') throw new ErroDeConsulta(`${r.mensagem} — continua no próximo horário`, true)
-        if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem)
+        if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem, false, !!r.rede)
         const noPeriodo = r.tipo === 'existe' && r.aamm >= p.de_aamm && r.aamm <= p.ate_aamm
         // A nota que já está no app não entra na fila (não gasta a vez de 1 minuto da SVRS).
         if (noPeriodo && !pedidosSql.noApp.get(cliente.id, r.chave)) buscaAntiga.adicionarChaves(cliente.id, [{ chave: r.chave, direcao: 'saida' }], { origem: 'periodo' })
@@ -229,6 +240,12 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     } catch (e) {
       if (e instanceof Interrompido) return parando || !!buscaAntiga.pausadaGeral?.()
       if (!(e instanceof ErroDeConsulta)) throw e
+      // Sem internet: o pedido fica em andamento (do número em que parou) e a procura volta sozinha em 5 min.
+      if (e.rede) {
+        pedidosSql.erro.run(SEM_CONEXAO, iso(), p.id)
+        agendarRetomada()
+        return true
+      }
       if (e.parar) {
         pedidosSql.erro.run(e.message, iso(), p.id)
         return true
@@ -259,13 +276,32 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     }, 'procura')
   }
 
+  let cancelarRetomada = null
+  function agendarRetomada() {
+    if (cancelarRetomada || parando) return
+    cancelarRetomada = depois(() => {
+      cancelarRetomada = null
+      procurar().catch((e) => logger.warn('Saídas por período falharam', { erro: e.message }))
+    }, RETOMAR_MS)
+  }
+
+  /** "Tentar de novo" num pedido que terminou com erro: volta a andar do número em que parou. */
+  function retomarPeriodo(id) {
+    if (!pedidosSql.retomar.run(agora().toISOString(), id).changes) return false
+    if (emCurso) procuraPendente = true
+    else procurar().catch((e) => logger.warn('Saídas por período falharam', { erro: e.message }))
+    return true
+  }
+
   /** Ao fechar o app: nenhuma consulta nova; devolve a procura em curso para esperar a gravação do pedido. */
   function parar() {
     parando = true
+    cancelarRetomada?.()
+    cancelarRetomada = null
     return emCurso || Promise.resolve()
   }
 
-  return { listar, procurar, parar, rodando: () => !!emCurso, janela, pedirPeriodo, excluirPeriodo, listarPeriodos }
+  return { listar, procurar, parar, rodando: () => !!emCurso, janela, pedirPeriodo, excluirPeriodo, retomarPeriodo, listarPeriodos }
 }
 
 module.exports = { criarSaidas }

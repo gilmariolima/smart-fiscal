@@ -81,10 +81,16 @@ function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, liga
     // Sem esperar o retorno: parar() devolve a própria procura, que está dentro deste dormir.
     if (aoDormir) aoDormir({ db, id, consultas, saidas: ref.saidas, buscaAntiga })
   }
-  const novaSaidas = () => criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir, agora: () => new Date('2026-11-18T12:00:00Z') })
+  // Relógio falso das retomadas automáticas: guarda o que foi agendado em vez de esperar.
+  const agendados = []
+  const depois = (fn, ms) => {
+    agendados.push({ fn, ms })
+    return () => {}
+  }
+  const novaSaidas = () => criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir, depois, agora: () => new Date('2026-11-18T12:00:00Z') })
   const saidas = novaSaidas()
   ref.saidas = saidas
-  return { db, id, saidas, novaSaidas, consultas, pausas, buscaAntiga, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
+  return { db, id, saidas, novaSaidas, consultas, pausas, buscaAntiga, agendados, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
 }
 
 const chaveDe = (numero, mes) => montarChave({ cUF: '23', aamm: mes, cnpj: CNPJ, serie: 1, numero, cNF: '99999999' })
@@ -297,4 +303,35 @@ test('a empresa sendo procurada aparece como procurando', async (t) => {
   await saidas.procurar()
   assert.ok(vistos.includes(true))
   assert.equal(saidas.listar()[0].procurando, false)
+})
+
+test('sem internet no meio do pedido: fica em andamento e tenta de novo sozinho em 5 min', async (t) => {
+  let semRede = true
+  const { db, id, saidas, agendados, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses(), resposta: (n) => (n === 130 && semRede ? { erro: 'getaddrinfo ENOTFOUND nfe.svrs.rs.gov.br' } : null) })
+  t.after(limpar)
+  await buscarPeriodo(saidas, id)
+  await saidas.procurar()
+  assert.deepEqual([pedido(db).situacao, pedido(db).proximo], ['procurando', 130])
+  assert.match(pedido(db).erro, /Sem conexão com a SEFAZ/)
+  assert.equal(agendados.length, 1)
+  assert.equal(agendados[0].ms, 5 * 60 * 1000)
+  semRede = false
+  agendados[0].fn()
+  await new Promise((ok) => setImmediate(ok))
+  await esperarParar(saidas)
+  assert.equal(pedido(db).situacao, 'concluido')
+  assert.equal(naFila(db).length, 60)
+})
+
+test('tentar de novo um pedido que terminou com erro continua de onde parou', async (t) => {
+  const { db, id, saidas, consultas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses() })
+  t.after(limpar)
+  const pid = await buscarPeriodo(saidas, id)
+  db.prepare("UPDATE saidas_periodos SET situacao = 'erro', erro = 'Sem resposta da SEFAZ', proximo = 120 WHERE id = ?").run(pid)
+  assert.equal(saidas.retomarPeriodo(pid), true)
+  assert.equal(saidas.retomarPeriodo(9999), false)
+  consultas.length = 0
+  await saidas.procurar()
+  assert.equal(consultas[0], 120)
+  assert.equal(pedido(db).situacao, 'concluido')
 })
