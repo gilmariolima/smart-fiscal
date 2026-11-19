@@ -13,7 +13,6 @@ const express = require('express')
 const { COLUNAS_PUBLICAS, DA_CARTEIRA } = require('../services/clientes')
 const { diasParaVencer } = require('../certificado')
 const { consultarCadastro } = require('../sefaz/consultaCadastro')
-const { lerChavesDoSped } = require('../services/chavesDoSped')
 const { descriptografar } = require('../crypto')
 const { detalharNfe, detalharNfse, detalharCte } = require('../services/detalheNota')
 const { montarPlanilhaDoMes } = require('../services/planilhaMes')
@@ -131,7 +130,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
   // Importar XMLs: só no próprio PC (grava na pasta) e recusa antes de ler um corpo de até 64 MB.
   const jsonImportacao = express.json({ limit: LIMITE_IMPORTACAO })
   app.use('/api', (req, res, next) => {
-    if (req.method !== 'POST' || (req.path !== '/importar' && req.path !== '/busca-antiga/sped')) return next()
+    if (req.method !== 'POST' || req.path !== '/importar') return next()
     if (!ehLocal(req)) return res.status(403).json({ erro: 'A importação só pode ser feita no próprio computador do sistema.' })
     jsonImportacao(req, res, (err) => {
       if (err?.type === 'entity.too.large') return res.status(413).json({ erro: 'Arquivos grandes demais para uma importação só. Separe em partes menores.' })
@@ -673,36 +672,6 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
     if (!cliente) throw new ErroHttp(404, 'Cliente não encontrado.')
     ctx.buscaAntiga.pausarCliente(cliente.id, req.body?.pausada === true)
     res.json({ ok: true })
-  })
-
-  // SPED Fiscal do cliente: as chaves do C100. Sem `confirmar`, só o resumo por arquivo; com ele, vão para a fila.
-  const clienteDoSped = db.prepare(
-    "SELECT id, cnpj, COALESCE(NULLIF(apelido, ''), razao_social) AS nome FROM clientes WHERE cnpj = ? AND cert_arquivo <> '' AND (papel = 'cliente' OR tambem_cliente = 1)",
-  )
-  app.post('/api/busca-antiga/sped', (req, res) => {
-    const lista = Array.isArray(req.body?.arquivos) ? req.body.arquivos.filter((a) => a && typeof a.base64 === 'string') : []
-    if (!lista.length) throw new ErroHttp(400, 'Solte ao menos um arquivo SPED.')
-    const confirmar = req.body?.confirmar === true
-    const total = { adicionadas: 0, repetidas: 0, naoNfe: 0, outroEstado: 0 }
-    const arquivos = lista.map((a) => {
-      const nome = path.basename(String(a.nome || 'sped.txt'))
-      let lido
-      try {
-        lido = lerChavesDoSped(Buffer.from(a.base64, 'base64'))
-      } catch (e) {
-        return { nome, erro: e.message }
-      }
-      const saidas = lido.chaves.filter((c) => c.direcao === 'saida').length
-      const resumo = { nome, cnpj: lido.cnpj, periodo: lido.periodo, saidas, entradas: lido.chaves.length - saidas }
-      const cliente = clienteDoSped.get(lido.cnpj)
-      if (!cliente) return { ...resumo, erro: `O SPED é do CNPJ ${lido.cnpj}, que não está nos clientes com certificado.` }
-      if (confirmar) {
-        const r = ctx.buscaAntiga.adicionarChaves(cliente.id, lido.chaves, { origem: 'sped' })
-        for (const k of Object.keys(total)) total[k] += r[k]
-      }
-      return { ...resumo, cliente: cliente.nome }
-    })
-    res.json(confirmar ? { arquivos, ...total } : { arquivos })
   })
 
   // Saídas pelo certificado: descoberta das chaves das NF-e de saída pelo número (consulta de protocolo, cStat 613).

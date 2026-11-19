@@ -2449,20 +2449,9 @@ test('busca por chave: filtro por empresa e direção, pausa da empresa e tentar
   assert.equal((await pedir('/api/busca-antiga/cliente-pausa', { method: 'POST', body: { cnpj: '00000000000000', pausada: true } })).status, 404)
 })
 
-test('busca por chave: SPED mostra o resumo e, confirmado, põe as chaves na fila', async (t) => {
-  const { ctx, pedir } = await montar(t)
-  const { chaveNfe } = require('./apoio/nfe-importada')
-  const saida = chaveNfe(CNPJ_MOCK_OK, 93)
-  const entrada = chaveNfe('66777888000199', 94)
-  const sped = (cnpj) => Buffer.from([`|0000|019|0|01102025|31102025|EMPRESA|${cnpj}||CE|1|2304400|||A|1|`, `|C100|1|0|P|55|00|1|1|${saida}|`, `|C100|0|1|P|55|00|1|2|${entrada}|`].join('\r\n'), 'latin1').toString('base64')
-  const resumo = await pedir('/api/busca-antiga/sped', { method: 'POST', body: { arquivos: [{ nome: 'sped.txt', base64: sped(CNPJ_MOCK_OK) }, { nome: 'outro.txt', base64: sped('66777888000199') }] } })
-  assert.equal(resumo.status, 200, JSON.stringify(resumo.corpo))
-  assert.deepEqual(resumo.corpo.arquivos.map((a) => [a.nome, a.periodo, a.saidas, a.entradas, !!a.erro]), [['sped.txt', '2025-10', 1, 1, false], ['outro.txt', '2025-10', 1, 1, true]])
-  assert.equal(ctx.db.prepare('SELECT COUNT(*) FROM busca_antiga').pluck().get(), 0)
-  const ok = await pedir('/api/busca-antiga/sped', { method: 'POST', body: { confirmar: true, arquivos: [{ nome: 'sped.txt', base64: sped(CNPJ_MOCK_OK) }] } })
-  assert.equal(ok.corpo.adicionadas, 2)
-  const linhas = ctx.db.prepare('SELECT chave, direcao, origem FROM busca_antiga ORDER BY chave').all()
-  assert.deepEqual(linhas.map((l) => [l.direcao, l.origem]).sort(), [['entrada', 'sped'], ['saida', 'sped']])
+test('busca por chave: a leitura de SPED saiu da tela e da API', async (t) => {
+  const { pedir } = await montar(t)
+  assert.equal((await pedir('/api/busca-antiga/sped', { method: 'POST', body: { arquivos: [] } })).status, 404)
 })
 
 test('saídas pelo certificado: listar, ligar, colar o início e procurar', async (t) => {

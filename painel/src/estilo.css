@@ -3295,14 +3295,12 @@ a.botao-icone {
   max-width: 420px;
 }
 
-.busca-sped-resumo ul,
 .busca-saidas-lista {
   list-style: none;
   margin: 12px 0;
   padding: 0;
 }
 
-.busca-sped-resumo li,
 .busca-saidas-lista li {
   display: flex;
   align-items: center;
@@ -3333,8 +3331,25 @@ a.botao-icone {
 }
 
 .busca-periodo {
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--borda);
+  padding-bottom: 4px;
+}
+
+.busca-passo + .busca-passo {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--borda);
+}
+
+.busca-subtitulo-menor {
+  margin: 14px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--apagado);
+}
+
+.busca-periodo-dica {
+  margin: 6px 0 0;
+  font-size: 12px;
 }
 
 .busca-periodo-campos {
@@ -3369,19 +3384,6 @@ a.botao-icone {
 
 .busca-pedidos .busca-saidas-lista li > span:first-child {
   flex: 1;
-}
-
-.busca-inicio {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.busca-inicio .entrada {
-  width: 380px;
-  max-width: 100%;
 }
 
 .busca-erro {

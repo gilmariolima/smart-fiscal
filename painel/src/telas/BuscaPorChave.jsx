@@ -7,7 +7,6 @@ import Interruptor from '../componentes/Interruptor.jsx'
 import BotaoIcone from '../componentes/BotaoIcone.jsx'
 import { api } from '../api.js'
 import { useApi } from '../useApi.js'
-import { bytesBase64 } from '../arquivoBase64.js'
 import { cnpj as formatarCnpj, data, dinheiro, hora, inteiro, plural } from '../formato.js'
 
 // Busca por chave: NF-e baixadas pela SVRS, uma por minuto. A fila fica em pastas: empresa → NF-e Entradas / Saídas → notas.
@@ -89,9 +88,9 @@ function Progresso({ estado, agora }) {
   )
 }
 
-// ---------- adicionar: colar, SPED, saídas ----------
+// ---------- NF-e de entrada: colar as chaves ----------
 
-function ColarChaves({ clientes, aoAdicionar }) {
+function NotasDeEntrada({ clientes, aoAdicionar }) {
   const [cnpj, setCnpj] = useState('')
   const [texto, setTexto] = useState('')
   const [enviando, setEnviando] = useState(false)
@@ -110,10 +109,11 @@ function ColarChaves({ clientes, aoAdicionar }) {
   }
   return (
     <form className="busca-colar" onSubmit={buscar}>
+      <p className="apagado">Notas que a empresa recebeu e a captura não trouxe (mais de 90 dias). Cole as chaves de acesso.</p>
       <label className="campo">
-        <span>Cliente</span>
+        <span>Empresa</span>
         <select value={cnpj} onChange={(e) => setCnpj(e.target.value)} required>
-          <option value="">Escolha o cliente</option>
+          <option value="">Escolha a empresa</option>
           {clientes.map((c) => (
             <option key={c.cnpj} value={c.cnpj}>
               {c.apelido || c.razaoSocial}
@@ -122,7 +122,7 @@ function ColarChaves({ clientes, aoAdicionar }) {
         </select>
       </label>
       <label className="campo">
-        <span>Cole as chaves de acesso (uma por linha ou como vierem)</span>
+        <span>Chaves (uma por linha ou como vierem)</span>
         <textarea className="antigas-chaves" rows={4} value={texto} onChange={(e) => setTexto(e.target.value)} required spellCheck={false} />
       </label>
       <div className="antigas-acoes">
@@ -143,120 +143,9 @@ function resumoDaAdicao(r) {
   return `${plural(r.adicionadas, 'chave na fila', 'chaves na fila')}${partes.length ? ` (${partes.join(', ')})` : ''}`
 }
 
-function ArquivoSped({ aoAdicionar }) {
-  const entrada = useRef(null)
-  const [arquivos, setArquivos] = useState(null)
-  const [resumo, setResumo] = useState(null)
-  const [trabalhando, setTrabalhando] = useState(false)
-  const [arrastando, setArrastando] = useState(false)
-  async function ler(lista) {
-    const escolhidos = [...lista]
-    if (!escolhidos.length) return
-    setTrabalhando(true)
-    try {
-      const corpo = await Promise.all(escolhidos.map(async (a) => ({ nome: a.name, base64: await bytesBase64(a) })))
-      const r = await api.post('/api/busca-antiga/sped', { arquivos: corpo })
-      setArquivos(corpo)
-      setResumo(r.arquivos)
-    } catch (e) {
-      aoAdicionar(null, e.message)
-    } finally {
-      setTrabalhando(false)
-      if (entrada.current) entrada.current.value = ''
-    }
-  }
-  async function confirmar() {
-    setTrabalhando(true)
-    try {
-      const r = await api.post('/api/busca-antiga/sped', { arquivos, confirmar: true })
-      setArquivos(null)
-      setResumo(null)
-      aoAdicionar(resumoDaAdicao(r))
-    } catch (e) {
-      aoAdicionar(null, e.message)
-    } finally {
-      setTrabalhando(false)
-    }
-  }
-  const validos = (resumo || []).filter((a) => !a.erro)
-  return (
-    <div className="busca-sped">
-      <button
-        type="button"
-        className={`cartao importar-area${arrastando ? ' importar-area-ativa' : ''}`}
-        disabled={trabalhando}
-        onClick={() => entrada.current?.click()}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setArrastando(true)
-        }}
-        onDragLeave={() => setArrastando(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setArrastando(false)
-          ler(e.dataTransfer.files)
-        }}
-      >
-        <i className="fa-solid fa-file-lines" aria-hidden="true" />
-        <span>{trabalhando ? 'Lendo…' : 'Solte aqui o SPED Fiscal do cliente (.txt), ou clique para escolher'}</span>
-      </button>
-      <input ref={entrada} type="file" multiple accept=".txt" hidden onChange={(e) => ler(e.target.files)} />
-      {resumo && (
-        <div className="busca-sped-resumo">
-          <ul>
-            {resumo.map((a) => (
-              <li key={a.nome} className={a.erro ? 'busca-erro' : undefined}>
-                <strong>{a.cliente || a.nome}</strong>
-                <span>
-                  {a.periodo && `${a.periodo.slice(5)}/${a.periodo.slice(0, 4)} · `}
-                  {a.erro || `${plural(a.saidas + a.entradas, 'chave', 'chaves')} (${plural(a.saidas, 'saída', 'saídas')}, ${plural(a.entradas, 'entrada', 'entradas')})`}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="antigas-acoes">
-            <button type="button" className="botao botao-claro" onClick={() => setResumo(null)} disabled={trabalhando}>
-              Cancelar
-            </button>
-            <button type="button" className="botao botao-azul" onClick={confirmar} disabled={trabalhando || !validos.length}>
-              Colocar na fila
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function InicioDaSerie({ cnpj, aoSalvar, novo }) {
-  const [chave, setChave] = useState('')
-  const [erro, setErro] = useState('')
-  async function salvar(e) {
-    e.preventDefault()
-    setErro('')
-    try {
-      await api.post('/api/saidas/inicio', { cnpj, chave })
-      setChave('')
-      aoSalvar()
-    } catch (e2) {
-      setErro(e2.message)
-    }
-  }
-  return (
-    <form className="busca-inicio" onSubmit={salvar}>
-      <input className="entrada" value={chave} onChange={(e) => setChave(e.target.value)} placeholder={novo ? 'cole a chave de uma saída recente para começar' : 'outra série ou recomeçar: cole a chave de uma saída recente'} spellCheck={false} />
-      <button type="submit" className="botao botao-claro" disabled={!chave.trim()}>
-        Usar
-      </button>
-      {erro && <span className="busca-erro">{erro}</span>}
-    </form>
-  )
-}
-
-// ---------- saídas por período ----------
+// ---------- NF-e de saída: período e notas novas ----------
 
 const mesRotulo = (m) => (m ? `${m.slice(5)}/${m.slice(0, 4)}` : '')
-const mesDoAamm = (aamm) => `20${aamm.slice(0, 2)}-${aamm.slice(2)}`
 function mesesDaJanela(j) {
   if (!j) return []
   const lista = []
@@ -279,18 +168,19 @@ function intervaloDeMeses(de, ate) {
   return `${mesRotulo(de)} a ${mesRotulo(ate)}`
 }
 
-function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) {
+function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) {
   const meses = mesesDaJanela(janela)
   const [cnpj, setCnpj] = useState('')
   const [de, setDe] = useState('')
   const [ate, setAte] = useState('')
   const [serie, setSerie] = useState('1')
+  const [outraSerie, setOutraSerie] = useState(false)
   const [buscando, setBuscando] = useState(false)
   const [resultado, setResultado] = useState(null)
   const [enviando, setEnviando] = useState(false)
   const deEfetivo = de || meses[meses.length - 1] || ''
-  const ateEfetivo = ate || meses[meses.length - 1] || ''
-  const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo, serie }
+  const ateEfetivo = ate && ate >= deEfetivo ? ate : deEfetivo
+  const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo, serie: serie || '1' }
 
   async function buscar(e) {
     e.preventDefault()
@@ -298,7 +188,7 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
     setBuscando(true)
     try {
       const r = await api.post('/api/saidas/periodo', pedido)
-      if (r.naEspera) aoMudar('O pedido entrou na espera: roda quando a procura atual terminar.')
+      if (r.naEspera) aoMudar('O pedido entrou em andamento: roda quando a busca atual terminar.')
       else setResultado({ ...r, ...pedido })
     } catch (e2) {
       aoErro(e2.message)
@@ -321,7 +211,6 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
 
   return (
     <form className="busca-periodo" onSubmit={buscar}>
-      <h3 className="busca-subtitulo">Buscar por período</h3>
       <div className="busca-periodo-campos">
         <label className="campo">
           <span>Empresa</span>
@@ -356,21 +245,31 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
               ))}
           </select>
         </label>
-        <label className="campo busca-periodo-serie">
-          <span>Série</span>
-          <input className="entrada" value={serie} onChange={(e) => setSerie(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" />
-        </label>
-        <button type="submit" className="botao botao-azul" disabled={buscando || !cnpj || !serie || ateEfetivo < deEfetivo}>
-          {buscando ? 'Procurando o período… (1–2 min)' : 'Buscar'}
+        {outraSerie && (
+          <label className="campo busca-periodo-serie">
+            <span>Série</span>
+            <input className="entrada" value={serie} onChange={(e) => setSerie(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" />
+          </label>
+        )}
+        <button type="submit" className="botao botao-azul" disabled={buscando || !cnpj}>
+          {buscando ? 'Procurando… (1–2 min)' : 'Buscar'}
         </button>
       </div>
+      <p className="busca-periodo-dica apagado">
+        Só os últimos 6 meses.{' '}
+        {!outraSerie && (
+          <button type="button" className="botao-link" onClick={() => setOutraSerie(true)}>
+            Outra série
+          </button>
+        )}
+      </p>
       {resultado &&
         (resultado.nenhuma ? (
           <p className="apagado">{resultado.motivo}</p>
         ) : (
           <div className="busca-periodo-resultado">
             <span>
-              Série {resultado.serie}: nº {inteiro(resultado.primeiro)} a {inteiro(resultado.ultimo)} · ~{plural(resultado.estimadas, 'nota', 'notas')} · download {duracao(resultado.estimadas + (pendentesNaFila || 0))}
+              Achadas ~{plural(resultado.estimadas, 'nota', 'notas')} (nº {inteiro(resultado.primeiro)} a {inteiro(resultado.ultimo)}) · download {duracao(resultado.estimadas + (pendentesNaFila || 0))}
               {resultado.foraDaJanela && <small className="busca-erro">parte de {mesRotulo(resultado.de)} ficou fora (mais de 6 meses)</small>}
             </span>
             <span className="busca-periodo-botoes">
@@ -388,17 +287,19 @@ function BuscarPorPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }
 }
 
 function situacaoDoPedido(p) {
-  if (p.situacao === 'na-espera') return 'na espera'
+  if (p.situacao === 'na-espera') return 'esperando a vez'
   if (p.situacao === 'procurando') {
-    if (p.primeiro == null) return 'achando o trecho…'
-    const texto = `achando chaves · ${inteiro(p.proximo - p.primeiro)} de ${inteiro(p.ultimo - p.primeiro + 1)}`
+    if (p.primeiro == null) return 'procurando o período…'
+    // O trecho consultado inclui a margem de segurança: mostra a porcentagem e quantas já foram para a fila.
+    const pct = Math.min(100, Math.floor(((p.proximo - p.primeiro) / (p.ultimo - p.primeiro + 1)) * 100))
+    const texto = `achando notas · ${pct}% · ${plural(p.achadas, 'na fila', 'na fila')}`
     return p.erro ? `${texto} · ${p.erro}` : texto
   }
-  if (p.situacao === 'concluido') return p.erro || `concluído · ${plural(p.achadas, 'chave', 'chaves')}`
+  if (p.situacao === 'concluido') return p.erro || `pronto · ${plural(p.achadas, 'nota na fila', 'notas na fila')}`
   return p.erro || 'erro'
 }
 
-function Pedidos({ periodos, aoMudar, aoErro }) {
+function EmAndamento({ periodos, aoMudar, aoErro }) {
   if (!periodos.length) return null
   async function excluir(id) {
     try {
@@ -410,15 +311,16 @@ function Pedidos({ periodos, aoMudar, aoErro }) {
   }
   return (
     <div className="busca-pedidos">
-      <h3 className="busca-subtitulo">Pedidos</h3>
+      <h4 className="busca-subtitulo-menor">Em andamento</h4>
       <ul className="busca-saidas-lista">
         {periodos.map((p) => (
           <li key={p.id}>
             <span>
-              {p.nome} · {intervaloDeMeses(p.de, p.ate)} · série {p.serie}
+              {p.nome} · {intervaloDeMeses(p.de, p.ate)}
+              {p.serie !== '1' ? ` · série ${p.serie}` : ''}
             </span>
             <span className={p.situacao === 'erro' ? 'busca-erro' : 'apagado'}>{situacaoDoPedido(p)}</span>
-            <BotaoIcone icone="fa-xmark" dica="Excluir pedido" perigo onClick={() => excluir(p.id)} />
+            <BotaoIcone icone="fa-xmark" dica="Excluir" perigo onClick={() => excluir(p.id)} />
           </li>
         ))}
       </ul>
@@ -426,19 +328,27 @@ function Pedidos({ periodos, aoMudar, aoErro }) {
   )
 }
 
-function SaidasPeloCertificado({ aoAdicionar, aoTerminar, pendentesNaFila }) {
+// "última achada: nº 705" (série 1) ou "série 2: nº 30" para as outras.
+function ultimaAchada(series) {
+  return series
+    .filter((s) => s.ultimo_numero > 0)
+    .map((s) => (s.serie === '1' ? `última achada: nº ${inteiro(s.ultimo_numero)}` : `série ${s.serie}: nº ${inteiro(s.ultimo_numero)}`))
+    .join(' · ')
+}
+
+function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
   const saidas = useApi('/api/saidas')
   const lista = saidas.dados?.clientes || []
   const periodos = saidas.dados?.periodos || []
   const { recarregar } = saidas
-  // "Rodando" também enquanto algum pedido por período estiver na espera ou procurando.
+  // Atualiza enquanto há busca rodando ou pedido esperando a vez.
   const rodando = !!saidas.dados?.rodando || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
   useEffect(() => {
     if (!rodando) return undefined
     const t = setInterval(recarregar, 3000)
     return () => clearInterval(t)
   }, [rodando, recarregar])
-  // A procura acabou: as chaves achadas já estão na fila, que precisa aparecer sem recarregar a página.
+  // A busca acabou: as chaves achadas já estão na fila, que precisa aparecer sem recarregar a página.
   const rodavaAntes = useRef(false)
   useEffect(() => {
     if (rodavaAntes.current && !rodando) aoTerminar()
@@ -452,19 +362,14 @@ function SaidasPeloCertificado({ aoAdicionar, aoTerminar, pendentesNaFila }) {
       aoAdicionar(null, e.message)
     }
   }
-  async function procurar() {
-    try {
-      await api.post('/api/saidas/procurar', {})
-      recarregar()
-    } catch (e) {
-      aoAdicionar(null, e.message)
-    }
-  }
+  const aoErro = (m) => aoAdicionar(null, m)
+
+  if (saidas.dados && !lista.length) return <p className="apagado">Nenhuma empresa com certificado no prazo de estado atendido pela SVRS.</p>
   return (
     <div className="busca-saidas">
-      <p className="apagado">O app acha as NF-e de saída pelo número na SEFAZ (últimos 6 meses) e põe na fila.</p>
-      {lista.length > 0 && (
-        <BuscarPorPeriodo
+      <section className="busca-passo">
+        <h3 className="busca-subtitulo">1. Notas de um período</h3>
+        <NotasDoPeriodo
           clientes={lista}
           janela={saidas.dados?.janela}
           pendentesNaFila={pendentesNaFila}
@@ -472,36 +377,29 @@ function SaidasPeloCertificado({ aoAdicionar, aoTerminar, pendentesNaFila }) {
             recarregar()
             if (texto) aoAdicionar(texto)
           }}
-          aoErro={(m) => aoAdicionar(null, m)}
+          aoErro={aoErro}
         />
-      )}
-      <Pedidos periodos={periodos} aoMudar={recarregar} aoErro={(m) => aoAdicionar(null, m)} />
-      <h3 className="busca-subtitulo">Seguir as saídas novas depois de cada captura</h3>
-      {!lista.length && <p>Nenhum cliente com certificado no prazo de estado atendido pela SVRS.</p>}
-      <ul className="busca-saidas-lista">
-        {lista.map((c) => (
-          <li key={c.cnpj}>
-            <Interruptor ligado={c.ligado} onChange={(v) => ligar(c.cnpj, v)} rotulo={c.nome} />
-            <span className="busca-saidas-series">
-              {c.series.length
-                ? c.series.map((s) => (
-                    <span key={s.serie}>
-                      Série {s.serie}: último nº {inteiro(s.ultimo_numero)}
-                      {s.achadas ? ` · ${plural(s.achadas, 'chave achada', 'chaves achadas')}` : ''}
-                      {s.ultimo_erro && <small className="busca-erro">{s.ultimo_erro}</small>}
-                    </span>
-                  ))
-                : null}
-              {c.ligado && <InicioDaSerie cnpj={c.cnpj} aoSalvar={recarregar} novo={!c.series.length} />}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <div className="antigas-acoes">
-        <button type="button" className="botao botao-azul" onClick={procurar} disabled={rodando || !lista.some((c) => c.ligado)}>
-          {rodando ? 'Procurando…' : 'Procurar agora'}
-        </button>
-      </div>
+        <EmAndamento periodos={periodos} aoMudar={recarregar} aoErro={aoErro} />
+      </section>
+      <section className="busca-passo">
+        <h3 className="busca-subtitulo">2. Notas novas, sozinho</h3>
+        <p className="apagado">Depois de cada captura, o app procura as saídas novas das empresas ligadas.</p>
+        <ul className="busca-saidas-lista">
+          {lista.map((c) => (
+            <li key={c.cnpj}>
+              <Interruptor ligado={c.ligado} onChange={(v) => ligar(c.cnpj, v)} rotulo={c.nome} />
+              <span className="busca-saidas-series">
+                {ultimaAchada(c.series)}
+                {c.series.filter((s) => s.ultimo_erro).map((s) => (
+                  <small key={s.serie} className="busca-erro">
+                    {s.ultimo_erro}
+                  </small>
+                ))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   )
 }
@@ -733,7 +631,7 @@ export default function BuscaPorChave() {
   const clientes = useApi('/api/clientes')
   // Só o estado (o resumo por empresa): a lista de notas é carregada dentro da pasta.
   const fila = useApi('/api/busca-antiga?de=999999999')
-  const [aba, setAba] = useState('colar')
+  const [aba, setAba] = useState('entrada')
   const [erro, setErro] = useState('')
   const [aviso, setAviso] = useState('')
   const [agora, setAgora] = useState(() => new Date())
@@ -791,18 +689,16 @@ export default function BuscaPorChave() {
       {!cnpj && (
         <section className="cartao busca-adicionar">
           <Segmentado
-            rotulo="Como adicionar chaves"
+            rotulo="Tipo de nota"
             valor={aba}
             onChange={setAba}
             opcoes={[
-              { valor: 'colar', rotulo: 'Colar chaves' },
-              { valor: 'sped', rotulo: 'Arquivo SPED' },
-              { valor: 'saidas', rotulo: 'Saídas pelo certificado' },
+              { valor: 'entrada', rotulo: 'NF-e de entrada' },
+              { valor: 'saida', rotulo: 'NF-e de saída' },
             ]}
           />
-          {aba === 'colar' && <ColarChaves clientes={comCertificado} aoAdicionar={aoAdicionar} />}
-          {aba === 'sped' && <ArquivoSped aoAdicionar={aoAdicionar} />}
-          {aba === 'saidas' && <SaidasPeloCertificado aoAdicionar={aoAdicionar} aoTerminar={recarregar} pendentesNaFila={pendentes} />}
+          {aba === 'entrada' && <NotasDeEntrada clientes={comCertificado} aoAdicionar={aoAdicionar} />}
+          {aba === 'saida' && <NotasDeSaida aoAdicionar={aoAdicionar} aoTerminar={recarregar} pendentesNaFila={pendentes} />}
         </section>
       )}
 
