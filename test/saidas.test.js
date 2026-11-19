@@ -128,7 +128,8 @@ test('656 para tudo e grava o erro; 526 marca fora dos 6 meses', async (t) => {
   assert.equal(r.achadas, 1)
   assert.match(bloqueio.db.prepare('SELECT ultimo_erro FROM saidas_series').pluck().get(), /656/)
   assert.deepEqual(bloqueio.consultas, [101, 102])
-  const velha = montar({ resposta: () => ({ cStat: '526', xMotivo: 'atraso superior a 6 meses' }) })
+  // Todas as saídas (até a 150) têm mais de 6 meses: a série fica com o aviso, sem pedir chave colada.
+  const velha = montar({ resposta: (n) => (n <= 150 ? { cStat: '526', xMotivo: 'atraso superior a 6 meses' } : null) })
   t.after(velha.limpar)
   await velha.saidas.procurar()
   assert.match(velha.db.prepare('SELECT ultimo_erro FROM saidas_series').pluck().get(), /6 meses/)
@@ -208,21 +209,20 @@ test('início colado durante a procura não é desfeito pela gravação da séri
 
 const tresMeses = () => faixas([1, 100, '2607'], [101, 160, '2608'], [161, 200, '2609'])
 const pedido = (db) => db.prepare('SELECT * FROM saidas_periodos ORDER BY id DESC').get()
-async function pedirEConfirmar(saidas, clienteId, de = '2608', ate = '2608') {
-  const r = await saidas.pedirPeriodo({ clienteId, de, ate, serie: '1' })
-  return saidas.confirmarPeriodo({ clienteId, de, ate, serie: '1', primeiro: r.primeiro, ultimo: r.ultimo })
+// Buscar o período já cria o pedido (sem passo de confirmar): devolve o id dele.
+async function buscarPeriodo(saidas, clienteId, de = '2608', ate = '2608') {
+  return (await saidas.pedirPeriodo({ clienteId, de, ate, serie: '1' })).id
 }
 const esperarParar = async (saidas) => {
   for (let i = 0; i < 200 && saidas.rodando(); i++) await new Promise((ok) => setTimeout(ok, 5))
 }
 
-test('pedido por período acha o trecho e, confirmado, põe só as chaves do período na fila', async (t) => {
+test('buscar o período acha o trecho e já põe só as chaves do período na fila', async (t) => {
   const { db, id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses() })
   t.after(limpar)
   assert.deepEqual(saidas.janela(), { de: '2606', ate: '2611' })
   const r = await saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608', serie: '1' })
-  assert.deepEqual(r, { serie: '1', primeiro: 101, ultimo: 160, estimadas: 60, foraDaJanela: false })
-  saidas.confirmarPeriodo({ clienteId: id, de: '2608', ate: '2608', serie: '1', primeiro: 101, ultimo: 160 })
+  assert.deepEqual(r, { id: 1, serie: '1', primeiro: 101, ultimo: 160, estimadas: 60, foraDaJanela: false })
   await saidas.procurar()
   const fila = naFila(db)
   assert.equal(fila.length, 60)
@@ -235,7 +235,7 @@ test('pedido pula chave que já está no app ou na fila', async (t) => {
   const { db, id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses() })
   t.after(limpar)
   db.prepare("INSERT INTO notas (cliente_id, chave, tipo, modelo, status, emitente_cnpj, serie, numero) VALUES (?, ?, 'saida', 'nfe', 'completa', ?, '1', '120')").run(id, chaveDe(120, '2608'), CNPJ)
-  await pedirEConfirmar(saidas, id)
+  await buscarPeriodo(saidas, id)
   await saidas.procurar()
   assert.equal(naFila(db).length, 59)
 })
@@ -244,7 +244,7 @@ test('pedido continua do próximo depois de 656', async (t) => {
   let bloqueado = true
   const { db, id, saidas, consultas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses(), resposta: (n) => (n === 130 && bloqueado ? { cStat: '656', xMotivo: 'Consumo Indevido' } : null) })
   t.after(limpar)
-  await pedirEConfirmar(saidas, id)
+  await buscarPeriodo(saidas, id)
   await saidas.procurar()
   assert.deepEqual([pedido(db).situacao, pedido(db).proximo], ['procurando', 130])
   assert.match(pedido(db).erro, /656/)
@@ -264,7 +264,7 @@ test('fechar o app no meio do pedido: um app novo continua do próximo gravado',
     aoDormir: ({ db: d, saidas: s }) => d.prepare('SELECT proximo FROM saidas_periodos').pluck().get() === 110 && s.parar(),
   })
   t.after(limpar)
-  await pedirEConfirmar(saidas, id)
+  await buscarPeriodo(saidas, id)
   await saidas.procurar()
   const parou = pedido(db).proximo
   assert.ok(parou >= 110 && parou < 160, `parou em ${parou}`)
@@ -282,7 +282,7 @@ test('pausar a empresa no meio do pedido para', async (t) => {
     aoDormir: ({ db: d }) => d.prepare('SELECT proximo FROM saidas_periodos').pluck().get() === 110 && d.prepare('UPDATE clientes SET busca_pausada = 1').run(),
   })
   t.after(limpar)
-  await pedirEConfirmar(saidas, id)
+  await buscarPeriodo(saidas, id)
   await saidas.procurar()
   assert.equal(pedido(db).situacao, 'procurando')
   assert.ok(naFila(db).length < 60)
@@ -330,22 +330,31 @@ test('mês sem nota não cria pedido', async (t) => {
 test('excluir pedido', async (t) => {
   const { id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses() })
   t.after(limpar)
-  const pid = await pedirEConfirmar(saidas, id)
+  const pid = await buscarPeriodo(saidas, id)
   assert.equal(saidas.excluirPeriodo(pid), true)
   assert.equal(saidas.excluirPeriodo(pid), false)
 })
 
-test('interruptor ligado sem nota de partida começa do último número', async (t) => {
-  const meses = faixas([1, 300, '2611'])
+test('interruptor ligado sem nota de partida traz as saídas do mês atual e segue do último número', async (t) => {
+  const meses = faixas([1, 250, '2610'], [251, 300, '2611'])
   const { db, saidas, limpar } = montar({ ultimoNoApp: 0, meses })
   t.after(limpar)
   await saidas.procurar()
   assert.deepEqual(db.prepare('SELECT serie, ultimo_numero FROM saidas_series').all().map((s) => [s.serie, s.ultimo_numero]), [['1', 300]])
-  assert.equal(naFila(db).length, 0)
+  assert.equal(naFila(db).length, 50)
   meses.set(301, '2611')
   meses.set(302, '2611')
   await saidas.procurar()
-  assert.equal(naFila(db).length, 2)
+  assert.equal(naFila(db).length, 52)
+})
+
+test('a empresa sendo procurada aparece como procurando', async (t) => {
+  const vistos = []
+  const { saidas, limpar } = montar({ meses: faixas([1, 110, '2611']), aoDormir: ({ saidas: s }) => vistos.push(s.listar()[0].procurando) })
+  t.after(limpar)
+  await saidas.procurar()
+  assert.ok(vistos.includes(true))
+  assert.equal(saidas.listar()[0].procurando, false)
 })
 
 test('pedido na espera durante um Buscar roda logo depois, sem esperar a captura', async (t) => {
@@ -364,7 +373,8 @@ test('pedido na espera durante um Buscar roda logo depois, sem esperar a captura
   await new Promise((ok) => setImmediate(ok))
   await esperarParar(saidas)
   assert.equal(pedido(db).situacao, 'concluido')
-  assert.equal(naFila(db).length, 40)
+  // 2608 (o Buscar) e 2609 (o que esperou a vez).
+  assert.equal(naFila(db).length, 100)
 })
 
 test('nota com data retroativa no limite da busca não derruba as outras do período', async (t) => {
@@ -373,7 +383,7 @@ test('nota com data retroativa no limite da busca não derruba as outras do per�
   meses.set(106, '2607')
   const { db, id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses })
   t.after(limpar)
-  await pedirEConfirmar(saidas, id)
+  await buscarPeriodo(saidas, id)
   await saidas.procurar()
   assert.equal(naFila(db).length, 59)
 })
@@ -386,17 +396,25 @@ test('excluir o pedido em andamento para as consultas', async (t) => {
     aoDormir: ({ db: d }) => d.prepare('SELECT proximo FROM saidas_periodos').pluck().get() === 110 && d.prepare('DELETE FROM saidas_periodos').run(),
   })
   t.after(limpar)
-  await pedirEConfirmar(saidas, id)
+  await buscarPeriodo(saidas, id)
   consultas.length = 0
   await saidas.procurar()
   assert.ok(consultas.length < 35, `fez ${consultas.length} consultas depois de excluir`)
   assert.ok(naFila(db).length < 60)
 })
 
-test('confirmar só o trecho que a busca achou, uma vez', async (t) => {
+test('buscar o mesmo período duas vezes não cria pedido em dobro', async (t) => {
   const { id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, meses: tresMeses() })
   t.after(limpar)
-  assert.throws(() => saidas.confirmarPeriodo({ clienteId: id, de: '2608', ate: '2608', serie: '1', primeiro: 1, ultimo: 999999999 }), /Busque o período/)
-  await pedirEConfirmar(saidas, id)
-  assert.throws(() => saidas.confirmarPeriodo({ clienteId: id, de: '2608', ate: '2608', serie: '1', primeiro: 101, ultimo: 160 }), /Busque o período|pedido igual/)
+  await buscarPeriodo(saidas, id)
+  await assert.rejects(saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608', serie: '1' }), /pedido igual/)
+})
+
+test('última saída do app com mais de 6 meses: acha o último número sozinho e traz o mês atual', async (t) => {
+  const { db, saidas, limpar } = montar({ ultimoNoApp: 100, meses: faixas([1, 200, 'antiga'], [201, 300, '2611']) })
+  t.after(limpar)
+  await saidas.procurar()
+  const serie = db.prepare('SELECT ultimo_numero, ultimo_erro FROM saidas_series').get()
+  assert.deepEqual([serie.ultimo_numero, serie.ultimo_erro], [300, null])
+  assert.equal(naFila(db).length, 100)
 })

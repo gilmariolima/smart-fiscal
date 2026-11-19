@@ -176,36 +176,28 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
   const [serie, setSerie] = useState('1')
   const [outraSerie, setOutraSerie] = useState(false)
   const [buscando, setBuscando] = useState(false)
-  const [resultado, setResultado] = useState(null)
-  const [enviando, setEnviando] = useState(false)
+  const [nenhuma, setNenhuma] = useState('')
   const deEfetivo = de || meses[meses.length - 1] || ''
   const ateEfetivo = ate && ate >= deEfetivo ? ate : deEfetivo
   const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo, serie: serie || '1' }
 
+  // Buscar já põe as notas na fila; o andamento aparece em "Em andamento".
   async function buscar(e) {
     e.preventDefault()
-    setResultado(null)
+    setNenhuma('')
     setBuscando(true)
     try {
       const r = await api.post('/api/saidas/periodo', pedido)
-      if (r.naEspera) aoMudar('O pedido entrou em andamento: roda quando a busca atual terminar.')
-      else setResultado({ ...r, ...pedido })
+      if (r.nenhuma) setNenhuma(`Nenhuma nota de ${intervaloDeMeses(pedido.de, pedido.ate)}.`)
+      else if (r.naEspera) aoMudar('Em andamento: começa quando a busca atual terminar.')
+      else {
+        const fora = r.foraDaJanela ? ` (parte de ${mesRotulo(pedido.de)} ficou fora: mais de 6 meses)` : ''
+        aoMudar(`Na fila: ~${plural(r.estimadas, 'nota', 'notas')} de ${intervaloDeMeses(pedido.de, pedido.ate)} · download ${duracao(r.estimadas + (pendentesNaFila || 0))}${fora}`)
+      }
     } catch (e2) {
       aoErro(e2.message)
     } finally {
       setBuscando(false)
-    }
-  }
-  async function confirmar() {
-    setEnviando(true)
-    try {
-      await api.post('/api/saidas/periodo/confirmar', { cnpj: resultado.cnpj, de: resultado.de, ate: resultado.ate, serie: resultado.serie, primeiro: resultado.primeiro, ultimo: resultado.ultimo })
-      setResultado(null)
-      aoMudar()
-    } catch (e) {
-      aoErro(e.message)
-    } finally {
-      setEnviando(false)
     }
   }
 
@@ -263,25 +255,7 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
           </button>
         )}
       </p>
-      {resultado &&
-        (resultado.nenhuma ? (
-          <p className="apagado">{resultado.motivo}</p>
-        ) : (
-          <div className="busca-periodo-resultado">
-            <span>
-              Achadas ~{plural(resultado.estimadas, 'nota', 'notas')} (nº {inteiro(resultado.primeiro)} a {inteiro(resultado.ultimo)}) · download {duracao(resultado.estimadas + (pendentesNaFila || 0))}
-              {resultado.foraDaJanela && <small className="busca-erro">parte de {mesRotulo(resultado.de)} ficou fora (mais de 6 meses)</small>}
-            </span>
-            <span className="busca-periodo-botoes">
-              <button type="button" className="botao botao-claro" onClick={() => setResultado(null)}>
-                Cancelar
-              </button>
-              <button type="button" className="botao botao-azul" onClick={confirmar} disabled={enviando}>
-                Colocar na fila
-              </button>
-            </span>
-          </div>
-        ))}
+      {nenhuma && <p className="apagado">{nenhuma}</p>}
     </form>
   )
 }
@@ -328,12 +302,14 @@ function EmAndamento({ periodos, aoMudar, aoErro }) {
   )
 }
 
-// "última achada: nº 705" (série 1) ou "série 2: nº 30" para as outras.
-function ultimaAchada(series) {
-  return series
-    .filter((s) => s.ultimo_numero > 0)
-    .map((s) => (s.serie === '1' ? `última achada: nº ${inteiro(s.ultimo_numero)}` : `série ${s.serie}: nº ${inteiro(s.ultimo_numero)}`))
-    .join(' · ')
+// O que a empresa ligada está fazendo: procurando agora, quantas foram para a fila e quando procura de novo.
+function situacaoDaEmpresa(c) {
+  if (!c.ligado) return ''
+  if (c.procurando) return 'procurando…'
+  const achadas = c.series.reduce((soma, s) => soma + (s.achadas || 0), 0)
+  const ultimo = c.series.find((s) => s.serie === '1' && s.ultimo_numero > 0)
+  const partes = [ultimo && `última nº ${inteiro(ultimo.ultimo_numero)}`, achadas > 0 && `${plural(achadas, 'nota nova', 'notas novas')} na fila`, 'procura de novo após a próxima captura']
+  return partes.filter(Boolean).join(' · ')
 }
 
 function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
@@ -342,7 +318,7 @@ function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
   const periodos = saidas.dados?.periodos || []
   const { recarregar } = saidas
   // Atualiza enquanto há busca rodando ou pedido esperando a vez.
-  const rodando = !!saidas.dados?.rodando || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
+  const rodando = !!saidas.dados?.rodando || lista.some((c) => c.procurando) || periodos.some((p) => p.situacao === 'na-espera' || (p.situacao === 'procurando' && !p.erro))
   useEffect(() => {
     if (!rodando) return undefined
     const t = setInterval(recarregar, 3000)
@@ -389,7 +365,7 @@ function NotasDeSaida({ aoAdicionar, aoTerminar, pendentesNaFila }) {
             <li key={c.cnpj}>
               <Interruptor ligado={c.ligado} onChange={(v) => ligar(c.cnpj, v)} rotulo={c.nome} />
               <span className="busca-saidas-series">
-                {ultimaAchada(c.series)}
+                {situacaoDaEmpresa(c)}
                 {c.series.filter((s) => s.ultimo_erro).map((s) => (
                   <small key={s.serie} className="busca-erro">
                     {s.ultimo_erro}

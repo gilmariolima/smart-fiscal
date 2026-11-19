@@ -56,7 +56,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return sql.clientes
       .all()
       .filter((c) => noPrazo(c) && atendido(c))
-      .map((c) => ({ cnpj: c.cnpj, nome: c.apelido || c.razao_social, ligado: !!c.saidas_auto, pausada: !!c.busca_pausada, series: series(c) }))
+      .map((c) => ({ cnpj: c.cnpj, nome: c.apelido || c.razao_social, ligado: !!c.saidas_auto, pausada: !!c.busca_pausada, procurando: clienteProcurado === c.id, series: series(c) }))
   }
 
   const ligar = (clienteId, ligado) => sql.ligar.run(ligado ? 1 : 0, clienteId)
@@ -91,6 +91,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     let inexistentes = 0
     let erro = null
     let parar = false
+    let recomecar = false
     for (let i = 0; i < MAXIMO_POR_SERIE && inexistentes < INEXISTENTES_PARA_PARAR; i++, numero++) {
       if (interromper(cliente)) break
       await esperarVez()
@@ -102,7 +103,8 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         inexistentes = 0
       } else if (r.cStat === '217') inexistentes++
       else if (r.cStat === '526') {
-        erro = 'A última saída conhecida tem mais de 6 meses: cole uma chave de saída recente'
+        // A última saída conhecida já passou dos 6 meses: a série recomeça pelo último número de hoje.
+        recomecar = true
         break
       } else if (r.cStat === '656') {
         erro = `SEFAZ: 656 ${r.xMotivo || 'consumo indevido'} — tenta de novo no próximo horário`
@@ -115,16 +117,18 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     }
     sql.gravarSerie.run({ cliente_id: cliente.id, serie: s.serie, ultimo_numero: ultimo, achadas: achadas.length, ultima_consulta: agora().toISOString(), ultimo_erro: erro })
     if (achadas.length) buscaAntiga.adicionarChaves(cliente.id, achadas, { origem: 'saidas' })
-    return { achadas: achadas.length, parar }
+    return { achadas: achadas.length, parar, recomecar }
   }
 
   const aammDe = (d) => `${String(d.getFullYear()).slice(2)}${p2(d.getMonth() + 1)}`
 
   // Consulta do número `n` da série, já classificada; respeita os 2 s e a pausa (Interrompido).
+  let clienteProcurado = null
   function consultorDe(cliente, consulta, serie) {
     const cUF = UFS[cliente.uf.toUpperCase()].codigo
     const aamm = aammDe(agora())
     return async (n) => {
+      clienteProcurado = cliente.id
       if (interromper(cliente)) throw new Interrompido()
       await esperarVez()
       if (interromper(cliente)) throw new Interrompido()
@@ -141,11 +145,18 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     }
   }
 
-  // Interruptor ligado sem nenhuma série conhecida: acha o último número da série 1 e segue dali nas próximas vezes.
-  async function comecarSemPartida(cliente, consulta) {
+  // Série sem ponto de partida (interruptor recém-ligado, ou a última saída conhecida passou dos 6 meses): acha o último
+  // número de hoje (e segue dali nas próximas vezes) e já pede as saídas do mês atual, que entram nesta mesma procura.
+  async function comecarSemPartida(cliente, consulta, serie = '1') {
     try {
-      const ultimo = await acharUltimo(consultorDe(cliente, consulta, '1'))
-      sql.gravarSerie.run({ cliente_id: cliente.id, serie: '1', ultimo_numero: ultimo, achadas: 0, ultima_consulta: agora().toISOString(), ultimo_erro: ultimo ? null : 'nenhuma nota nesta série' })
+      const consultar = comMemoria(consultorDe(cliente, consulta, serie))
+      const ultimo = await acharUltimo(consultar)
+      const antiga = ultimo > 0 && (await consultar(ultimo)).tipo === 'antiga'
+      const erro = !ultimo ? 'nenhuma nota nesta série' : antiga ? 'a última saída tem mais de 6 meses' : null
+      sql.gravarSerie.run({ cliente_id: cliente.id, serie, ultimo_numero: ultimo, achadas: 0, ultima_consulta: agora().toISOString(), ultimo_erro: erro })
+      const mes = aammDe(agora())
+      const trecho = ultimo && !antiga ? await acharPeriodo(consultar, { de: mes, ate: mes, ultimo }) : null
+      if (trecho && !pedidosSql.ativoIgual.get(cliente.id, serie, mes, mes)) criarPedido(cliente.id, serie, mes, mes, trecho)
       return false
     } catch (e) {
       if (e instanceof Interrompido) return false
@@ -207,6 +218,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     emCurso = (async () => tarefa())().finally(() => {
       emCurso = null
       tipoEmCurso = null
+      clienteProcurado = null
       if (procuraPendente && !parando) {
         procuraPendente = false
         setImmediate(() => procurar().catch((e) => logger.warn('Saídas pelo certificado falharam', { erro: e.message })))
@@ -215,14 +227,19 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return emCurso
   }
 
-  // Trechos achados por pedirPeriodo: confirmar só aceita um deles (nada de trecho inventado pelo pedido HTTP).
-  const trechosAchados = new Map()
-  const chaveDoTrecho = (clienteId, serie, de, ate) => `${clienteId}|${serie}|${de}|${ate}`
+  // Pedido com o trecho achado (mais a margem): roda na procura logo depois da tarefa atual.
+  function criarPedido(clienteId, serie, de, ate, trecho) {
+    const m = comMargem(trecho)
+    const id = Number(pedidosSql.criar.run({ cliente_id: clienteId, serie, de, ate, primeiro: m.primeiro, ultimo: m.ultimo, situacao: 'procurando', agora: agora().toISOString() }).lastInsertRowid)
+    procuraPendente = true
+    return id
+  }
 
-  /** Acha o trecho do período (antes de confirmar). Com outra procura rodando, o pedido entra na espera e roda depois. */
+  /** Buscar o período: acha o trecho e já põe o pedido em andamento. Com outra procura rodando, entra na espera. */
   async function pedirPeriodo({ clienteId, de, ate, serie }) {
     const v = validarPedido({ clienteId, de, ate, serie })
     if (parando) throw new Error('O app está fechando.')
+    if (pedidosSql.ativoIgual.get(v.cliente.id, v.serie, de, ate)) throw new Error('Já existe um pedido igual em andamento.')
     if (emCurso) {
       const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro: null, ultimo: null, situacao: 'na-espera', agora: agora().toISOString() }).lastInsertRowid)
       procuraPendente = true
@@ -234,28 +251,13 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
       try {
         const t = await trechoDoPeriodo(v.cliente, consulta, v.serie, de, ate)
         if (!t) return { nenhuma: true, motivo: 'nenhuma nota no período' }
-        trechosAchados.set(chaveDoTrecho(v.cliente.id, v.serie, de, ate), { primeiro: t.primeiro, ultimo: t.ultimo })
-        return { serie: v.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }
+        const id = criarPedido(v.cliente.id, v.serie, de, ate, t)
+        return { id, serie: v.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }
       } catch (e) {
         if (e instanceof Interrompido) throw new Error('A busca foi pausada.')
         throw e
       }
     }, 'pedido')
-  }
-
-  /** Grava o pedido confirmado (só o trecho que a busca achou, uma vez) e começa a pôr as chaves na fila. */
-  function confirmarPeriodo({ clienteId, de, ate, serie, primeiro, ultimo }) {
-    const v = validarPedido({ clienteId, de, ate, serie })
-    const chave = chaveDoTrecho(v.cliente.id, v.serie, de, ate)
-    const achado = trechosAchados.get(chave)
-    if (!achado || achado.primeiro !== primeiro || achado.ultimo !== ultimo) throw new Error('Busque o período de novo antes de colocar na fila.')
-    if (pedidosSql.ativoIgual.get(v.cliente.id, v.serie, de, ate)) throw new Error('Já existe um pedido igual em andamento.')
-    trechosAchados.delete(chave)
-    const t = comMargem({ primeiro, ultimo })
-    const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro: t.primeiro, ultimo: t.ultimo, situacao: 'procurando', agora: agora().toISOString() }).lastInsertRowid)
-    if (emCurso) procuraPendente = true
-    procurar().catch((e) => logger.warn('Saídas por período falharam', { erro: e.message }))
-    return id
   }
 
   // Nota com data fora de ordem (retroativa, contingência) pode cair na fronteira da busca binária: o pedido consulta
@@ -342,6 +344,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
         const consulta = abrirConsulta(cliente)
         if (!consulta) continue
         resumo.clientes++
+        clienteProcurado = cliente.id
         const lista = series(cliente)
         if (!lista.length) {
           if (await comecarSemPartida(cliente, consulta)) return resumo
@@ -352,6 +355,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
           const r = await procurarSerie(cliente, consulta, s, aamm)
           resumo.achadas += r.achadas
           if (r.parar) return resumo
+          if (r.recomecar && (await comecarSemPartida(cliente, consulta, s.serie))) return resumo
         }
       }
       if (resumo.achadas) logger.info('Saídas pelo certificado: chaves achadas', resumo)
@@ -371,7 +375,7 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     return emCurso || Promise.resolve()
   }
 
-  return { listar, ligar, definirInicio, procurar, parar, rodando: () => !!emCurso, janela, pedirPeriodo, confirmarPeriodo, excluirPeriodo, listarPeriodos }
+  return { listar, ligar, definirInicio, procurar, parar, rodando: () => !!emCurso, janela, pedirPeriodo, excluirPeriodo, listarPeriodos }
 }
 
 module.exports = { criarSaidas }
