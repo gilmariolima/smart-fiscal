@@ -44,8 +44,9 @@ test('cliente da consulta envia o consSitNFe e trata queda de rede', async () =>
 // ---------- descoberta das saídas ----------
 
 // SEFAZ falsa: `existe(numero)` diz se o número tem nota; o 613 devolve uma chave verdadeira inventada.
-// `meses`: Map número → AAMM (613 com a chave daquele mês) ou 'antiga' (526); com ele, `existe` não é usado.
-function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, ligado = true, aoDormir = null, meses = null } = {}) {
+// `meses`: Map número → AAMM (613 com a chave daquele mês) ou 'antiga' (526) da série 1; com ele, `existe` não é usado.
+// `porSerie`: { '1': Map, '6': Map } quando o teste usa mais de uma série (série sem Map: nenhum número existe).
+function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, ligado = true, aoDormir = null, meses = null, porSerie = null } = {}) {
   const pastaXmls = fs.mkdtempSync(path.join(os.tmpdir(), 'saidas-'))
   const db = abrirBanco(':memory:')
   const id = db.prepare("INSERT INTO clientes (cnpj, razao_social, apelido, uf, cert_arquivo, cert_senha_enc, cert_validade, saidas_auto) VALUES (?, 'Leitura', 'Leitura', 'CE', 'c.pfx', 'a:b:c', '2027-08-28T00:00:00Z', ?)").run(CNPJ, ligado ? 1 : 0).lastInsertRowid
@@ -59,15 +60,17 @@ function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, liga
   const fabricaConsulta = () => ({
     consultar: async (chave) => {
       const numero = Number(chave.slice(25, 34))
+      const serie = String(Number(chave.slice(22, 25)))
       consultas.push(numero)
       if (resposta) {
         const r = resposta(numero)
         if (r) return r
       }
-      if (meses) {
-        const mes = meses.get(numero)
+      if (meses || porSerie) {
+        const daSerie = porSerie ? porSerie[serie] : serie === '1' ? meses : null
+        const mes = daSerie?.get(numero)
         if (mes === 'antiga') return { cStat: '526', xMotivo: 'atraso superior a 6 meses' }
-        if (mes) return { cStat: '613', chaveVerdadeira: chaveDe(numero, mes) }
+        if (mes) return { cStat: '613', chaveVerdadeira: chaveDe(numero, mes, Number(serie)) }
         return { cStat: '217' }
       }
       if (existe(numero)) return { cStat: '613', chaveVerdadeira: montarChave({ cUF: '23', aamm: '2611', cnpj: CNPJ, serie: 1, numero, cNF: '99999999' }) }
@@ -93,7 +96,7 @@ function montar({ existe = () => false, resposta = null, ultimoNoApp = 100, liga
   return { db, id, saidas, novaSaidas, consultas, pausas, buscaAntiga, agendados, limpar: () => fs.rmSync(pastaXmls, { recursive: true, force: true }) }
 }
 
-const chaveDe = (numero, mes) => montarChave({ cUF: '23', aamm: mes, cnpj: CNPJ, serie: 1, numero, cNF: '99999999' })
+const chaveDe = (numero, mes, serie = 1) => montarChave({ cUF: '23', aamm: mes, cnpj: CNPJ, serie, numero, cNF: '99999999' })
 const faixas = (...lista) => {
   const m = new Map()
   for (const [de, ate, mes] of lista) for (let n = de; n <= ate; n++) m.set(n, mes)
@@ -334,4 +337,56 @@ test('tentar de novo um pedido que terminou com erro continua de onde parou', as
   await saidas.procurar()
   assert.equal(consultas[0], 120)
   assert.equal(pedido(db).situacao, 'concluido')
+})
+
+// ---------- todas as séries da empresa ----------
+
+test('buscar sem série acha as séries que a empresa usa e põe um pedido por série', async (t) => {
+  const porSerie = { 1: faixas([1, 100, '2607'], [101, 160, '2608'], [161, 200, '2609']), 6: faixas([1, 50, '2607'], [51, 70, '2608']) }
+  const { db, id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, porSerie })
+  t.after(limpar)
+  const r = await saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608' })
+  assert.deepEqual(r.series.map((s) => [s.serie, s.primeiro, s.ultimo, s.estimadas]), [['1', 101, 160, 60], ['6', 51, 70, 20]])
+  assert.equal(r.estimadas, 80)
+  await saidas.procurar()
+  assert.equal(naFila(db).length, 80)
+  assert.deepEqual(saidas.listarPeriodos().map((p) => [p.serie, p.situacao]).sort(), [['1', 'concluido'], ['6', 'concluido']])
+})
+
+test('série sem nota no período não vira pedido; empresa sem nota em nenhuma: nenhuma nota no período', async (t) => {
+  const { id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, porSerie: { 1: faixas([1, 100, 'antiga'], [101, 160, '2608']), 6: faixas([1, 50, '2607']) } })
+  t.after(limpar)
+  const r = await saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608' })
+  assert.deepEqual(r.series.map((s) => s.serie), ['1'])
+  const vazio = montar({ ligado: false, ultimoNoApp: 0, porSerie: { 1: faixas([1, 50, '2607']) } })
+  t.after(vazio.limpar)
+  assert.deepEqual(await vazio.saidas.pedirPeriodo({ clienteId: vazio.id, de: '2608', ate: '2608' }), { nenhuma: true, motivo: 'nenhuma nota no período' })
+})
+
+test('pedido sem série que entra na espera descobre as séries quando chega a vez', async (t) => {
+  let outro = null
+  const porSerie = { 1: faixas([1, 100, '2607'], [101, 160, '2608'], [161, 200, '2609']), 6: faixas([1, 50, '2608'], [51, 70, '2609']) }
+  const { db, id, saidas, limpar } = montar({
+    ligado: false,
+    ultimoNoApp: 0,
+    porSerie,
+    aoDormir: ({ id: cid, saidas: s }) => {
+      if (!outro) outro = s.pedirPeriodo({ clienteId: cid, de: '2609', ate: '2609' })
+    },
+  })
+  t.after(limpar)
+  await saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608' })
+  assert.equal((await outro).naEspera, true)
+  await new Promise((ok) => setImmediate(ok))
+  await esperarParar(saidas)
+  // 2608: série 1 (60) + série 6 (50); 2609: série 1 (40) + série 6 (20).
+  assert.equal(naFila(db).length, 170)
+  assert.ok(saidas.listarPeriodos().every((p) => p.situacao === 'concluido' && p.serie !== 'auto'))
+})
+
+test('buscar de novo o mesmo período sem série, com ele em andamento, é recusado', async (t) => {
+  const { id, saidas, limpar } = montar({ ligado: false, ultimoNoApp: 0, porSerie: { 1: faixas([1, 100, 'antiga'], [101, 160, '2608']) } })
+  t.after(limpar)
+  await saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608' })
+  await assert.rejects(saidas.pedirPeriodo({ clienteId: id, de: '2608', ate: '2608' }), /pedido igual/)
 })

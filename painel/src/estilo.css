@@ -3339,10 +3339,6 @@ a.botao-icone {
   gap: 12px;
 }
 
-.busca-periodo-serie .entrada {
-  width: 72px;
-}
-
 .busca-periodo-resultado {
   display: flex;
   flex-wrap: wrap;

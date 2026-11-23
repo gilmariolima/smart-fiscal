@@ -17,6 +17,8 @@ const MARGEM_DO_TRECHO = 20
 const RETOMAR_MS = 5 * 60 * 1000
 const SEM_CONEXAO = 'Sem conexão com a SEFAZ: tenta de novo em 5 min'
 const SEFAZ_PROPRIA = ['AM', 'BA', 'GO', 'MG', 'MS', 'MT', 'PE', 'PR', 'RS', 'SP']
+// Séries testadas quando o pedido não diz a série (as que aparecem nas notas do app entram sempre).
+const SERIES_PROVAVEIS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
 const dormirPadrao = (ms) => new Promise((r) => setTimeout(r, ms))
 const p2 = (n) => String(n).padStart(2, '0')
 
@@ -103,6 +105,8 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     excluir: db.prepare('DELETE FROM saidas_periodos WHERE id = ?'),
     retomar: db.prepare("UPDATE saidas_periodos SET situacao = CASE WHEN primeiro IS NULL THEN 'na-espera' ELSE 'procurando' END, erro = NULL, atualizado_em = ? WHERE id = ? AND situacao = 'erro'"),
     noApp: db.prepare('SELECT 1 FROM notas WHERE cliente_id = ? AND chave = ?'),
+    ativoNoPeriodo: db.prepare("SELECT 1 FROM saidas_periodos WHERE cliente_id = ? AND de_aamm = ? AND ate_aamm = ? AND situacao IN ('na-espera', 'procurando')"),
+    trechoDaSerie: db.prepare("UPDATE saidas_periodos SET serie = ?, primeiro = ?, ultimo = ?, proximo = ?, situacao = 'procurando', atualizado_em = ? WHERE id = ?"),
     ativoIgual: db.prepare("SELECT 1 FROM saidas_periodos WHERE cliente_id = ? AND serie = ? AND de_aamm = ? AND ate_aamm = ? AND situacao IN ('na-espera', 'procurando')"),
     listar: db.prepare(`SELECT p.*, c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome FROM saidas_periodos p JOIN clientes c ON c.id = p.cliente_id
       WHERE p.situacao <> 'concluido' OR p.atualizado_em >= ? ORDER BY p.id DESC`),
@@ -118,10 +122,38 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     const j = janela()
     if (!/^\d{4}$/.test(String(de)) || !/^\d{4}$/.test(String(ate)) || de < j.de || ate > j.ate) throw new Error('Escolha meses dos últimos 6 meses: antes disso, só pelo SPED.')
     if (ate < de) throw new Error('O mês de Até precisa ser igual ou depois do mês de De.')
-    if (!/^\d{1,3}$/.test(String(serie ?? '').trim())) throw new Error('Série: use um número de 0 a 999.')
+    // Sem série: o app descobre as séries que a empresa usa.
+    const automatica = serie == null || String(serie).trim() === '' || serie === 'auto'
+    if (!automatica && !/^\d{1,3}$/.test(String(serie).trim())) throw new Error('Série: use um número de 0 a 999.')
     const cliente = sql.cliente.get(clienteId)
     if (!cliente || !cliente.cert_arquivo || !noPrazo(cliente) || !atendido(cliente)) throw new Error('Esta empresa não pode usar: precisa de A1 no prazo e de estado atendido pela SVRS.')
-    return { cliente, serie: String(Number(serie)) }
+    return { cliente, serie: automatica ? 'auto' : String(Number(serie)) }
+  }
+
+  // Séries que a empresa usa: as das notas do app e, das prováveis (0 a 9), as em que o nº 1 existe na SEFAZ.
+  async function seriesDaEmpresa(cliente, consulta) {
+    const usadas = new Set()
+    for (const s of sql.seriesDaTabela.all(cliente.id)) usadas.add(String(Number(s.serie)))
+    for (const n of sql.seriesDasNotas.all(cliente.id, cliente.cnpj)) usadas.add(String(Number(n.serie)))
+    for (const s of SERIES_PROVAVEIS) {
+      if (usadas.has(s)) continue
+      const r = await consultorDe(cliente, consulta, s)(1)
+      if (r.tipo === 'parar') throw new ErroDeConsulta(r.mensagem, true)
+      if (r.tipo === 'erro') throw new ErroDeConsulta(r.mensagem, false, !!r.rede)
+      if (r.tipo === 'existe' || r.tipo === 'antiga') usadas.add(s)
+    }
+    return [...usadas].sort((a, b) => Number(a) - Number(b))
+  }
+
+  // O trecho do período em cada série pedida ('auto': em todas as que a empresa usa); série sem nota no período fica de fora.
+  async function trechosDoPeriodo(cliente, consulta, serie, de, ate) {
+    const series = serie === 'auto' ? await seriesDaEmpresa(cliente, consulta) : [serie]
+    const lista = []
+    for (const s of series) {
+      const t = await trechoDoPeriodo(cliente, consulta, s, de, ate)
+      if (t) lista.push({ serie: s, ...t })
+    }
+    return lista
   }
 
   async function trechoDoPeriodo(cliente, consulta, serie, de, ate) {
@@ -165,7 +197,8 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
   async function pedirPeriodo({ clienteId, de, ate, serie }) {
     const v = validarPedido({ clienteId, de, ate, serie })
     if (parando) throw new Error('O app está fechando.')
-    if (pedidosSql.ativoIgual.get(v.cliente.id, v.serie, de, ate)) throw new Error('Já existe um pedido igual em andamento.')
+    const igual = v.serie === 'auto' ? pedidosSql.ativoNoPeriodo.get(v.cliente.id, de, ate) : pedidosSql.ativoIgual.get(v.cliente.id, v.serie, de, ate)
+    if (igual) throw new Error('Já existe um pedido igual em andamento.')
     if (emCurso) {
       const id = Number(pedidosSql.criar.run({ cliente_id: v.cliente.id, serie: v.serie, de, ate, primeiro: null, ultimo: null, situacao: 'na-espera', agora: agora().toISOString() }).lastInsertRowid)
       procuraPendente = true
@@ -175,10 +208,14 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     if (!consulta) throw new Error('O certificado desta empresa não abriu.')
     return naVez(async () => {
       try {
-        const t = await trechoDoPeriodo(v.cliente, consulta, v.serie, de, ate)
-        if (!t) return { nenhuma: true, motivo: 'nenhuma nota no período' }
-        const id = criarPedido(v.cliente.id, v.serie, de, ate, t)
-        return { id, serie: v.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }
+        const lista = await trechosDoPeriodo(v.cliente, consulta, v.serie, de, ate)
+        if (!lista.length) return { nenhuma: true, motivo: 'nenhuma nota no período' }
+        const series = lista.map((t) => ({ id: criarPedido(v.cliente.id, t.serie, de, ate, t), serie: t.serie, primeiro: t.primeiro, ultimo: t.ultimo, estimadas: t.ultimo - t.primeiro + 1, foraDaJanela: t.foraDaJanela }))
+        if (v.serie !== 'auto') {
+          const [s] = series
+          return { id: s.id, serie: s.serie, primeiro: s.primeiro, ultimo: s.ultimo, estimadas: s.estimadas, foraDaJanela: s.foraDaJanela }
+        }
+        return { series, estimadas: series.reduce((soma, s) => soma + s.estimadas, 0), foraDaJanela: series.some((s) => s.foraDaJanela) }
       } catch (e) {
         if (e instanceof Interrompido) throw new Error('A busca foi pausada.')
         if (e instanceof ErroDeConsulta && e.rede) throw new Error('Sem conexão com a SEFAZ: confira a internet e busque de novo.')
@@ -214,13 +251,16 @@ function criarSaidas({ db, config, logger, buscaAntiga, fabricaConsulta, dormir 
     }
     try {
       if (p.primeiro == null) {
-        const t = await trechoDoPeriodo(cliente, consulta, p.serie, p.de_aamm, p.ate_aamm)
-        if (!t) {
+        const lista = await trechosDoPeriodo(cliente, consulta, p.serie, p.de_aamm, p.ate_aamm)
+        if (!lista.length) {
           pedidosSql.fim.run('concluido', 'nenhuma nota no período', iso(), p.id)
           return false
         }
-        const m = comMargem(t)
-        pedidosSql.trecho.run(m.primeiro, m.ultimo, m.primeiro, iso(), p.id)
+        // A primeira série fica neste pedido; as outras viram pedidos novos, que esta mesma procura roda depois.
+        const [primeira, ...outras] = lista
+        const m = comMargem(primeira)
+        pedidosSql.trechoDaSerie.run(primeira.serie, m.primeiro, m.ultimo, m.primeiro, iso(), p.id)
+        for (const t of outras) criarPedido(cliente.id, t.serie, p.de_aamm, p.ate_aamm, t)
         p = pedidosSql.um.get(p.id)
       }
       const consultar = consultorDe(cliente, consulta, p.serie)

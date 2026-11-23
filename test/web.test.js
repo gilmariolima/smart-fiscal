@@ -2506,3 +2506,14 @@ test('saídas por período: tentar de novo um pedido com erro', async (t) => {
   assert.equal((await pedir('/api/saidas/periodo/retomar', { method: 'POST', body: { id: pid } })).status, 200)
   assert.equal((await pedir('/api/saidas/periodo/retomar', { method: 'POST', body: { id: 9999 } })).status, 404)
 })
+
+test('saídas por período: sem série, busca em todas as séries da empresa', async (t) => {
+  const { pedir } = await montar(t, { SAIDAS_INTERVALO_MS: '0' })
+  const hoje = new Date()
+  const mes = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
+  const r = await pedir('/api/saidas/periodo', { method: 'POST', body: { cnpj: CNPJ_MOCK_OK, de: mes, ate: mes } })
+  assert.equal(r.status, 200, JSON.stringify(r.corpo))
+  // A SEFAZ simulada responde igual em toda série: as séries 0 a 9 têm as notas 101 a 120 no mês atual.
+  assert.equal(r.corpo.series.length, 10)
+  assert.equal(r.corpo.estimadas, 200)
+})

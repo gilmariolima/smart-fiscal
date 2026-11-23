@@ -698,7 +698,7 @@ function criarApp({ ctx, agendador, estoque, atualizacao, escolherPasta, exigirP
   }
   const mesDaApi = (aamm) => `20${aamm.slice(0, 2)}-${aamm.slice(2)}`
   const periodoDaApi = (p) => ({ ...p, de: mesDaApi(p.de_aamm), ate: mesDaApi(p.ate_aamm) })
-  const pedidoDoCorpo = (req) => ({ clienteId: clienteDasSaidas(req).id, de: mesDoServico(req.body?.de), ate: mesDoServico(req.body?.ate), serie: String(req.body?.serie ?? '1') })
+  const pedidoDoCorpo = (req) => ({ clienteId: clienteDasSaidas(req).id, de: mesDoServico(req.body?.de), ate: mesDoServico(req.body?.ate), serie: req.body?.serie == null || req.body.serie === '' ? undefined : String(req.body.serie) }) // sem série: todas as que a empresa usa
   app.post('/api/saidas/periodo', async (req, res) => {
     exigirLocalBusca(req)
     const pedido = pedidoDoCorpo(req)

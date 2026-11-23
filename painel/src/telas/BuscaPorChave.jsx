@@ -166,13 +166,12 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
   const [cnpj, setCnpj] = useState('')
   const [de, setDe] = useState('')
   const [ate, setAte] = useState('')
-  const [serie, setSerie] = useState('1')
-  const [outraSerie, setOutraSerie] = useState(false)
   const [buscando, setBuscando] = useState(false)
   const [nenhuma, setNenhuma] = useState('')
   const deEfetivo = de || meses[meses.length - 1] || ''
   const ateEfetivo = ate && ate >= deEfetivo ? ate : deEfetivo
-  const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo, serie: serie || '1' }
+  // Sem série: o app descobre as séries que a empresa usa e busca em todas.
+  const pedido = { cnpj, de: deEfetivo, ate: ateEfetivo }
 
   // Buscar já põe as notas na fila; o andamento aparece em "Em andamento".
   async function buscar(e) {
@@ -185,7 +184,9 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
       else if (r.naEspera) aoMudar('Em andamento: começa quando a busca atual terminar.')
       else {
         const fora = r.foraDaJanela ? ` (parte de ${mesRotulo(pedido.de)} ficou fora: mais de 6 meses)` : ''
-        aoMudar(`Na fila: ~${plural(r.estimadas, 'nota', 'notas')} de ${intervaloDeMeses(pedido.de, pedido.ate)} · download ${duracao(r.estimadas + (pendentesNaFila || 0))}${fora}`)
+        const series = r.series || [r]
+        const porSerie = series.length > 1 ? ` (${series.map((s) => `série ${s.serie}: ${inteiro(s.estimadas)}`).join(' · ')})` : ''
+        aoMudar(`Na fila: ~${plural(r.estimadas, 'nota', 'notas')} de ${intervaloDeMeses(pedido.de, pedido.ate)}${porSerie} · download ${duracao(r.estimadas + (pendentesNaFila || 0))}${fora}`)
       }
     } catch (e2) {
       aoErro(e2.message)
@@ -230,24 +231,11 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
               ))}
           </select>
         </label>
-        {outraSerie && (
-          <label className="campo busca-periodo-serie">
-            <span>Série</span>
-            <input className="entrada" value={serie} onChange={(e) => setSerie(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" />
-          </label>
-        )}
         <button type="submit" className="botao botao-azul" disabled={buscando || !cnpj}>
           {buscando ? 'Procurando…' : 'Buscar'}
         </button>
       </div>
-      <p className="busca-periodo-dica apagado">
-        Só os últimos 6 meses.{' '}
-        {!outraSerie && (
-          <button type="button" className="botao-link" onClick={() => setOutraSerie(true)}>
-            Outra série
-          </button>
-        )}
-      </p>
+      <p className="busca-periodo-dica apagado">Só os últimos 6 meses, em todas as séries da empresa.</p>
       {nenhuma && <p className="apagado">{nenhuma}</p>}
     </form>
   )
@@ -256,7 +244,7 @@ function NotasDoPeriodo({ clientes, janela, pendentesNaFila, aoMudar, aoErro }) 
 function situacaoDoPedido(p) {
   if (p.situacao === 'na-espera') return 'esperando a vez'
   if (p.situacao === 'procurando') {
-    if (p.primeiro == null) return 'procurando o período…'
+    if (p.primeiro == null) return p.serie === 'auto' ? 'procurando as séries e o período…' : 'procurando o período…'
     // O trecho consultado inclui a margem de segurança: mostra a porcentagem e quantas já foram para a fila.
     const pct = Math.min(100, Math.floor(((p.proximo - p.primeiro) / (p.ultimo - p.primeiro + 1)) * 100))
     const texto = `achando notas · ${pct}% · ${plural(p.achadas, 'na fila', 'na fila')}`
@@ -284,7 +272,7 @@ function EmAndamento({ periodos, aoMudar, aoErro }) {
           <li key={p.id}>
             <span>
               {p.nome} · {intervaloDeMeses(p.de, p.ate)}
-              {p.serie !== '1' ? ` · série ${p.serie}` : ''}
+              {p.serie !== 'auto' ? ` · série ${p.serie}` : ''}
             </span>
             <span className={p.situacao === 'erro' ? 'busca-erro' : 'apagado'}>{situacaoDoPedido(p)}</span>
             <span className="busca-acoes">
