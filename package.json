@@ -1,6 +1,6 @@
 {
   "name": "smart-fiscal",
-  "version": "1.17.6",
+  "version": "1.17.7",
   "private": true,
   "description": "Smart Fiscal",
   "type": "commonjs",
