@@ -210,6 +210,7 @@ function criarServicoCiclo(deps) {
 
   return {
     corrigirNotasDoEscritorio: captura.corrigirNotasDoEscritorio,
+    corrigirEntradasProprias: captura.corrigirEntradasProprias,
     executarCiclo,
     somenteDownload,
     manifestar: (args) => manifestacao.manifestar(args),

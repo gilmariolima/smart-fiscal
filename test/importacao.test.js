@@ -387,3 +387,14 @@ test('evento rejeitado ou de homologação não cancela a nota', (t) => {
   assert.deepEqual(r.ignoradas, [{ nome: 'r.xml', motivo: 'sem-protocolo' }, { nome: 'h.xml', motivo: 'homologacao' }, { nome: 'c.xml', motivo: 'sem-protocolo' }])
   assert.equal(notas(db)[0].cancelada, 0)
 })
+
+test('NF-e de entrada emitida pelo próprio cliente (devolução de venda) vai para NF-e/Entradas', (t) => {
+  const { db, servico, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  const chave = chaveNfe(CNPJ_MOCK_OK, 6)
+  const r = servico.importar([arq('d.xml', nfeProc({ emit: CNPJ_MOCK_OK, dest: FORA, nNF: '6', tpNF: '0' }))])
+  assert.deepEqual(r.importadas.nfe, { entrada: 1, saida: 0 })
+  const [n] = notas(db)
+  assert.deepEqual([n.tipo, n.tipo_nf], ['entrada', '0'])
+  assert.deepEqual(arquivos(pastaXmls), [`Cliente 1/2026/10-Outubro/NF-e/Entradas/XML/${chave}-nfe.xml`])
+})

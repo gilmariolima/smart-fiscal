@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { tipoDocumento } = require('../sefaz/client')
-const { criarArmazenamento, caminhoDoPdf, pastaDoClienteNoDisco, pastasDoClienteNoBanco, pastasPendentesDoCliente, PASTAS, nomes, direcaoPelaChave, modeloPelaChave } = require('./armazenamento')
+const { criarArmazenamento, caminhoDoPdf, pastaDoClienteNoDisco, pastasDoClienteNoBanco, pastasPendentesDoCliente, PASTAS, nomes, direcaoPelaChave, direcaoDaNfe, modeloPelaChave } = require('./armazenamento')
 const { dadosResNFe, dadosNfeProc, dadosEvento, competenciaDe } = require('./extracao')
 const { DA_CARTEIRA } = require('./clientes')
 const { VERSAO_XML } = require('./migracaoPastas')
@@ -125,7 +125,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
   function processarCompleta(cliente, doc, contagem) {
     const d = dadosNfeProc(doc.json)
     if (!d.chave) return 'ignorado'
-    gravarCompleta(cliente, doc, d, d.emitente_cnpj === cliente.cnpj ? 'saida' : 'entrada', contagem)
+    gravarCompleta(cliente, doc, d, direcaoDaNfe(cliente.cnpj, d), contagem)
     return 'completa'
   }
 
@@ -139,7 +139,7 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
       armazenamento.salvar({ cliente: escritorio, foraDaCarteira: true, competencia: d.competencia, nomeArquivo: nomes.nfe(d.chave), xml: doc.xml })
       return 'fora'
     }
-    if (emitente) gravarCompleta(emitente, doc, d, 'saida', contagem)
+    if (emitente) gravarCompleta(emitente, doc, d, direcaoDaNfe(emitente.cnpj, d), contagem)
     if (destinatario && destinatario.id !== emitente?.id) gravarCompleta(destinatario, doc, d, 'entrada', contagem)
     return 'completa'
   }
@@ -500,7 +500,70 @@ function criarServicoCaptura({ db, config, logger, fabricaSefaz, dormir = dormir
     return resultado
   }
 
-  return { capturarCliente, capturarTodos, processarDocumento, corrigirNotasDoEscritorio }
+  /**
+   * Uma vez: a NF-e de entrada emitida pelo próprio cliente (tpNF 0, ex.: devolução de venda) que foi gravada como
+   * saída passa para Entradas, com o XML (o PDF, o relatório e o ZIP saem e a pasta organizada refaz).
+   * @returns {{ movidas: number, falhas: number }}
+   */
+  async function corrigirEntradasProprias() {
+    const resultado = { movidas: 0, falhas: 0 }
+    const valor = (chave) => db.prepare('SELECT valor FROM sistema WHERE chave = ?').pluck().get(chave)
+    if (valor('entradas_proprias_corrigidas') || valor('pastas_layout') !== VERSAO_XML || !fs.existsSync(config.pastaXmls)) return resultado
+    const lista = db
+      .prepare(`SELECT n.* FROM notas n JOIN clientes c ON c.id = n.cliente_id
+        WHERE n.modelo = 'nfe' AND n.tipo = 'saida' AND n.tipo_nf = '0' AND n.emitente_cnpj = c.cnpj AND n.status = 'completa' AND n.caminho_xml IS NOT NULL`)
+      .all()
+    const clienteDe = db.prepare('SELECT * FROM clientes WHERE id = ?')
+    const mudar = db.prepare("UPDATE notas SET tipo = 'entrada', caminho_xml = ?, atualizado_em = ? WHERE id = ?")
+    const naFila = db.prepare("UPDATE busca_antiga SET direcao = 'entrada' WHERE cliente_id = ? AND chave = ?")
+    const meses = new Map()
+    for (const n of lista) {
+      await cederAVez()
+      try {
+        const xml = fs.readFileSync(armazenamento.absoluto(n.caminho_xml), 'utf8')
+        const novo = armazenamento.salvar({ cliente: clienteDe.get(n.cliente_id), competencia: n.competencia, direcao: 'entrada', nomeArquivo: nomes.nfe(n.chave), xml })
+        db.transaction(() => {
+          mudar.run(novo, iso(), n.id)
+          naFila.run(n.cliente_id, n.chave)
+        })()
+        resultado.movidas++
+        meses.set(`${n.cliente_id}|${n.competencia}`, { clienteId: n.cliente_id, competencia: n.competencia, pasta: path.dirname(path.dirname(n.caminho_xml)) })
+        if (novo !== n.caminho_xml) {
+          try {
+            fs.rmSync(armazenamento.absoluto(n.caminho_xml), { force: true })
+            const pdf = caminhoDoPdf(n.caminho_xml)
+            if (pdf) fs.rmSync(armazenamento.absoluto(pdf), { force: true })
+          } catch (e) {
+            logger.warn('XML antigo da entrada própria não saiu de Saídas', { chave: n.chave, erro: e.code || e.message })
+          }
+        }
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          logger.warn('Entrada própria sem o XML no disco: fica como está', { chave: n.chave })
+          continue
+        }
+        resultado.falhas++
+        logger.warn('Entrada própria não corrigida; tenta de novo na próxima abertura', { chave: n.chave, erro: e.code || e.message })
+      }
+    }
+    // Mês de saídas que ficou vazio: o relatório e o ZIP antigos saem.
+    const restantes = db.prepare("SELECT COUNT(*) FROM notas WHERE cliente_id = ? AND modelo = 'nfe' AND competencia = ? AND tipo = 'saida' AND status = 'completa'").pluck()
+    const apagarGrupo = db.prepare("DELETE FROM pasta_grupos WHERE cliente_id = ? AND competencia = ? AND modelo = 'nfe' AND direcao = 'saida'")
+    for (const m of meses.values()) {
+      if (restantes.get(m.clienteId, m.competencia)) continue
+      apagarGrupo.run(m.clienteId, m.competencia)
+      try {
+        retirarGeradosDoMes(m.pasta)
+      } catch (e) {
+        logger.warn('Relatório ou ZIP antigo de saídas não saiu da pasta', { pasta: m.pasta, erro: e.code || e.message })
+      }
+    }
+    if (!resultado.falhas) db.prepare("INSERT INTO sistema (chave, valor) VALUES ('entradas_proprias_corrigidas', '1') ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run()
+    if (resultado.movidas || resultado.falhas) logger.info('Entradas próprias (tpNF 0) passaram de Saídas para Entradas', resultado)
+    return resultado
+  }
+
+  return { capturarCliente, capturarTodos, processarDocumento, corrigirNotasDoEscritorio, corrigirEntradasProprias }
 }
 
 module.exports = { criarServicoCaptura, nsu15 }

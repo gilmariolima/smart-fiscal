@@ -54,6 +54,12 @@ async function iniciarServidor(ctx, { atrasoInicialMs, cron, comPainel = true, r
   const agendador = criarAgendador({ ciclo: ctx.ciclo, config, logger, automacao: ctx.automacao, atrasoInicialMs, podeCapturar, motivoPulo, faltaPasta, ...(aoPularSemPasta ? { aoPularSemPasta } : {}), ...(cron ? { cron } : {}) })
   // Uma vez, se existe escritório: antes de qualquer captura ou geração.
   await ctx.ciclo?.corrigirNotasDoEscritorio?.()
+  // Uma vez: entradas próprias (tpNF 0) que estavam em Saídas vão para Entradas; a pasta organizada refaz os dois lados.
+  const entradasProprias = await ctx.ciclo?.corrigirEntradasProprias?.().catch((e) => {
+    logger.warn('Entradas próprias não corrigidas ao abrir', { erro: e.message })
+    return null
+  })
+  if (entradasProprias?.movidas) ctx.organizador?.agendar({ conferirArquivos: true })
   // Notas em Sem cliente cadastrado cujo cliente já existe (NF-e, CT-e e NFS-e) vão para ele, sem atrasar a janela.
   ctx.notasSemCliente
     ?.levar()

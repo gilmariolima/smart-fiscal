@@ -72,6 +72,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id GROUP BY c.id, COALESCE(b.direcao, 'entrada') ORDER BY nome`),
     voltarProblemas: db.prepare("UPDATE busca_antiga SET situacao = 'fila', tentativas = 0, mensagem = NULL, atualizado_em = ? WHERE id = ? AND situacao IN ('erro', 'nao-envolvido')"),
     clienteDaLinha: db.prepare('SELECT * FROM clientes WHERE id = ?'),
+    direcaoDaNota: db.prepare('UPDATE busca_antiga SET direcao = COALESCE((SELECT n.tipo FROM notas n WHERE n.cliente_id = busca_antiga.cliente_id AND n.chave = busca_antiga.chave), direcao) WHERE id = ?'),
     marcar: db.prepare('UPDATE busca_antiga SET situacao = ?, mensagem = ?, tentativas = ?, atualizado_em = ? WHERE id = ?'),
     nota: db.prepare("SELECT caminho_xml FROM notas WHERE cliente_id = ? AND chave = ? AND status = 'completa'"),
     pendentes: db.prepare("SELECT COUNT(*) FROM busca_antiga WHERE situacao = 'fila'").pluck(),
@@ -253,6 +254,7 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       const importadas = ri.importadas.nfe.entrada + ri.importadas.nfe.saida
       if (importadas) {
         aoImportar(ri.clientesAfetados)
+        sql.direcaoDaNota.run(l.id)
         return marcar(l, 'baixada')
       }
       if (ri.jaExistiam) return marcar(l, 'ja-existia')
@@ -387,8 +389,8 @@ function criarBuscaAntiga({ db, config, logger, importacao, fabricaSvrs, podeRod
       .prepare(`SELECT b.id, b.chave, b.situacao, b.mensagem, b.tentativas, b.atualizado_em, b.origem, COALESCE(b.direcao, 'entrada') AS direcao,
           c.cnpj, COALESCE(NULLIF(c.apelido, ''), c.razao_social) AS nome,
           n.id AS nota_id, n.numero, n.data_emissao, n.valor_total,
-          CASE WHEN COALESCE(b.direcao, 'entrada') = 'saida' THEN n.destinatario_cnpj ELSE n.emitente_cnpj END AS outra_cnpj,
-          CASE WHEN COALESCE(b.direcao, 'entrada') = 'saida' THEN n.destinatario_nome ELSE n.emitente_nome END AS outra_nome
+          CASE WHEN n.emitente_cnpj = c.cnpj THEN n.destinatario_cnpj ELSE n.emitente_cnpj END AS outra_cnpj,
+          CASE WHEN n.emitente_cnpj = c.cnpj THEN n.destinatario_nome ELSE n.emitente_nome END AS outra_nome
         FROM busca_antiga b JOIN clientes c ON c.id = b.cliente_id
         LEFT JOIN notas n ON n.cliente_id = b.cliente_id AND n.chave = b.chave
         ${onde.length ? 'WHERE ' + onde.join(' AND ') : ''}

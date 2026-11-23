@@ -658,3 +658,66 @@ test('correção: nota de fora-da-carteira que não grava fica lá e tenta de no
   assert.ok(fs.existsSync(a.abs(a.relFora)))
   assert.equal((await a.corrigir()).resgatadas, 1)
 })
+
+// ---------- nota de entrada emitida pelo próprio cliente (tpNF 0) ----------
+
+// procNFe emitido pelo cliente, com o tpNF escolhido (0 = entrada própria, ex.: devolução de venda).
+function procProprio(emit, n, tpNF, dest = '12345678909', autXML = '') {
+  const chave = `2326${'10'}${emit}55001${String(n).padStart(9, '0')}1${'0'.repeat(7)}0`.slice(0, 44).padEnd(44, '0')
+  const xml = `<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe${chave}" versao="4.00"><ide><nNF>${n}</nNF><serie>1</serie><dhEmi>2026-10-05T10:00:00-03:00</dhEmi><tpNF>${tpNF}</tpNF></ide><emit><CNPJ>${emit}</CNPJ><xNome>Emitente</xNome></emit><dest><CPF>${dest}</CPF><xNome>Consumidor</xNome></dest><total><ICMSTot><vNF>10.00</vNF></ICMSTot></total>${autXML}</infNFe></NFe><protNFe versao="4.00"><infProt><chNFe>${chave}</chNFe></infProt></protNFe></nfeProc>`
+  return { chave, doc: { xml, json: xmlParaJson(xml), schema: 'procNFe_v4.00.xsd', nsu: '000000000000077' } }
+}
+
+test('nota emitida pelo cliente com tpNF 0 (devolução de venda) é entrada; com tpNF 1, saída', async (t) => {
+  const { db, servico, ids, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  const devolucao = procProprio(CNPJ_MOCK_OK, 7, '0')
+  const venda = procProprio(CNPJ_MOCK_OK, 8, '1')
+  assert.equal(servico.processarDocumento(cliente(db, ids[0]), devolucao.doc), 'completa')
+  assert.equal(servico.processarDocumento(cliente(db, ids[0]), venda.doc), 'completa')
+  const tipo = (chave) => db.prepare('SELECT tipo, caminho_xml FROM notas WHERE chave = ?').get(chave)
+  assert.equal(tipo(devolucao.chave).tipo, 'entrada')
+  assert.match(tipo(devolucao.chave).caminho_xml.replace(/\\/g, '/'), /NF-e\/Entradas\/XML\//)
+  assert.equal(tipo(venda.chave).tipo, 'saida')
+  assert.ok(fs.existsSync(path.join(pastaXmls, tipo(devolucao.chave).caminho_xml)))
+})
+
+test('pelo escritório (autXML): a devolução de venda emitida pelo cliente fica nas entradas dele', async (t) => {
+  const { db, servico, ids, limpar } = montarComEscritorio()
+  t.after(limpar)
+  const { chave, doc } = procProprio(CNPJ_MOCK_OK, 9, '0', '12345678909', `<autXML><CNPJ>${CNPJ_MOCK_ESCRITORIO}</CNPJ></autXML>`)
+  assert.equal(servico.processarDocumento(cliente(db, ids[1]), doc), 'completa')
+  assert.deepEqual(db.prepare('SELECT cliente_id, tipo FROM notas WHERE chave = ?').all(chave).map((n) => [n.cliente_id, n.tipo]), [[ids[0], 'entrada']])
+})
+
+test('correção: entrada própria guardada como saída muda para Entradas, com o XML; tpNF 1 fica', async (t) => {
+  const { db, servico, ids, pastaXmls, limpar } = montar()
+  t.after(limpar)
+  db.prepare("INSERT INTO sistema (chave, valor) VALUES ('pastas_layout', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run(VERSAO_XML)
+  const devolucao = procProprio(CNPJ_MOCK_OK, 11, '0')
+  const venda = procProprio(CNPJ_MOCK_OK, 12, '1')
+  // Como o app antigo gravava: as duas em Saídas.
+  const saidas = path.join('Cliente 1', '2026', '10-Outubro', 'NF-e', 'Saidas')
+  for (const [p, n] of [[devolucao, 11], [venda, 12]]) {
+    const rel = path.join(saidas, 'XML', `${p.chave}-nfe.xml`)
+    fs.mkdirSync(path.join(pastaXmls, saidas, 'XML'), { recursive: true })
+    fs.mkdirSync(path.join(pastaXmls, saidas, 'PDF'), { recursive: true })
+    fs.writeFileSync(path.join(pastaXmls, rel), p.doc.xml)
+    fs.writeFileSync(path.join(pastaXmls, saidas, 'PDF', `${p.chave}-nfe.pdf`), 'pdf')
+    db.prepare("INSERT INTO notas (cliente_id, chave, modelo, tipo, tipo_nf, status, competencia, caminho_xml, emitente_cnpj, numero) VALUES (?, ?, 'nfe', 'saida', ?, 'completa', '2026-10', ?, ?, ?)").run(ids[0], p.chave, n === 11 ? '0' : '1', rel, CNPJ_MOCK_OK, String(n))
+  }
+  const agora = new Date().toISOString()
+  db.prepare("INSERT INTO busca_antiga (cliente_id, chave, situacao, origem, direcao, criado_em, atualizado_em) VALUES (?, ?, 'baixada', 'periodo', 'saida', ?, ?)").run(ids[0], devolucao.chave, agora, agora)
+  const r = await servico.corrigirEntradasProprias()
+  assert.equal(r.movidas, 1)
+  const d = db.prepare('SELECT tipo, caminho_xml FROM notas WHERE chave = ?').get(devolucao.chave)
+  assert.equal(d.tipo, 'entrada')
+  assert.ok(fs.existsSync(path.join(pastaXmls, d.caminho_xml)))
+  assert.match(d.caminho_xml.replace(/\\/g, '/'), /NF-e\/Entradas\/XML\//)
+  assert.ok(!fs.existsSync(path.join(pastaXmls, saidas, 'XML', `${devolucao.chave}-nfe.xml`)))
+  assert.ok(!fs.existsSync(path.join(pastaXmls, saidas, 'PDF', `${devolucao.chave}-nfe.pdf`)))
+  assert.equal(db.prepare('SELECT tipo FROM notas WHERE chave = ?').pluck().get(venda.chave), 'saida')
+  assert.equal(db.prepare('SELECT direcao FROM busca_antiga WHERE chave = ?').pluck().get(devolucao.chave), 'entrada')
+  // Uma vez só.
+  assert.equal((await servico.corrigirEntradasProprias()).movidas, 0)
+})

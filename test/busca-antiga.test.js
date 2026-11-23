@@ -424,3 +424,23 @@ test('listar respeita o limite pedido e a fila pausada não tem empresa da vez',
   servico.pausar()
   assert.equal(servico.estado().clientes[0].daVez, false)
 })
+
+test('devolução de venda emitida pelo cliente (tpNF 0) baixada fica em Entradas na fila também', async (t) => {
+  const chave = chaveNfe(CLIENTE, 31)
+  const { db, id, servico, limpar } = montar({ respostas: { [chave]: { xml: nfeProc({ emit: CLIENTE, dest: '12345678000195', nNF: '31', tpNF: '0' }) } } })
+  t.after(limpar)
+  servico.adicionarChaves(id, [{ chave, direcao: 'saida' }], { origem: 'periodo' })
+  assert.equal(await servico.processarProxima(), 'baixada')
+  assert.equal(linha(db, chave).direcao, 'entrada')
+  assert.equal(db.prepare('SELECT tipo FROM notas WHERE chave = ?').pluck().get(chave), 'entrada')
+})
+
+test('na lista, a outra parte da devolução de venda é quem devolveu, não a própria empresa', async (t) => {
+  const chave = chaveNfe(CLIENTE, 32)
+  const { db, id, servico, limpar } = montar({ respostas: { [chave]: { xml: nfeProc({ emit: CLIENTE, dest: '12345678000195', nNF: '32', tpNF: '0' }) } } })
+  t.after(limpar)
+  servico.adicionarChaves(id, [{ chave, direcao: 'saida' }], { origem: 'periodo' })
+  await servico.processarProxima()
+  const [l] = servico.listar({ cnpj: CLIENTE, direcao: 'entrada' })
+  assert.equal(l.outra_cnpj, '12345678000195')
+})

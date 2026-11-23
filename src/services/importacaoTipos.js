@@ -129,7 +129,8 @@ function donos(modelo, d, porCnpj) {
     return lista
   }
   const lista = [
-    [porCnpj.get(d.emitente_cnpj), 'saida'],
+    // NF-e emitida pelo cliente com tpNF 0 (devolução de venda etc.) é entrada própria.
+    [porCnpj.get(d.emitente_cnpj), modelo === 'nfe' && String(d.tipo_nf) === '0' ? 'entrada' : 'saida'],
     [porCnpj.get(d.destinatario_cnpj), 'entrada'],
   ].filter(([c], i, todos) => c && (i === 0 || c.id !== todos[0][0]?.id))
   if (lista.length || modelo !== 'nfse') return lista

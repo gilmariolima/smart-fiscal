@@ -21,8 +21,8 @@ export default function NotasNovas() {
 
   const notas = dados?.notas || []
   const comXml = notas.filter((n) => n.status === 'completa')
-  // A contraparte: quem emitiu nas entradas, quem recebeu nas saídas.
-  const outraParte = (n) => (n.tipo === 'saida' ? { nome: n.destinatario_nome, cnpj: n.destinatario_cnpj } : { nome: n.emitente_nome, cnpj: n.emitente_cnpj })
+  // A contraparte: quem não é a empresa. Nota emitida por ela (saída ou entrada própria, como a devolução de venda): o destinatário.
+  const outraParte = (n) => (n.tipo === 'saida' || n.emitente_cnpj === cnpj ? { nome: n.destinatario_nome, cnpj: n.destinatario_cnpj } : { nome: n.emitente_nome, cnpj: n.emitente_cnpj })
 
   async function baixar() {
     setBaixando(true)

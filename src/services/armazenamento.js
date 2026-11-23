@@ -108,6 +108,15 @@ function direcaoPelaChave(chave, cnpjCliente) {
   return emitente === cnpjCliente ? 'saida' : 'entrada'
 }
 
+/**
+ * Direção da NF-e para o cliente. A que ele recebeu é entrada. A que ele emitiu segue o tpNF: 1 é saída e 0 é
+ * entrada própria (devolução de venda, entrada para consignação, reclassificação...).
+ */
+function direcaoDaNfe(cnpjCliente, { emitente_cnpj, tipo_nf }) {
+  if (emitente_cnpj !== cnpjCliente) return 'entrada'
+  return String(tipo_nf) === '0' ? 'entrada' : 'saida'
+}
+
 // <Empresa>/[Sem cliente cadastrado/]<AAAA>/<MM-Mês>; sem competência, sem-data.
 function partesDoMes({ cliente, outrosClientes, competencia, foraDaCarteira }) {
   const m = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(competencia || '')
@@ -233,4 +242,4 @@ function criarArmazenamento({ config, pastaXmls, db }) {
   return { salvar, absoluto, tirarResumo }
 }
 
-module.exports = { criarArmazenamento, pastaDoCliente, pastaDoClienteNoDisco, pastasDoClienteNoBanco, chavePastaPendente, pastasPendentesDoCliente, nomeDePasta, nomeDoCliente, MESES, pastaDoMes, comMesNumerado, temMesSemNumero, comDirecaoAntesDoTipo, comAvulsosNoLugar, comTipoPrimeiro, foraDoFormatoAtual, nomes, slug, PASTAS, caminhoDa, pastaDoGrupo, caminhoDoPdf, caminhoDoResumo, direcaoPelaChave, modeloPelaChave, pastaNoZip, nomeNoZip }
+module.exports = { criarArmazenamento, pastaDoCliente, pastaDoClienteNoDisco, pastasDoClienteNoBanco, chavePastaPendente, pastasPendentesDoCliente, nomeDePasta, nomeDoCliente, MESES, pastaDoMes, comMesNumerado, temMesSemNumero, comDirecaoAntesDoTipo, comAvulsosNoLugar, comTipoPrimeiro, foraDoFormatoAtual, nomes, slug, PASTAS, caminhoDa, pastaDoGrupo, caminhoDoPdf, caminhoDoResumo, direcaoPelaChave, direcaoDaNfe, modeloPelaChave, pastaNoZip, nomeNoZip }
