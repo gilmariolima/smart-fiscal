@@ -70,21 +70,14 @@ function Barra({ feito, total }) {
   )
 }
 
-function Progresso({ estado, agora }) {
-  if (!estado?.total) return null
-  const feito = estado.total - estado.pendentes
-  const min = Math.ceil((estado.estimativaS || 0) / 60)
-  const termina = new Date(agora.getTime() + (estado.estimativaS || 0) * 1000)
+// "145 de 148 · faltam ~3 min": o tempo é o que falta desta empresa, a uma nota por intervalo da SVRS.
+function ContaDaEmpresa({ feito, total, pendentes, parado, intervaloS }) {
+  const min = Math.ceil((pendentes * (intervaloS || 60)) / 60)
   return (
-    <div className="busca-progresso">
-      <Barra feito={feito} total={estado.total} />
-      <span>
-        <strong>
-          {inteiro(feito)} de {inteiro(estado.total)}
-        </strong>
-        {estado.pendentes > 0 && !estado.pausada && min > 0 && ` · faltam ~${plural(min, 'min', 'min')} (termina por volta de ${hora(termina.toISOString())})`}
-      </span>
-    </div>
+    <>
+      {inteiro(feito)} de {inteiro(total)}
+      {pendentes > 0 && !parado && <span className="apagado"> · faltam {duracao(min)}</span>}
+    </>
   )
 }
 
@@ -379,7 +372,7 @@ function BotaoPausaEmpresa({ c, aoMudar }) {
   )
 }
 
-function Empresas({ clientes, aoMudar }) {
+function Empresas({ clientes, aoMudar, intervaloS, pausadaGeral }) {
   if (!clientes.length) return <p className="apagado">Nenhuma chave na fila.</p>
   // Quem ainda tem nota para baixar fica em cima; as concluídas descem (a ordem do nome vem do servidor).
   const ordem = [...clientes].sort((a, b) => (b.pendentes > 0) - (a.pendentes > 0))
@@ -396,7 +389,7 @@ function Empresas({ clientes, aoMudar }) {
                 <Barra feito={c.total - c.pendentes} total={c.total} />
               </td>
               <td className="sem-quebra busca-col-conta">
-                {inteiro(c.total - c.pendentes)} de {inteiro(c.total)}
+                <ContaDaEmpresa feito={c.total - c.pendentes} total={c.total} pendentes={c.pendentes} parado={c.pausada || pausadaGeral} intervaloS={intervaloS} />
                 {c.problemas > 0 && <span className="busca-erro"> · {plural(c.problemas, 'problema', 'problemas')}</span>}
               </td>
               <td className={`sem-quebra busca-col-estado busca-estado-${estadoDaEmpresa(c).toLowerCase().replace(/\s/g, '-')}`}>{estadoDaEmpresa(c)}</td>
@@ -411,7 +404,7 @@ function Empresas({ clientes, aoMudar }) {
   )
 }
 
-function Direcoes({ c }) {
+function Direcoes({ c, intervaloS, parado }) {
   return (
     <div className="tabela-moldura">
       <table className="tabela busca-empresas">
@@ -425,7 +418,7 @@ function Direcoes({ c }) {
                 </td>
                 <td className="busca-col-barra">{d.total > 0 && <Barra feito={d.total - d.pendentes} total={d.total} />}</td>
                 <td className="sem-quebra busca-col-conta">
-                  {d.total ? `${inteiro(d.total - d.pendentes)} de ${inteiro(d.total)}` : 'nenhuma'}
+                  {d.total ? <ContaDaEmpresa feito={d.total - d.pendentes} total={d.total} pendentes={d.pendentes} parado={parado} intervaloS={intervaloS} /> : 'nenhuma'}
                   {d.problemas > 0 && <span className="busca-erro"> · {plural(d.problemas, 'problema', 'problemas')}</span>}
                 </td>
               </tr>
@@ -652,12 +645,10 @@ export default function BuscaPorChave() {
         </section>
       )}
 
-      <Progresso estado={estado} agora={agora} />
-
       {!cnpj && (
         <>
           <h2 className="busca-titulo">Fila de downloads</h2>
-          <Empresas clientes={empresas} aoMudar={aoMudarEmpresa} />
+          <Empresas clientes={empresas} aoMudar={aoMudarEmpresa} intervaloS={estado?.intervaloS} pausadaGeral={!!estado?.pausada} />
         </>
       )}
       {cnpj && (
@@ -665,13 +656,13 @@ export default function BuscaPorChave() {
           {empresa && (
             <div className="busca-empresa-topo">
               <span>
-                {estadoDaEmpresa(empresa)} · {inteiro(empresa.total - empresa.pendentes)} de {inteiro(empresa.total)}
+                {estadoDaEmpresa(empresa)} · <ContaDaEmpresa feito={empresa.total - empresa.pendentes} total={empresa.total} pendentes={empresa.pendentes} parado={empresa.pausada || !!estado?.pausada} intervaloS={estado?.intervaloS} />
               </span>
               <BotaoPausaEmpresa c={empresa} aoMudar={aoMudarEmpresa} />
             </div>
           )}
           {!empresa && <p className="apagado">Nenhuma chave desta empresa na fila.</p>}
-          {empresa && !direcao && <Direcoes c={empresa} />}
+          {empresa && !direcao && <Direcoes c={empresa} intervaloS={estado?.intervaloS} parado={empresa.pausada || !!estado?.pausada} />}
           {empresa && direcao && <Notas cnpj={cnpj} direcao={direcao} pausada={empresa.pausada || estado?.pausada} d={empresa.direcoes[direcao] || { total: 0, pendentes: 0, baixadas: 0, problemas: 0 }} recarregarEstado={recarregar} />}
         </div>
       )}

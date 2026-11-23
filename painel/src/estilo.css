@@ -3370,18 +3370,6 @@ a.botao-icone {
   color: var(--erro);
 }
 
-.busca-progresso {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 18px 0 6px;
-}
-
-.busca-progresso .busca-barra {
-  flex: 1;
-  max-width: 520px;
-}
-
 .busca-barra {
   display: inline-block;
   width: 100%;
@@ -3416,7 +3404,7 @@ a.botao-icone {
 }
 
 .busca-col-conta {
-  width: 190px;
+  width: 300px;
 }
 
 .busca-col-estado {
